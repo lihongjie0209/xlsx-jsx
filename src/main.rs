@@ -22,7 +22,8 @@ use rust_xlsxwriter::{
     ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
     DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
     FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
-    IgnoreError, Image as XlsxImage, Note, Table, TableColumn, TableStyle, Url, Workbook,
+    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
+    Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -777,6 +778,31 @@ fn compile_image(
             )
             .expect("validated Image.height"),
         );
+    let offset_x = u32::try_from(
+        component
+            .props
+            .get("offsetX")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+    )
+    .expect("validated Image.offsetX");
+    let offset_y = u32::try_from(
+        component
+            .props
+            .get("offsetY")
+            .and_then(Value::as_u64)
+            .unwrap_or_default(),
+    )
+    .expect("validated Image.offsetY");
+    if let Some(movement) = component.props.get("movement").and_then(Value::as_str) {
+        let movement = match movement {
+            "moveAndSize" => ObjectMovement::MoveAndSizeWithCells,
+            "moveOnly" => ObjectMovement::MoveButDontSizeWithCells,
+            "fixed" => ObjectMovement::DontMoveOrSizeWithCells,
+            _ => unreachable!("validated Image.movement"),
+        };
+        image = image.set_object_movement(movement);
+    }
     if let Some(alt_text) = component.props.get("altText").and_then(Value::as_str) {
         image = image.set_alt_text(alt_text);
     }
@@ -784,7 +810,7 @@ fn compile_image(
         image = image.set_decorative(true);
     }
     worksheet
-        .insert_image(row, column, &image)
+        .insert_image_with_offset(row, column, &image, offset_x, offset_y)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot add Image at {cell}: {error}")))
 }
@@ -3457,6 +3483,15 @@ fn render_image(output: &mut String, image: &WorksheetImage) {
         "    <Image cell={{{:?}}} width={{{}}} height={{{}}} data={{{:?}}}",
         image.cell, image.width, image.height, image.data_uri
     );
+    if image.offset_x > 0 {
+        let _ = write!(output, " offsetX={{{}}}", image.offset_x);
+    }
+    if image.offset_y > 0 {
+        let _ = write!(output, " offsetY={{{}}}", image.offset_y);
+    }
+    if let Some(movement) = image.movement {
+        let _ = write!(output, " movement=\"{movement}\"");
+    }
     if let Some(alt_text) = &image.alt_text {
         let _ = write!(output, " altText={{{alt_text:?}}}");
     }
@@ -5921,6 +5956,8 @@ struct ChartAnchor {
     to_column: Option<u32>,
     to_column_offset: Option<u32>,
     to_row_offset: Option<u32>,
+    from_column_offset: Option<u32>,
+    from_row_offset: Option<u32>,
     from_column_offset_seen: bool,
     from_row_offset_seen: bool,
 }
@@ -5956,7 +5993,11 @@ fn parse_chart_xml(
     let to_column = anchor
         .to_column
         .ok_or_else(|| Error::Reverse(format!("chart drawing in `{part}` is missing to/col")))?;
-    if !anchor.from_column_offset_seen || !anchor.from_row_offset_seen {
+    if !anchor.from_column_offset_seen
+        || !anchor.from_row_offset_seen
+        || anchor.from_column_offset != Some(0)
+        || anchor.from_row_offset != Some(0)
+    {
         return Err(Error::Reverse(format!(
             "chart drawing in `{part}` is missing from/colOff or from/rowOff; repair the two-cell anchor"
         )));
@@ -6312,11 +6353,16 @@ fn parse_drawing_image(
     anchor: ChartAnchor,
     metadata: &WorksheetMetadata,
 ) -> xlsx_jsx::Result<WorksheetImage> {
-    if anchor.edit_as.as_deref() != Some("oneCell") {
-        return Err(Error::Reverse(format!(
-            "picture in `{part}` does not use the writer's oneCell movement mode; use that mode or extend Image movement support"
-        )));
-    }
+    let movement = match anchor.edit_as.as_deref() {
+        None => Some("moveAndSize"),
+        Some("oneCell") => None,
+        Some("absolute") => Some("fixed"),
+        Some(value) => {
+            return Err(Error::Reverse(format!(
+                "picture in `{part}` uses unsupported editAs `{value}`; use moveAndSize, moveOnly, or fixed movement"
+            )));
+        }
+    };
     let extension = part
         .rsplit_once('.')
         .map(|(_, extension)| extension.to_ascii_lowercase())
@@ -6349,7 +6395,7 @@ fn parse_drawing_image(
             "image part `{part}` extension does not match its raster bytes; repair the package content type or embedded media"
         )));
     }
-    let (cell, width, height) = validate_image_anchor(&anchor, metadata, part)?;
+    let (cell, width, height, offset_x, offset_y) = validate_image_anchor(&anchor, metadata, part)?;
     let object_id = anchor.object_id.ok_or_else(|| {
         Error::Reverse(format!(
             "picture in `{part}` is missing cNvPr@id; repair picture metadata"
@@ -6368,6 +6414,9 @@ fn parse_drawing_image(
         width,
         height,
         data_uri,
+        offset_x,
+        offset_y,
+        movement,
         alt_text: anchor.alt_text.filter(|text| !text.is_empty()),
         decorative: anchor.decorative,
     })
@@ -6381,7 +6430,7 @@ fn validate_image_anchor(
     anchor: &ChartAnchor,
     metadata: &WorksheetMetadata,
     part: &str,
-) -> xlsx_jsx::Result<(String, u32, u32)> {
+) -> xlsx_jsx::Result<(String, u32, u32, u32, u32)> {
     const PX_EMU: u64 = 9_525;
     const COLUMN_PIXELS: u32 = 64;
     const ROW_PIXELS: u32 = 20;
@@ -6407,7 +6456,7 @@ fn validate_image_anchor(
     })?;
     if !anchor.from_column_offset_seen || !anchor.from_row_offset_seen {
         return Err(Error::Reverse(format!(
-            "picture in `{part}` has nonzero or missing start offsets; use zero offsets or extend image anchor support"
+            "picture in `{part}` is missing from/colOff or from/rowOff; repair its anchor"
         )));
     }
     if to_row < from_row || to_column < from_column {
@@ -6418,6 +6467,25 @@ fn validate_image_anchor(
     if to_row >= 1_048_576 || to_column >= 16_384 {
         return Err(Error::Reverse(format!(
             "picture in `{part}` extends beyond Excel's worksheet grid; move or resize it"
+        )));
+    }
+    let from_column_offset = u64::from(anchor.from_column_offset.ok_or_else(|| {
+        Error::Reverse(format!(
+            "picture in `{part}` is missing from/colOff; repair its anchor"
+        ))
+    })?);
+    let from_row_offset = u64::from(anchor.from_row_offset.ok_or_else(|| {
+        Error::Reverse(format!(
+            "picture in `{part}` is missing from/rowOff; repair its anchor"
+        ))
+    })?);
+    if from_column_offset % PX_EMU != 0
+        || from_row_offset % PX_EMU != 0
+        || from_column_offset / PX_EMU >= u64::from(COLUMN_PIXELS)
+        || from_row_offset / PX_EMU >= u64::from(ROW_PIXELS)
+    {
+        return Err(Error::Reverse(format!(
+            "picture in `{part}` has fractional-pixel or out-of-cell start offsets; use whole-pixel offsets within a 64×20-pixel cell"
         )));
     }
     let to_column_offset = u64::from(anchor.to_column_offset.ok_or_else(|| {
@@ -6435,13 +6503,22 @@ fn validate_image_anchor(
             "picture in `{part}` ends at fractional-pixel offsets; use whole-pixel image dimensions"
         )));
     }
+    if to_column_offset / PX_EMU >= u64::from(COLUMN_PIXELS)
+        || to_row_offset / PX_EMU >= u64::from(ROW_PIXELS)
+    {
+        return Err(Error::Reverse(format!(
+            "picture in `{part}` has an unnormalized end offset; use a standard two-cell anchor"
+        )));
+    }
     let width = u64::from(to_column - from_column)
         .checked_mul(u64::from(COLUMN_PIXELS))
         .and_then(|pixels| pixels.checked_add(to_column_offset / PX_EMU))
+        .and_then(|pixels| pixels.checked_sub(from_column_offset / PX_EMU))
         .ok_or_else(|| Error::Reverse(format!("picture width in `{part}` overflows pixels")))?;
     let height = u64::from(to_row - from_row)
         .checked_mul(u64::from(ROW_PIXELS))
         .and_then(|pixels| pixels.checked_add(to_row_offset / PX_EMU))
+        .and_then(|pixels| pixels.checked_sub(from_row_offset / PX_EMU))
         .ok_or_else(|| Error::Reverse(format!("picture height in `{part}` overflows pixels")))?;
     if !(1..=1790).contains(&width) || !(1..=1790).contains(&height) {
         return Err(Error::Reverse(format!(
@@ -6481,8 +6558,10 @@ fn validate_image_anchor(
             "picture in `{part}` crosses custom column widths, so its pixel size is ambiguous; use default column widths or extend image geometry support"
         )));
     }
-    let expected_x = u64::from(from_column) * u64::from(COLUMN_PIXELS) * PX_EMU;
-    let expected_y = u64::from(from_row) * u64::from(ROW_PIXELS) * PX_EMU;
+    let expected_x =
+        (u64::from(from_column) * u64::from(COLUMN_PIXELS) + from_column_offset / PX_EMU) * PX_EMU;
+    let expected_y =
+        (u64::from(from_row) * u64::from(ROW_PIXELS) + from_row_offset / PX_EMU) * PX_EMU;
     if anchor.absolute_x != Some(expected_x)
         || anchor.absolute_y != Some(expected_y)
         || anchor.transform_width != Some(width * PX_EMU)
@@ -6502,7 +6581,23 @@ fn validate_image_anchor(
             "picture height in `{part}` exceeds 32-bit pixels: {error}"
         ))
     })?;
-    Ok((cell_reference(from_row, from_column), width, height))
+    let offset_x = u32::try_from(from_column_offset / PX_EMU).map_err(|error| {
+        Error::Reverse(format!(
+            "picture x offset in `{part}` exceeds pixels: {error}"
+        ))
+    })?;
+    let offset_y = u32::try_from(from_row_offset / PX_EMU).map_err(|error| {
+        Error::Reverse(format!(
+            "picture y offset in `{part}` exceeds pixels: {error}"
+        ))
+    })?;
+    Ok((
+        cell_reference(from_row, from_column),
+        width,
+        height,
+        offset_x,
+        offset_y,
+    ))
 }
 
 fn chart_formula_sheet_name(formula: &str) -> Option<String> {
@@ -6826,11 +6921,13 @@ fn parse_chart_drawing(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<ChartAncho
                     (Some("to"), "col") => anchor.to_column = Some(value),
                     (Some("to"), "colOff") => anchor.to_column_offset = Some(value),
                     (Some("to"), "rowOff") => anchor.to_row_offset = Some(value),
-                    (Some("from"), "colOff") if value == 0 => {
+                    (Some("from"), "colOff") if value % 9_525 == 0 => {
                         anchor.from_column_offset_seen = true;
+                        anchor.from_column_offset = Some(value);
                     }
-                    (Some("from"), "rowOff") if value == 0 => {
+                    (Some("from"), "rowOff") if value % 9_525 == 0 => {
                         anchor.from_row_offset_seen = true;
+                        anchor.from_row_offset = Some(value);
                     }
                     _ => {
                         return Err(Error::Reverse(format!(
@@ -6954,7 +7051,7 @@ fn audit_chart_drawing_element(
             ("graphicFrame", "macro") => value.is_empty(),
             ("cNvPr", "id") => value.parse::<u32>().is_ok(),
             ("cNvPr", "name" | "descr") => !value.is_empty() && value.chars().count() <= 255,
-            ("twoCellAnchor", "editAs") => value == "oneCell",
+            ("twoCellAnchor", "editAs") => matches!(value.as_str(), "oneCell" | "absolute"),
             ("off", "x" | "y") | ("ext", "cx" | "cy") => value.parse::<u64>().is_ok(),
             ("picLocks", "noChangeAspect") => value == "1",
             ("prstGeom", "prst") => value == "rect",
@@ -9104,6 +9201,9 @@ struct WorksheetImage {
     width: u32,
     height: u32,
     data_uri: String,
+    offset_x: u32,
+    offset_y: u32,
+    movement: Option<&'static str>,
     alt_text: Option<String>,
     decorative: bool,
 }

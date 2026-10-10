@@ -2104,7 +2104,17 @@ fn validate_image(image: &Node, index: usize) -> Result<()> {
     }
     reject_unknown_props(
         image,
-        &["cell", "width", "height", "data", "altText", "decorative"],
+        &[
+            "cell",
+            "width",
+            "height",
+            "data",
+            "altText",
+            "decorative",
+            "offsetX",
+            "offsetY",
+            "movement",
+        ],
         "Image",
     )?;
     let cell = image
@@ -2131,6 +2141,54 @@ fn validate_image(image: &Node, index: usize) -> Result<()> {
             )));
         }
     }
+    for (property, maximum) in [("offsetX", 63), ("offsetY", 19)] {
+        if let Some(value) = image.props.get(property)
+            && value.as_u64().is_none_or(|value| value > maximum)
+        {
+            return Err(Error::Compile(format!(
+                "Image.{property} must be an integer from 0 through {maximum} pixels within the anchored cell"
+            )));
+        }
+    }
+    if let Some(value) = image.props.get("movement") {
+        let Some(value) = value.as_str() else {
+            return Err(Error::Compile(
+                "Image.movement must be a string; use moveAndSize, moveOnly, or fixed".into(),
+            ));
+        };
+        if !["moveAndSize", "moveOnly", "fixed"].contains(&value) {
+            return Err(Error::Compile(format!(
+                "Image.movement `{value}` is unsupported; use moveAndSize, moveOnly, or fixed"
+            )));
+        }
+    }
+    validate_image_data(image)?;
+    if let Some(value) = image.props.get("altText") {
+        let Some(value) = value.as_str() else {
+            return Err(Error::Compile(
+                "Image.altText must be a string; use descriptive text or remove the property"
+                    .into(),
+            ));
+        };
+        if value.chars().count() > 255 || !value.chars().all(is_valid_xml_character) {
+            return Err(Error::Compile(
+                "Image.altText must contain at most 255 valid XML characters; shorten it or remove control characters".into(),
+            ));
+        }
+    }
+    if image
+        .props
+        .get("decorative")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(Error::Compile(
+            "Image.decorative must be a boolean; use true or false".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_image_data(image: &Node) -> Result<()> {
     let data_uri = image
         .props
         .get("data")
@@ -2168,28 +2226,6 @@ fn validate_image(image: &Node, index: usize) -> Result<()> {
             "Image.data is not a valid `{media_type}` image ({error}); use a complete supported image file encoded as base64"
         ))
     })?;
-    if let Some(value) = image.props.get("altText") {
-        let Some(value) = value.as_str() else {
-            return Err(Error::Compile(
-                "Image.altText must be a string; use descriptive text or remove the property"
-                    .into(),
-            ));
-        };
-        if value.chars().count() > 255 || !value.chars().all(is_valid_xml_character) {
-            return Err(Error::Compile(
-                "Image.altText must contain at most 255 valid XML characters; shorten it or remove control characters".into(),
-            ));
-        }
-    }
-    if image
-        .props
-        .get("decorative")
-        .is_some_and(|value| !value.is_boolean())
-    {
-        return Err(Error::Compile(
-            "Image.decorative must be a boolean; use true or false".into(),
-        ));
-    }
     Ok(())
 }
 
@@ -2210,9 +2246,21 @@ fn validate_image_layouts(
         let height = image.props["height"]
             .as_u64()
             .expect("validated Image.height");
-        let last_column = u64::from(first_column) + (width - 1) / 64;
+        let width_with_offset = image
+            .props
+            .get("offsetX")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            + width;
+        let height_with_offset = image
+            .props
+            .get("offsetY")
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+            + height;
+        let last_column = u64::from(first_column) + (width_with_offset - 1) / 64;
         let last_row = usize::try_from(first_row).unwrap_or_default()
-            + usize::try_from((height - 1) / 20).unwrap_or_default();
+            + usize::try_from((height_with_offset - 1) / 20).unwrap_or_default();
         if last_column >= 16_384 || last_row >= 1_048_576 {
             return Err(Error::Compile(format!(
                 "Image at {cell} on Worksheet `{sheet_name}` extends beyond Excel's worksheet grid; move it up/left or reduce its pixel dimensions"

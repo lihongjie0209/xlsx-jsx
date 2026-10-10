@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.60
+Version: 1.61
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -33,6 +33,14 @@ relationships and drawing anchors without relying on a private manifest.
 - `altText?: string` is limited to 255 valid XML characters.
   `decorative?: boolean` marks an image as decorative. Both are preserved in
   the drawing's non-visual picture properties.
+- `offsetX?: integer` and `offsetY?: integer` position the image from the
+  top-left of `cell`, in pixels. They default to zero and must be less than
+  the default cell dimensions (64×20 pixels) so the anchor remains
+  unambiguous.
+- `movement?: "moveAndSize" | "moveOnly" | "fixed"` controls how the picture
+  responds to cell edits. The default is `moveOnly`, matching
+  `Image::new_from_buffer()`. These map to the OOXML two-cell anchor's default,
+  `editAs="oneCell"`, and `editAs="absolute"` modes respectively.
 - Images are direct worksheet children before rows. Reverse supports the
   writer's two-cell anchors on the default 64×20-pixel row/column grid, zero
   start offsets, whole-pixel dimensions, and default rectangular stretch

@@ -9,10 +9,10 @@ export default <Workbook>
     <Row><Cell>Two</Cell><Cell value={20} /></Row>
   </Worksheet>
   <Worksheet name="Illustration">
-    <Image cell="A1" width={96} height={48} data={logo} altText="Tiny sample logo" decorative={true} />
+    <Image cell="A1" width={96} height={48} offsetX={7} offsetY={3} data={logo} altText="Tiny sample logo" decorative={true} />
     <Chart type="column" cell="D2" width={240} height={120}>
       <Series values="Data!$B$2:$B$3" categories="Data!$A$2:$A$3" />
     </Chart>
-    <Image cell="M1" width={48} height={24} data={logo} />
+    <Image cell="M1" width={48} height={24} offsetX={11} offsetY={4} data={logo} movement="fixed" />
   </Worksheet>
 </Workbook>;

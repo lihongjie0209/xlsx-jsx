@@ -131,7 +131,9 @@ fn spec_exposes_embedded_image_component_properties() {
         .success()
         .stdout(predicate::str::contains("\"const\": \"Image\""))
         .stdout(predicate::str::contains("data:image/(png|jpeg|gif|bmp)"))
-        .stdout(predicate::str::contains("decorative"));
+        .stdout(predicate::str::contains("decorative"))
+        .stdout(predicate::str::contains("offsetX"))
+        .stdout(predicate::str::contains("moveAndSize"));
 }
 
 #[test]
@@ -176,6 +178,26 @@ export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} hei
 }
 
 #[test]
+fn validates_image_offsets_inside_the_default_cell() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("out-of-cell-image-offset.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} height={1} offsetX={64} data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Image.offsetX"))
+        .stderr(predicate::str::contains("0 through 63 pixels"));
+}
+
+#[test]
 #[expect(
     clippy::too_many_lines,
     reason = "This end-to-end test checks media bytes and picture/chart semantics across reverse, rebuild, and a second reverse."
@@ -216,6 +238,9 @@ fn builds_reverses_and_rebuilds_embedded_image_without_manifest() {
         "{source}"
     );
     assert!(source.contains("decorative={true}"), "{source}");
+    assert!(source.contains("offsetX={7}"), "{source}");
+    assert!(source.contains("offsetY={3}"), "{source}");
+    assert!(source.contains("movement=\"fixed\""), "{source}");
     let first_image = source
         .find("<Image cell={\"A1\"}")
         .expect("first image is rendered");
@@ -280,6 +305,11 @@ fn builds_reverses_and_rebuilds_embedded_image_without_manifest() {
     );
     assert!(
         second_source.contains("<Chart type=\"column\""),
+        "{second_source}"
+    );
+    assert!(second_source.contains("offsetX={7}"), "{second_source}");
+    assert!(
+        second_source.contains("movement=\"fixed\""),
         "{second_source}"
     );
     assert!(second_source.contains(IMAGE_DATA_URI), "{second_source}");

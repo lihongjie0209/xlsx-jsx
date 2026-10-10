@@ -523,7 +523,10 @@
             "height": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "data": { "type": "string", "pattern": "^data:image/(png|jpeg|gif|bmp);base64,[A-Za-z0-9+/]+={0,2}$" },
             "altText": { "type": "string", "maxLength": 255 },
-            "decorative": { "type": "boolean" }
+            "decorative": { "type": "boolean" },
+            "offsetX": { "type": "integer", "minimum": 0, "maximum": 63 },
+            "offsetY": { "type": "integer", "minimum": 0, "maximum": 19 },
+            "movement": { "enum": ["moveAndSize", "moveOnly", "fixed"] }
           },
           "additionalProperties": false
         },
