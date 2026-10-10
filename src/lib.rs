@@ -1908,6 +1908,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "horizontalAxisMinorTickType",
             "verticalAxisMajorTickType",
             "verticalAxisMinorTickType",
+            "horizontalAxisLabelPosition",
+            "verticalAxisLabelPosition",
             "showLegend",
             "legendPosition",
             "holeSize",
@@ -2007,6 +2009,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_value_axis_reversed(chart, chart_type)?;
     validate_chart_category_axis_intervals(chart, chart_type)?;
     validate_chart_axis_tick_types(chart, chart_type)?;
+    validate_chart_axis_label_positions(chart, chart_type)?;
     validate_chart_axis_units(chart, chart_type)?;
     validate_chart_gridlines(chart, chart_type)?;
     validate_chart_legend(chart)
@@ -2178,6 +2181,28 @@ fn validate_chart_axis_tick_types(chart: &Node, chart_type: &str) -> Result<()> 
         {
             return Err(Error::Compile(format!(
                 "Chart.{property} must be cross, inside, outside, or none; remove the property or choose one of these tick types"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_axis_label_positions(chart: &Node, chart_type: &str) -> Result<()> {
+    for property in ["horizontalAxisLabelPosition", "verticalAxisLabelPosition"] {
+        let Some(value) = chart.props.get(property) else {
+            continue;
+        };
+        if matches!(chart_type, "pie" | "doughnut") {
+            return Err(Error::Compile(format!(
+                "Chart.{property} is not supported for pie or doughnut charts because they have no axes; omit it or use a chart with axes"
+            )));
+        }
+        if !value
+            .as_str()
+            .is_some_and(|value| matches!(value, "nextTo" | "high" | "low" | "none"))
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be nextTo, high, low, or none; remove the property or choose one of these label positions"
             )));
         }
     }

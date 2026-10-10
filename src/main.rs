@@ -11,19 +11,20 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use rust_xlsxwriter::{
-    Chart, ChartAxisTickType, ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color,
-    ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
-    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
-    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
-    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
-    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
-    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
-    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
-    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
-    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
-    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
-    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
-    TableColumn, TableStyle, Url, Workbook,
+    Chart, ChartAxisLabelPosition, ChartAxisTickType, ChartLegendPosition, ChartLine, ChartMarker,
+    ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
+    ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
+    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
+    ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
+    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
+    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
+    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
+    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
+    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
+    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
+    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
+    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
+    Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -942,7 +943,40 @@ fn configure_chart_category_axis_settings(
     component: &Node,
 ) -> xlsx_jsx::Result<()> {
     configure_chart_category_axis_intervals(chart, component);
-    configure_chart_axis_tick_types(chart, component)
+    configure_chart_axis_tick_types(chart, component)?;
+    configure_chart_axis_label_positions(chart, component)
+}
+
+fn configure_chart_axis_label_positions(
+    chart: &mut Chart,
+    component: &Node,
+) -> xlsx_jsx::Result<()> {
+    for (property, horizontal) in [
+        ("horizontalAxisLabelPosition", true),
+        ("verticalAxisLabelPosition", false),
+    ] {
+        let Some(value) = component.props.get(property).and_then(Value::as_str) else {
+            continue;
+        };
+        let position = match value {
+            "nextTo" => ChartAxisLabelPosition::NextTo,
+            "high" => ChartAxisLabelPosition::High,
+            "low" => ChartAxisLabelPosition::Low,
+            "none" => ChartAxisLabelPosition::None,
+            _ => {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} must be nextTo, high, low, or none; choose one of these label positions"
+                )));
+            }
+        };
+        let axis = if horizontal {
+            chart.x_axis()
+        } else {
+            chart.y_axis()
+        };
+        axis.set_label_position(position);
+    }
+    Ok(())
 }
 
 fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
@@ -3878,7 +3912,25 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
         }
     }
     append_chart_axis_tick_properties(&mut properties, chart);
+    append_chart_axis_label_properties(&mut properties, chart);
     properties
+}
+
+fn append_chart_axis_label_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (name, value) in [
+        (
+            "horizontalAxisLabelPosition",
+            chart.horizontal_axis_label_position,
+        ),
+        (
+            "verticalAxisLabelPosition",
+            chart.vertical_axis_label_position,
+        ),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}=\"{value}\"");
+        }
+    }
 }
 
 fn append_chart_axis_tick_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -6670,6 +6722,10 @@ fn parse_chart_xml(
     let mut horizontal_axis_minor_tick_type_seen = false;
     let mut vertical_axis_major_tick_type_seen = false;
     let mut vertical_axis_minor_tick_type_seen = false;
+    let mut horizontal_axis_label_position: Option<&'static str> = None;
+    let mut vertical_axis_label_position: Option<&'static str> = None;
+    let mut horizontal_axis_label_position_seen = false;
+    let mut vertical_axis_label_position_seen = false;
     let mut legend_seen = false;
     let mut legend_deleted = false;
     let mut legend_position: Option<&'static str> = None;
@@ -6874,6 +6930,67 @@ fn parse_chart_xml(
                         }
                         *seen = true;
                         *target = Some(tick_type);
+                    }
+                    "tickLblPos" => {
+                        if !stack.iter().any(|ancestor| {
+                            matches!(ancestor.as_str(), "catAx" | "dateAx" | "valAx")
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has tickLblPos outside a primary chart axis; repair the axis structure"
+                            )));
+                        }
+                        let Some(position @ ("b" | "t" | "l" | "r")) = current_axis_position else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has tickLblPos on an axis without a supported axPos; repair the axis position"
+                            )));
+                        };
+                        let raw_position = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            });
+                        let Some(label_position) =
+                            raw_position.and_then(|value| match value.as_str() {
+                                "nextTo" => Some("nextTo"),
+                                "high" => Some("high"),
+                                "low" => Some("low"),
+                                "none" => Some("none"),
+                                _ => None,
+                            })
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an unsupported tickLblPos; use nextTo, high, low, or none"
+                            )));
+                        };
+                        let (seen, target) = if matches!(position, "b" | "t") {
+                            (
+                                &mut horizontal_axis_label_position_seen,
+                                &mut horizontal_axis_label_position,
+                            )
+                        } else {
+                            (
+                                &mut vertical_axis_label_position_seen,
+                                &mut vertical_axis_label_position,
+                            )
+                        };
+                        if *seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats tickLblPos for the same axis position; remove secondary-axis labels or keep one declaration"
+                            )));
+                        }
+                        *seen = true;
+                        if label_position != "nextTo" {
+                            *target = Some(label_position);
+                        }
                     }
                     "legend" => {
                         if legend_seen {
@@ -7937,6 +8054,8 @@ fn parse_chart_xml(
         horizontal_axis_minor_tick_type,
         vertical_axis_major_tick_type,
         vertical_axis_minor_tick_type,
+        horizontal_axis_label_position,
+        vertical_axis_label_position,
         y_axis_major_unit,
         y_axis_minor_unit,
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
@@ -8550,7 +8669,7 @@ fn is_supported_chart_attribute(
             value.parse::<u16>().is_ok_and(|interval| interval > 0)
         }
         ("axPos", "val") => matches!(value, "b" | "l" | "t" | "r"),
-        ("tickLblPos", "val") => value == "nextTo",
+        ("tickLblPos", "val") => matches!(value, "nextTo" | "high" | "low" | "none"),
         ("majorTickMark" | "minorTickMark", "val") => {
             matches!(value, "cross" | "in" | "out" | "none")
         }
@@ -11097,6 +11216,8 @@ struct WorksheetChart {
     horizontal_axis_minor_tick_type: Option<&'static str>,
     vertical_axis_major_tick_type: Option<&'static str>,
     vertical_axis_minor_tick_type: Option<&'static str>,
+    horizontal_axis_label_position: Option<&'static str>,
+    vertical_axis_label_position: Option<&'static str>,
     show_legend: bool,
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,

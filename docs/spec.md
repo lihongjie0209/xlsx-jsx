@@ -168,6 +168,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   reject these properties because they have no axes. Reverse preserves the
   four OOXML `majorTickMark` / `minorTickMark` values and rejects secondary-axis
   ticks or unsupported tick semantics.
+- `Chart.horizontalAxisLabelPosition?: "nextTo" | "high" | "low" | "none"`
+  and `Chart.verticalAxisLabelPosition?: "nextTo" | "high" | "low" | "none"`
+  position labels on the primary axes. The names follow physical OOXML axis
+  position (`b`/`t` versus `l`/`r`) for bar, reversed, and scatter charts.
+  Omission and `nextTo` use the writer default; reverse folds explicit
+  `nextTo` to omission and preserves non-default values. Pie/doughnut reject
+  these properties. Secondary-axis and unsupported label-position semantics
+  are rejected rather than discarded.
 - `Chart.horizontalAxisMajorGridlines?: boolean`,
   `Chart.horizontalAxisMinorGridlines?: boolean`,
   `Chart.verticalAxisMajorGridlines?: boolean`, and

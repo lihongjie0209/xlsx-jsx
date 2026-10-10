@@ -2,8 +2,8 @@ use assert_cmd::Command;
 use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
-    Chart as XlsxChart, ChartAxisTickType, ChartLine, ChartMarker, ChartType,
-    Workbook as XlsxWorkbook,
+    Chart as XlsxChart, ChartAxisLabelPosition, ChartAxisTickType, ChartLine, ChartMarker,
+    ChartType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -139,6 +139,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("horizontalAxisMinorTickType"))
         .stdout(predicate::str::contains("verticalAxisMajorTickType"))
         .stdout(predicate::str::contains("verticalAxisMinorTickType"))
+        .stdout(predicate::str::contains("horizontalAxisLabelPosition"))
+        .stdout(predicate::str::contains("verticalAxisLabelPosition"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
         .stdout(predicate::str::contains("yAxisMinorUnit"))
         .stdout(predicate::str::contains("horizontalAxisMajorGridlines"))
@@ -1079,6 +1081,97 @@ fn reverses_external_chart_axis_tick_types_without_a_manifest() {
     ] {
         assert!(chart_xml.contains(tick), "missing {tick} in {chart_xml}");
     }
+}
+
+#[test]
+fn reverses_external_chart_axis_label_positions_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-label-positions.xlsx");
+    let output_path = directory.path().join("external-axis-label-positions.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .x_axis()
+        .set_label_position(ChartAxisLabelPosition::High);
+    chart
+        .y_axis()
+        .set_label_position(ChartAxisLabelPosition::Low);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("horizontalAxisLabelPosition=\"high\""));
+    assert!(source.contains("verticalAxisLabelPosition=\"low\""));
+
+    let rebuilt_path = directory.path().join("rebuilt-axis-label-positions.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<c:tickLblPos val=\"high\"/>"));
+    assert!(chart_xml.contains("<c:tickLblPos val=\"low\"/>"));
+}
+
+#[test]
+fn rejects_unknown_chart_axis_label_position_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-axis-label-position.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" horizontalAxisLabelPosition="center"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "horizontalAxisLabelPosition must be nextTo, high, low, or none",
+        ))
+        .stderr(predicate::str::contains(
+            "choose one of these label positions",
+        ));
+}
+
+#[test]
+fn rejects_chart_axis_label_positions_for_pie_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("pie-axis-label-position.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="pie" cell="D2" verticalAxisLabelPosition="none"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "verticalAxisLabelPosition is not supported for pie or doughnut charts",
+        ))
+        .stderr(predicate::str::contains("use a chart with axes"));
 }
 
 #[test]
