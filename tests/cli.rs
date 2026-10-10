@@ -123,6 +123,169 @@ fn spec_exposes_chart_components_and_properties() {
 }
 
 #[test]
+fn spec_exposes_embedded_image_component_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"const\": \"Image\""))
+        .stdout(predicate::str::contains("data:image/(png|jpeg|gif|bmp)"))
+        .stdout(predicate::str::contains("decorative"));
+}
+
+#[test]
+fn validates_image_data_uri_and_rejects_invalid_data_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-image.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} height={1} data="data:image/png;base64,not_base64!" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Image.data"))
+        .stderr(predicate::str::contains("not valid base64"))
+        .stderr(predicate::str::contains("standard base64"));
+}
+
+#[test]
+fn validate_rejects_truncated_image_payload_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("truncated-image.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} height={1} data="data:image/png;base64,iVBORw0KGgo=" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not a valid `png` image"))
+        .stderr(predicate::str::contains("complete supported image file"));
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "This end-to-end test checks media bytes and picture/chart semantics across reverse, rebuild, and a second reverse."
+)]
+fn builds_reverses_and_rebuilds_embedded_image_without_manifest() {
+    const IMAGE_DATA_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==";
+    let directory = tempdir().expect("temporary directory is available");
+    let input = std::path::Path::new("examples/images.tsx");
+    let output = directory.path().join("image.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(input)
+        .args(["-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let mut archive = ZipArchive::new(std::fs::File::open(&output).expect("output exists"))
+        .expect("xlsx is a ZIP package");
+    assert!(
+        archive
+            .file_names()
+            .any(|name| name == "xl/media/image1.png")
+    );
+    let reversed = directory.path().join("image-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(source.contains(IMAGE_DATA_URI), "{source}");
+    assert!(
+        source.contains("altText={\"Tiny sample logo\"}"),
+        "{source}"
+    );
+    assert!(source.contains("decorative={true}"), "{source}");
+    let first_image = source
+        .find("<Image cell={\"A1\"}")
+        .expect("first image is rendered");
+    let chart = source
+        .find("<Chart type=\"column\"")
+        .expect("chart is rendered");
+    let second_image = source
+        .find("<Image cell={\"M1\"}")
+        .expect("second image is rendered");
+    assert!(
+        first_image < second_image && second_image < chart,
+        "{source}"
+    );
+    let rebuilt = directory.path().join("image-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let mut rebuilt_archive =
+        ZipArchive::new(std::fs::File::open(&rebuilt).expect("rebuilt workbook exists"))
+            .expect("rebuilt XLSX is a ZIP package");
+    assert!(
+        rebuilt_archive
+            .file_names()
+            .any(|name| name == "xl/media/image1.png")
+    );
+    let mut original_image = Vec::new();
+    archive
+        .by_name("xl/media/image1.png")
+        .expect("source image exists")
+        .read_to_end(&mut original_image)
+        .expect("source image reads");
+    let mut rebuilt_image = Vec::new();
+    rebuilt_archive
+        .by_name("xl/media/image1.png")
+        .expect("rebuilt image exists")
+        .read_to_end(&mut rebuilt_image)
+        .expect("rebuilt image reads");
+    assert_eq!(original_image, rebuilt_image);
+    let twice_reversed = directory.path().join("image-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&twice_reversed)
+        .assert()
+        .success();
+    let second_source =
+        std::fs::read_to_string(twice_reversed).expect("second reverse output exists");
+    assert!(
+        second_source.contains("<Image cell={\"A1\"}"),
+        "{second_source}"
+    );
+    assert!(
+        second_source.contains("<Image cell={\"M1\"}"),
+        "{second_source}"
+    );
+    assert!(
+        second_source.contains("<Chart type=\"column\""),
+        "{second_source}"
+    );
+    assert!(second_source.contains(IMAGE_DATA_URI), "{second_source}");
+}
+
+#[test]
 fn validates_chart_series_ranges_and_actionable_errors() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-chart.tsx");

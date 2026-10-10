@@ -1,3 +1,5 @@
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
+use rust_xlsxwriter::Image as XlsxImage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 pub mod error;
@@ -1560,6 +1562,7 @@ fn validate_worksheet_children(
     let mut table_ranges = Vec::new();
     let mut note_cells = std::collections::HashSet::new();
     let mut chart_nodes = Vec::new();
+    let mut image_nodes = Vec::new();
     let mut chart_custom_width_ranges = Vec::new();
     let mut chart_custom_height_rows = std::collections::HashSet::new();
     let mut saw_row = false;
@@ -1603,6 +1606,17 @@ fn validate_worksheet_children(
             }
             validate_chart(&child, child_index)?;
             chart_nodes.push(child);
+            continue;
+        }
+        if child.r#type == "Image" {
+            if saw_row {
+                return Err(Error::Compile(format!(
+                    "Worksheet `{sheet_name}` Image at child {} appears after a Row; move images before rows",
+                    child_index + 1
+                )));
+            }
+            validate_image(&child, child_index)?;
+            image_nodes.push(child);
             continue;
         }
         if child.r#type == "Column" {
@@ -1783,6 +1797,17 @@ fn validate_worksheet_children(
     collapsed_outline_ranges(&column_outline, "column").map_err(Error::Compile)?;
     validate_chart_layouts(
         &chart_nodes,
+        &chart_custom_width_ranges,
+        &chart_custom_height_rows,
+        sheet
+            .props
+            .get("defaultRowHeightPixels")
+            .and_then(Value::as_u64)
+            .is_some_and(|height| height != 20),
+        sheet_name,
+    )?;
+    validate_image_layouts(
+        &image_nodes,
         &chart_custom_width_ranges,
         &chart_custom_height_rows,
         sheet
@@ -2064,6 +2089,144 @@ fn validate_chart_layouts(
         if crosses_custom_width || crosses_custom_height || has_custom_default_height {
             return Err(Error::Compile(format!(
                 "Chart at {cell} on Worksheet `{sheet_name}` crosses custom row/column dimensions; external chart reverse requires standard 64×20-pixel cells in the chart footprint. Move the chart or remove the intersecting custom widths/heights"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_image(image: &Node, index: usize) -> Result<()> {
+    if !image.children.is_empty() {
+        return Err(Error::Compile(format!(
+            "Image at declaration {} cannot have children; provide image bytes through data",
+            index + 1
+        )));
+    }
+    reject_unknown_props(
+        image,
+        &["cell", "width", "height", "data", "altText", "decorative"],
+        "Image",
+    )?;
+    let cell = image
+        .props
+        .get("cell")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile("Image.cell is required; use an A1 cell such as A1".into())
+        })?;
+    if parse_a1_cell_reference(cell).is_none() {
+        return Err(Error::Compile(format!(
+            "Image.cell `{cell}` is not a valid A1 anchor; use a cell such as B2"
+        )));
+    }
+    for property in ["width", "height"] {
+        if !image
+            .props
+            .get(property)
+            .and_then(Value::as_u64)
+            .is_some_and(|value| (1..=1790).contains(&value))
+        {
+            return Err(Error::Compile(format!(
+                "Image.{property} is required and must be an integer from 1 to 1790 pixels"
+            )));
+        }
+    }
+    let data_uri = image
+        .props
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile("Image.data is required; use a valid base64 data URI".into())
+        })?;
+    let (media_type, encoded) = data_uri
+        .strip_prefix("data:image/")
+        .and_then(|value| value.split_once(";base64,"))
+        .ok_or_else(|| {
+            Error::Compile(
+                "Image.data must be a valid base64 data URI; use data:image/png;base64,..., data:image/jpeg;base64,..., data:image/gif;base64,..., or data:image/bmp;base64,...".into(),
+            )
+        })?;
+    let bytes = BASE64.decode(encoded).map_err(|error| {
+        Error::Compile(format!(
+            "Image.data is not valid base64 ({error}); encode the image bytes with standard base64"
+        ))
+    })?;
+    let matches_type = match media_type {
+        "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "bmp" => bytes.starts_with(b"BM"),
+        _ => false,
+    };
+    if !matches_type || bytes.is_empty() {
+        return Err(Error::Compile(format!(
+            "Image.data media type `{media_type}` does not match a supported image payload; use matching PNG, JPEG, GIF, or BMP bytes"
+        )));
+    }
+    XlsxImage::new_from_buffer(&bytes).map_err(|error| {
+        Error::Compile(format!(
+            "Image.data is not a valid `{media_type}` image ({error}); use a complete supported image file encoded as base64"
+        ))
+    })?;
+    if let Some(value) = image.props.get("altText") {
+        let Some(value) = value.as_str() else {
+            return Err(Error::Compile(
+                "Image.altText must be a string; use descriptive text or remove the property"
+                    .into(),
+            ));
+        };
+        if value.chars().count() > 255 || !value.chars().all(is_valid_xml_character) {
+            return Err(Error::Compile(
+                "Image.altText must contain at most 255 valid XML characters; shorten it or remove control characters".into(),
+            ));
+        }
+    }
+    if image
+        .props
+        .get("decorative")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(Error::Compile(
+            "Image.decorative must be a boolean; use true or false".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_image_layouts(
+    images: &[Node],
+    custom_width_ranges: &[(u64, u64)],
+    custom_height_rows: &std::collections::HashSet<usize>,
+    has_custom_default_height: bool,
+    sheet_name: &str,
+) -> Result<()> {
+    for image in images {
+        let cell = image.props["cell"].as_str().expect("validated Image.cell");
+        let (first_row, first_column) =
+            parse_a1_cell_reference(cell).expect("validated Image.cell");
+        let width = image.props["width"]
+            .as_u64()
+            .expect("validated Image.width");
+        let height = image.props["height"]
+            .as_u64()
+            .expect("validated Image.height");
+        let last_column = u64::from(first_column) + (width - 1) / 64;
+        let last_row = usize::try_from(first_row).unwrap_or_default()
+            + usize::try_from((height - 1) / 20).unwrap_or_default();
+        if last_column >= 16_384 || last_row >= 1_048_576 {
+            return Err(Error::Compile(format!(
+                "Image at {cell} on Worksheet `{sheet_name}` extends beyond Excel's worksheet grid; move it up/left or reduce its pixel dimensions"
+            )));
+        }
+        let crosses_custom_width = custom_width_ranges
+            .iter()
+            .any(|(first, last)| *first <= last_column + 1 && *last > u64::from(first_column));
+        let crosses_custom_height = custom_height_rows
+            .iter()
+            .any(|row| *row >= first_row as usize && *row <= last_row);
+        if crosses_custom_width || crosses_custom_height || has_custom_default_height {
+            return Err(Error::Compile(format!(
+                "Image at {cell} on Worksheet `{sheet_name}` crosses custom row/column dimensions; external image reverse requires standard 64×20-pixel cells in the image footprint. Move it or remove the intersecting custom widths/heights"
             )));
         }
     }

@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.59
+Version: 1.60
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -20,6 +20,26 @@ result into a JSON-compatible workbook IR, writes `.xlsx` files with
   </Worksheet>
 </Workbook>
 ```
+
+### Image
+
+`Image` embeds raster image bytes in a worksheet and reverses external image
+relationships and drawing anchors without relying on a private manifest.
+
+- `cell`, `width`, `height`, and `data` are required. `cell` is an A1 anchor;
+  width and height are positive integer pixels from 1 through 1790. `data` is a
+  base64 data URI with one of `image/png`, `image/jpeg`, `image/gif`, or
+  `image/bmp`; the encoded bytes are preserved exactly.
+- `altText?: string` is limited to 255 valid XML characters.
+  `decorative?: boolean` marks an image as decorative. Both are preserved in
+  the drawing's non-visual picture properties.
+- Images are direct worksheet children before rows. Reverse supports the
+  writer's two-cell anchors on the default 64×20-pixel row/column grid, zero
+  start offsets, whole-pixel dimensions, and default rectangular stretch
+  geometry. Unsupported crops, hyperlinks, custom transforms/effects, drawing
+  shapes, or geometry that cannot be represented exactly fail with guidance.
+- Data URIs make reverse output self-contained and recompilable; authored file
+  paths and remote fetches are not part of this interface.
 
 ### Chart
 

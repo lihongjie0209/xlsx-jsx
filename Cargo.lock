@@ -3098,6 +3098,7 @@ name = "xlsx-jsx"
 version = "0.1.0"
 dependencies = [
  "assert_cmd",
+ "base64",
  "calamine",
  "chrono",
  "clap",
