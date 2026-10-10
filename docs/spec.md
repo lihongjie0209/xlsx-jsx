@@ -56,13 +56,17 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 
 - `type` is one of `area`, `areaStacked`, `areaPercentStacked`, `column`,
   `columnStacked`, `columnPercentStacked`, `bar`, `barStacked`,
-  `barPercentStacked`, `line`, `lineStacked`, `linePercentStacked`, `pie`, or
-  `doughnut`.
+  `barPercentStacked`, `line`, `lineStacked`, `linePercentStacked`, `radar`,
+  `radarWithMarkers`, `radarFilled`, `pie`, or `doughnut`.
   The `*Stacked` and `*PercentStacked` variants map to the matching OOXML chart
   grouping; plain `area`, `column`, `bar`, and `line` use the writer's standard
   grouping (clustered for bar/column). Reverse reconstructs the DSL type from
   the chart element, bar direction, and grouping; unknown groupings fail with
   repair guidance.
+- Radar charts use `Chart.type="radar"` for no markers,
+  `"radarWithMarkers"` for point markers, and `"radarFilled"` for filled
+  areas. Reverse identifies marker behavior from the radar style and each
+  series marker; mixed marker behavior is rejected rather than normalized.
 - Pie and doughnut charts require exactly one `Series` and have no X/Y axes.
   `Chart.holeSize?: number` is valid only for `doughnut`, uses integer
   percentages from 10 through 90, and defaults to the writer's 50% hole. The

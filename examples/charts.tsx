@@ -59,5 +59,15 @@ export default <Workbook>
     <Chart type="doughnut" cell="K110" width={480} height={288} holeSize={65} firstSliceAngle={45}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue mix" />
     </Chart>
+    <Chart type="radar" cell="D128" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue radar" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses radar" />
+    </Chart>
+    <Chart type="radarWithMarkers" cell="K128" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue radar points" />
+    </Chart>
+    <Chart type="radarFilled" cell="D146" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue radar filled" />
+    </Chart>
   </Worksheet>
 </Workbook>;

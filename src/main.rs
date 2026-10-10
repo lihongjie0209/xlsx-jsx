@@ -711,6 +711,9 @@ fn compile_chart(
         "line" => ChartType::Line,
         "lineStacked" => ChartType::LineStacked,
         "linePercentStacked" => ChartType::LinePercentStacked,
+        "radar" => ChartType::Radar,
+        "radarWithMarkers" => ChartType::RadarWithMarkers,
+        "radarFilled" => ChartType::RadarFilled,
         "pie" => ChartType::Pie,
         "doughnut" => ChartType::Doughnut,
         _ => unreachable!("validated Chart.type"),
@@ -6197,6 +6200,8 @@ fn parse_chart_xml(
         "grouping",
         "overlap",
         "lineChart",
+        "radarChart",
+        "radarStyle",
         "pieChart",
         "ser",
         "idx",
@@ -6225,6 +6230,7 @@ fn parse_chart_xml(
         "lblAlgn",
         "lblOffset",
         "crossBetween",
+        "majorTickMark",
         "valAx",
         "majorGridlines",
         "numFmt",
@@ -6265,6 +6271,8 @@ fn parse_chart_xml(
     let mut hole_size_seen = false;
     let mut first_slice_angle = None;
     let mut first_slice_angle_seen = false;
+    let mut radar_style = None;
+    let mut radar_style_seen = false;
     let mut chart_title_text = String::new();
     let mut title_paragraphs = 0_usize;
     let mut title_runs = 0_usize;
@@ -6401,7 +6409,34 @@ fn parse_chart_xml(
                     "areaChart" => chart_type = Some(set_chart_type(chart_type, "area", part)?),
                     "barChart" => chart_type = Some(set_chart_type(chart_type, "bar", part)?),
                     "lineChart" => chart_type = Some(set_chart_type(chart_type, "line", part)?),
+                    "radarChart" => chart_type = Some(set_chart_type(chart_type, "radar", part)?),
                     "pieChart" => chart_type = Some(set_chart_type(chart_type, "pie", part)?),
+                    "radarStyle" => {
+                        if radar_style_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats radarStyle; retain one radar style"
+                            )));
+                        }
+                        radar_style_seen = true;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                radar_style = match value.as_ref() {
+                                    "standard" => Some("standard"),
+                                    "marker" => Some("marker"),
+                                    "filled" => Some("filled"),
+                                    _ => None,
+                                };
+                            }
+                        }
+                    }
                     "grouping" if chart_type.is_some_and(is_groupable_chart_type) => {
                         if chart_grouping_seen {
                             return Err(Error::Reverse(format!(
@@ -6479,7 +6514,22 @@ fn parse_chart_xml(
                         categories: None,
                         name: None,
                         title: None,
+                        marker_seen: false,
+                        marker_none: false,
                     }),
+                    "marker" if stack.iter().any(|ancestor| ancestor == "ser") => {
+                        if let Some(current) = series.last_mut() {
+                            current.marker_seen = true;
+                        }
+                    }
+                    "symbol"
+                        if stack.iter().any(|ancestor| ancestor == "marker")
+                            && stack.iter().any(|ancestor| ancestor == "ser") =>
+                    {
+                        if let Some(current) = series.last_mut() {
+                            current.marker_none = true;
+                        }
+                    }
                     "tx" if !series.is_empty() => title_source_open = true,
                     "v" if !series.is_empty()
                         && stack.last().is_some_and(|ancestor| ancestor == "tx") =>
@@ -6706,6 +6756,7 @@ fn parse_chart_xml(
             "chart part `{part}` has no supported chart type; use an area, column, bar, line, pie, or doughnut chart"
         ))
     })?;
+    let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     if series.is_empty() {
         return Err(Error::Reverse(format!(
             "chart part `{part}` contains no data series; add at least one series"
@@ -7120,6 +7171,50 @@ fn chart_type_for_grouping(base: &'static str, grouping: &str) -> Option<&'stati
     }
 }
 
+fn resolve_radar_chart_type(
+    chart_type: &'static str,
+    radar_style: Option<&'static str>,
+    series: &[WorksheetChartSeries],
+    part: &str,
+) -> xlsx_jsx::Result<&'static str> {
+    if chart_type != "radar" {
+        return Ok(chart_type);
+    }
+    let marker_count = series.iter().filter(|item| item.marker_seen).count();
+    if marker_count != 0 && marker_count != series.len() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has mixed radar marker overrides; use the same marker behavior for every series"
+        )));
+    }
+    let disabled_marker_count = series.iter().filter(|item| item.marker_none).count();
+    if disabled_marker_count != 0 && disabled_marker_count != marker_count && marker_count != 0 {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has mixed radar marker visibility; use the same marker behavior for every series"
+        )));
+    }
+    let markers_disabled = (marker_count > 0 && series.iter().all(|item| item.marker_none))
+        || radar_style == Some("standard");
+    let markers_enabled = (marker_count > 0 && series.iter().all(|item| !item.marker_none))
+        || (marker_count == 0 && radar_style == Some("marker"));
+    let markers_overridden = marker_count > 0;
+    match radar_style {
+        Some("filled") if !markers_overridden => Ok("radarFilled"),
+        Some("filled") => Err(Error::Reverse(format!(
+            "chart part `{part}` combines filled radar with per-series markers; remove marker overrides or use a standard radar chart"
+        ))),
+        Some("standard") if !markers_enabled => Ok("radar"),
+        Some("standard") => Err(Error::Reverse(format!(
+            "chart part `{part}` radarStyle=standard conflicts with enabled series markers; remove marker overrides or use radarStyle=marker"
+        ))),
+        Some("marker") | None if markers_disabled => Ok("radar"),
+        Some("marker") | None if markers_enabled => Ok("radarWithMarkers"),
+        None => Ok("radar"),
+        Some(_) => Err(Error::Reverse(format!(
+            "chart part `{part}` has an unsupported radar style; use standard, marker, or filled"
+        ))),
+    }
+}
+
 fn audit_chart_attributes(
     event: &BytesStart<'_>,
     tag: &str,
@@ -7140,6 +7235,10 @@ fn audit_chart_attributes(
         let accepted = match (tag, key.as_str()) {
             ("lang", "val") | ("endParaRPr" | "rPr", "lang") => value == "en-US",
             ("barDir", "val") => matches!(value.as_str(), "col" | "bar"),
+            ("radarStyle", "val") => {
+                chart_type == Some("radar")
+                    && matches!(value.as_str(), "standard" | "marker" | "filled")
+            }
             ("grouping", "val") => match chart_type {
                 Some("area") => {
                     matches!(value.as_str(), "standard" | "stacked" | "percentStacked")
@@ -7169,6 +7268,7 @@ fn audit_chart_attributes(
             ("orientation", "val") => value == "minMax",
             ("axPos", "val") => matches!(value.as_str(), "b" | "l"),
             ("tickLblPos", "val") => value == "nextTo",
+            ("majorTickMark", "val") => value == "cross",
             ("crosses", "val") => value == "autoZero",
             ("auto" | "plotVisOnly" | "marker" | "varyColors", "val")
             | ("numFmt", "sourceLinked") => value == "1",
@@ -9721,6 +9821,8 @@ struct WorksheetChartSeries {
     categories: Option<String>,
     name: Option<String>,
     title: Option<String>,
+    marker_seen: bool,
+    marker_none: bool,
 }
 
 #[derive(Clone)]

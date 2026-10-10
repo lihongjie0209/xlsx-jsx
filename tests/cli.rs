@@ -127,7 +127,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("showLegend"))
         .stdout(predicate::str::contains("areaPercentStacked"))
         .stdout(predicate::str::contains("holeSize"))
-        .stdout(predicate::str::contains("firstSliceAngle"));
+        .stdout(predicate::str::contains("firstSliceAngle"))
+        .stdout(predicate::str::contains("radarFilled"));
 }
 
 #[test]
@@ -461,6 +462,12 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     }
     assert!(source.contains("<Chart type=\"doughnut\""), "{source}");
     assert!(source.contains("firstSliceAngle={45}"), "{source}");
+    for chart_type in ["radar", "radarWithMarkers", "radarFilled"] {
+        assert!(
+            source.contains(&format!("<Chart type=\"{chart_type}\"")),
+            "{source}"
+        );
+    }
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -473,6 +480,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     assert_area_chart_groupings(&mut archive);
     assert_doughnut_hole_size(&mut archive);
     assert_first_slice_angles(&mut archive);
+    assert_radar_styles(&mut archive);
 
     let rebuilt = directory.path().join("charts-roundtrip.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -499,6 +507,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     assert_area_chart_groupings(&mut rebuilt_archive);
     assert_doughnut_hole_size(&mut rebuilt_archive);
     assert_first_slice_angles(&mut rebuilt_archive);
+    assert_radar_styles(&mut rebuilt_archive);
     drop(rebuilt_archive);
     let twice_reversed = directory.path().join("charts-roundtrip.tsx");
     Command::cargo_bin("xlsx-jsx")
@@ -549,6 +558,12 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
             && second_source.contains("firstSliceAngle={45}"),
         "{second_source}"
     );
+    for chart_type in ["radar", "radarWithMarkers", "radarFilled"] {
+        assert!(
+            second_source.contains(&format!("<Chart type=\"{chart_type}\"")),
+            "{second_source}"
+        );
+    }
     assert!(
         second_source.contains("values={\"Data!$C$2:$C$4\"}"),
         "{second_source}"
@@ -608,6 +623,34 @@ fn assert_first_slice_angles(archive: &mut ZipArchive<std::fs::File>) {
             chart_xml.contains(&format!("<c:firstSliceAng val=\"{angle}\"")),
             "{chart_xml}"
         );
+    }
+}
+
+fn assert_radar_styles(archive: &mut ZipArchive<std::fs::File>) {
+    for (part, style) in [
+        ("xl/charts/chart15.xml", "marker"),
+        ("xl/charts/chart16.xml", "marker"),
+        ("xl/charts/chart17.xml", "filled"),
+    ] {
+        let mut chart_xml = String::new();
+        archive
+            .by_name(part)
+            .expect("radar chart part exists")
+            .read_to_string(&mut chart_xml)
+            .expect("radar chart XML is readable");
+        assert!(
+            chart_xml.contains(&format!("<c:radarStyle val=\"{style}\"")),
+            "{chart_xml}"
+        );
+        if part == "xl/charts/chart15.xml" {
+            assert!(
+                chart_xml.matches("<c:marker>").count() == 2
+                    && chart_xml.matches("<c:symbol val=\"none\"/>").count() == 2,
+                "{chart_xml}"
+            );
+        } else {
+            assert!(!chart_xml.contains("<c:marker>"), "{chart_xml}");
+        }
     }
 }
 
@@ -977,6 +1020,31 @@ fn reverse_rejects_out_of_range_first_slice_angle_with_guidance() {
             "unsupported `firstSliceAng@val=361`",
         ))
         .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn reverse_rejects_mixed_radar_marker_behavior_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("mixed-radar-markers.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart15.xml", |xml| {
+        xml.replacen("<c:marker><c:symbol val=\"none\"/></c:marker>", "", 1)
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mixed radar marker overrides"))
+        .stderr(predicate::str::contains(
+            "same marker behavior for every series",
+        ));
 }
 
 #[test]

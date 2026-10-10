@@ -1863,6 +1863,9 @@ fn is_supported_chart_type(chart_type: &str) -> bool {
             | "line"
             | "lineStacked"
             | "linePercentStacked"
+            | "radar"
+            | "radarWithMarkers"
+            | "radarFilled"
             | "pie"
             | "doughnut"
     )
