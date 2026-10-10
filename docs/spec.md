@@ -150,6 +150,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   value axis. Scatter charts (two value axes) and pie/doughnut charts (no axes)
   reject it. Reverse preserves explicit reversed value-axis orientation and
   rejects reversed category/date axes rather than silently normalizing them.
+- `Chart.categoryAxisLabelInterval?: integer` and
+  `Chart.categoryAxisTickInterval?: integer` set the interval between visible
+  category/date-axis labels and tick marks, respectively. Each accepts 1–65535;
+  omission or `1` uses the writer/Excel default. These settings are unavailable
+  on scatter, pie, and doughnut charts because their axes are value-only or
+  absent. Reverse preserves `tickLblSkip` and `tickMarkSkip` only on a primary
+  category/date axis, omits the semantically default value `1`, and rejects
+  invalid values or skips on value axes.
 - `Chart.horizontalAxisMajorGridlines?: boolean`,
   `Chart.horizontalAxisMinorGridlines?: boolean`,
   `Chart.verticalAxisMajorGridlines?: boolean`, and

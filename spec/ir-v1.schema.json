@@ -503,6 +503,8 @@
             "yAxisMax": { "type": "number" },
             "yAxisLogBase": { "type": "integer", "minimum": 2, "maximum": 1000 },
             "valueAxisReversed": { "type": "boolean" },
+            "categoryAxisLabelInterval": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "categoryAxisTickInterval": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "yAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "horizontalAxisMajorGridlines": { "type": "boolean" },
@@ -537,6 +539,8 @@
                     { "required": ["yAxisMax"] },
                     { "required": ["yAxisLogBase"] },
                     { "required": ["valueAxisReversed"] },
+                    { "required": ["categoryAxisLabelInterval"] },
+                    { "required": ["categoryAxisTickInterval"] },
                     { "required": ["yAxisMajorUnit"] },
                     { "required": ["yAxisMinorUnit"] },
                     { "required": ["horizontalAxisMajorGridlines"] },
@@ -565,7 +569,9 @@
                     { "required": ["yAxisLogBase"] },
                     { "required": ["valueAxisReversed"] },
                     { "required": ["yAxisMajorUnit"] },
-                    { "required": ["yAxisMinorUnit"] }
+                    { "required": ["yAxisMinorUnit"] },
+                    { "required": ["categoryAxisLabelInterval"] },
+                    { "required": ["categoryAxisTickInterval"] }
                   ]
                 }
               }

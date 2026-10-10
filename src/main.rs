@@ -740,6 +740,7 @@ fn compile_chart(
     configure_chart_axis_bounds(&mut chart, component);
     configure_chart_axis_log_base(&mut chart, component);
     configure_chart_value_axis_reversed(&mut chart, component);
+    configure_chart_category_axis_intervals(&mut chart, component);
     configure_chart_axis_units(&mut chart, component);
     configure_chart_gridlines(&mut chart, component);
     if component.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
@@ -869,6 +870,36 @@ fn configure_chart_value_axis_reversed(chart: &mut Chart, component: &Node) {
         chart.y_axis()
     };
     value_axis.set_reverse();
+}
+
+fn configure_chart_category_axis_intervals(chart: &mut Chart, component: &Node) {
+    let category_axis = if component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|chart_type| chart_type.starts_with("bar"))
+    {
+        chart.y_axis()
+    } else {
+        chart.x_axis()
+    };
+    if let Some(interval) = component
+        .props
+        .get("categoryAxisLabelInterval")
+        .and_then(Value::as_u64)
+    {
+        category_axis.set_label_interval(
+            u16::try_from(interval).expect("validated category label interval"),
+        );
+    }
+    if let Some(interval) = component
+        .props
+        .get("categoryAxisTickInterval")
+        .and_then(Value::as_u64)
+    {
+        category_axis
+            .set_tick_interval(u16::try_from(interval).expect("validated category tick interval"));
+    }
 }
 
 fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
@@ -3755,6 +3786,18 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
                 .map(|value| format!("{{{value}}}")),
         ),
         (
+            "categoryAxisLabelInterval",
+            chart
+                .category_axis_label_interval
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "categoryAxisTickInterval",
+            chart
+                .category_axis_tick_interval
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
             "yAxisMajorUnit",
             chart.y_axis_major_unit.map(|value| format!("{{{value}}}")),
         ),
@@ -6466,6 +6509,8 @@ fn parse_chart_xml(
         "max",
         "majorUnit",
         "minorUnit",
+        "tickLblSkip",
+        "tickMarkSkip",
         "axPos",
         "tickLblPos",
         "crossAx",
@@ -6527,6 +6572,10 @@ fn parse_chart_xml(
     let mut value_axis_reversed = None;
     let mut value_axis_reversed_seen = false;
     let mut nonstandard_axis_position_seen = false;
+    let mut category_axis_label_interval = None;
+    let mut category_axis_tick_interval = None;
+    let mut category_axis_label_interval_seen = false;
+    let mut category_axis_tick_interval_seen = false;
     let mut y_axis_min_seen = false;
     let mut y_axis_max_seen = false;
     let mut y_axis_major_unit = None;
@@ -7150,6 +7199,54 @@ fn parse_chart_xml(
                             value_axis_reversed = Some(true);
                         }
                     }
+                    "tickLblSkip" | "tickMarkSkip" => {
+                        let category_axis_context = stack
+                            .iter()
+                            .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"));
+                        if !category_axis_context {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} on a value axis, which this DSL does not model; remove the skip or use a category/date axis"
+                            )));
+                        }
+                        let mut interval = None;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                interval =
+                                    value.parse::<u16>().ok().filter(|interval| *interval > 0);
+                            }
+                        }
+                        let Some(interval) = interval else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an invalid or missing {tag}; use an integer from 1 through 65535"
+                            )));
+                        };
+                        let (seen, target) = if tag == "tickLblSkip" {
+                            (
+                                &mut category_axis_label_interval_seen,
+                                &mut category_axis_label_interval,
+                            )
+                        } else {
+                            (
+                                &mut category_axis_tick_interval_seen,
+                                &mut category_axis_tick_interval,
+                            )
+                        };
+                        if *seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats {tag}; keep one category-axis interval of each kind"
+                            )));
+                        }
+                        *seen = true;
+                        *target = Some(interval);
+                    }
                     "majorUnit" | "minorUnit" => {
                         let category_axis_context = stack
                             .iter()
@@ -7678,6 +7775,9 @@ fn parse_chart_xml(
         y_axis_max,
         y_axis_log_base,
         value_axis_reversed,
+        category_axis_label_interval: category_axis_label_interval
+            .filter(|interval| *interval != 1),
+        category_axis_tick_interval: category_axis_tick_interval.filter(|interval| *interval != 1),
         y_axis_major_unit,
         y_axis_minor_unit,
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
@@ -8287,6 +8387,9 @@ fn is_supported_chart_attribute(
         ("majorUnit" | "minorUnit", "val") => value
             .parse::<f64>()
             .is_ok_and(|unit| unit.is_finite() && unit > 0.0),
+        ("tickLblSkip" | "tickMarkSkip", "val") => {
+            value.parse::<u16>().is_ok_and(|interval| interval > 0)
+        }
         ("axPos", "val") => matches!(value, "b" | "l" | "t" | "r"),
         ("tickLblPos", "val") => value == "nextTo",
         ("majorTickMark", "val") => value == "cross",
@@ -10821,6 +10924,8 @@ struct WorksheetChart {
     y_axis_max: Option<f64>,
     y_axis_log_base: Option<u16>,
     value_axis_reversed: Option<bool>,
+    category_axis_label_interval: Option<u16>,
+    category_axis_tick_interval: Option<u16>,
     y_axis_major_unit: Option<f64>,
     y_axis_minor_unit: Option<f64>,
     horizontal_axis_major_gridlines: Option<bool>,

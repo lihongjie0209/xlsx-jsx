@@ -132,6 +132,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisMax"))
         .stdout(predicate::str::contains("yAxisLogBase"))
         .stdout(predicate::str::contains("valueAxisReversed"))
+        .stdout(predicate::str::contains("categoryAxisLabelInterval"))
+        .stdout(predicate::str::contains("categoryAxisTickInterval"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
         .stdout(predicate::str::contains("yAxisMinorUnit"))
         .stdout(predicate::str::contains("horizontalAxisMajorGridlines"))
@@ -939,6 +941,125 @@ fn reverses_external_reversed_value_axis_without_a_manifest() {
             "{chart_xml}"
         );
     }
+}
+
+#[test]
+fn reverses_external_category_axis_intervals_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-category-axis-intervals.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-category-axis-intervals.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut column_chart = XlsxChart::new(ChartType::Column);
+    column_chart
+        .add_series()
+        .set_categories("Data!A2:A6")
+        .set_values("Data!B2:B6");
+    column_chart
+        .x_axis()
+        .set_label_interval(3)
+        .set_tick_interval(2);
+    worksheet.insert_chart(0, 5, &column_chart).unwrap();
+    let mut bar_chart = XlsxChart::new(ChartType::Bar);
+    bar_chart
+        .add_series()
+        .set_categories("Data!A2:A6")
+        .set_values("Data!B2:B6");
+    bar_chart
+        .y_axis()
+        .set_label_interval(4)
+        .set_tick_interval(5);
+    worksheet.insert_chart(20, 5, &bar_chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("categoryAxisLabelInterval={3}"), "{source}");
+    assert!(source.contains("categoryAxisTickInterval={2}"), "{source}");
+    assert!(source.contains("categoryAxisLabelInterval={4}"), "{source}");
+    assert!(source.contains("categoryAxisTickInterval={5}"), "{source}");
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-category-axis-intervals.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    for (part, label_interval, tick_interval) in [
+        ("xl/charts/chart1.xml", 3, 2),
+        ("xl/charts/chart2.xml", 4, 5),
+    ] {
+        let chart_xml = read_zip_part_for_test(&rebuilt_path, part);
+        assert!(
+            chart_xml.contains(&format!("<c:tickLblSkip val=\"{label_interval}\"/>")),
+            "{chart_xml}"
+        );
+        assert!(
+            chart_xml.contains(&format!("<c:tickMarkSkip val=\"{tick_interval}\"/>")),
+            "{chart_xml}"
+        );
+    }
+}
+
+#[test]
+fn rejects_zero_category_axis_label_interval_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-category-axis-interval.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" categoryAxisLabelInterval={0}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "categoryAxisLabelInterval must be an integer from 1 through 65535",
+        ))
+        .stderr(predicate::str::contains(
+            "omit it to use the default interval",
+        ));
+}
+
+#[test]
+fn rejects_category_axis_intervals_for_scatter_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-category-axis-interval.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" categoryAxisTickInterval={2}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "categoryAxisTickInterval is not supported for scatter",
+        ))
+        .stderr(predicate::str::contains(
+            "omit it or use a category/value chart",
+        ));
 }
 
 #[test]

@@ -1896,6 +1896,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisMax",
             "yAxisLogBase",
             "valueAxisReversed",
+            "categoryAxisLabelInterval",
+            "categoryAxisTickInterval",
             "yAxisMajorUnit",
             "yAxisMinorUnit",
             "horizontalAxisMajorGridlines",
@@ -1999,6 +2001,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_bounds(chart, chart_type)?;
     validate_chart_axis_log_base(chart, chart_type)?;
     validate_chart_value_axis_reversed(chart, chart_type)?;
+    validate_chart_category_axis_intervals(chart, chart_type)?;
     validate_chart_axis_units(chart, chart_type)?;
     validate_chart_gridlines(chart, chart_type)?;
     validate_chart_legend(chart)
@@ -2123,6 +2126,28 @@ fn validate_chart_value_axis_reversed(chart: &Node, chart_type: &str) -> Result<
         return Err(Error::Compile(
             "Chart.valueAxisReversed is not supported for scatter, pie, or doughnut charts because there is no single primary value axis; omit it or use a supported category/value chart".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_chart_category_axis_intervals(chart: &Node, chart_type: &str) -> Result<()> {
+    for property in ["categoryAxisLabelInterval", "categoryAxisTickInterval"] {
+        let Some(interval) = chart.props.get(property) else {
+            continue;
+        };
+        if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+            return Err(Error::Compile(format!(
+                "Chart.{property} is not supported for scatter, pie, or doughnut charts because they have no unambiguous category axis; omit it or use a category/value chart"
+            )));
+        }
+        if !interval
+            .as_u64()
+            .is_some_and(|interval| (1..=u64::from(u16::MAX)).contains(&interval))
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be an integer from 1 through 65535; omit it to use the default interval"
+            )));
+        }
     }
     Ok(())
 }
