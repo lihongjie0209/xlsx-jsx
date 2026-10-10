@@ -119,7 +119,8 @@ fn spec_exposes_chart_components_and_properties() {
         .success()
         .stdout(predicate::str::contains("\"const\": \"Chart\""))
         .stdout(predicate::str::contains("chartSeries"))
-        .stdout(predicate::str::contains("categories"));
+        .stdout(predicate::str::contains("categories"))
+        .stdout(predicate::str::contains("\"title\""));
 }
 
 #[test]
@@ -431,6 +432,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
     );
+    assert_chart_title_round_trip(&source);
     assert!(
         source.contains("altText={\"Monthly revenue compared with expenses\"}"),
         "{source}"
@@ -477,10 +479,38 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         second_source.contains("values={\"Data!$C$2:$C$4\"}"),
         "{second_source}"
     );
+    assert_chart_title_round_trip(&second_source);
+}
+
+fn assert_chart_title_round_trip(source: &str) {
+    assert!(
+        source.contains("title={\"Monthly revenue & expenses — 2026\"}"),
+        "{source}"
+    );
 }
 
 #[test]
-fn reverse_rejects_chart_titles_without_a_lossless_dsl_property() {
+fn validates_chart_title_length_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("long-chart-title.tsx");
+    let title = "x".repeat(256);
+    std::fs::write(
+        &input,
+        format!(r#"import {{ Workbook, Worksheet, Chart, Series }} from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="{title}"><Series values="A1:A2" /></Chart></Worksheet></Workbook>;"#),
+    )
+    .expect("invalid fixture is written");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Chart.title"))
+        .stderr(predicate::str::contains("shorten it"));
+}
+
+#[test]
+fn reverse_rejects_empty_chart_titles_with_repair_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let external = directory.path().join("external-chart.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -489,7 +519,7 @@ fn reverse_rejects_chart_titles_without_a_lossless_dsl_property() {
         .arg(&external)
         .assert()
         .success();
-    rewrite_part(&external, "xl/charts/chart1.xml", |xml| {
+    rewrite_part(&external, "xl/charts/chart2.xml", |xml| {
         xml.replace("<c:plotArea>", "<c:title/><c:plotArea>")
     });
     let output = directory.path().join("external-chart.tsx");
@@ -501,10 +531,8 @@ fn reverse_rejects_chart_titles_without_a_lossless_dsl_property() {
         .arg(output)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("unsupported `<title>`"))
-        .stderr(predicate::str::contains(
-            "Chart properties and reverse support",
-        ));
+        .stderr(predicate::str::contains("empty title"))
+        .stderr(predicate::str::contains("remove the title element"));
 }
 
 #[test]
@@ -531,6 +559,62 @@ fn reverse_rejects_literal_chart_series_titles_instead_of_dropping_them() {
         .failure()
         .stderr(predicate::str::contains("literal series title"))
         .stderr(predicate::str::contains("use a cell reference"));
+}
+
+#[test]
+fn reverse_rejects_formatted_chart_titles_instead_of_dropping_formatting() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("formatted-chart-title.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart1.xml", |xml| {
+        xml.replace(
+            "<a:rPr lang=\"en-US\"/>",
+            "<a:rPr lang=\"en-US\" sz=\"1400\"/>",
+        )
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported `rPr@sz=1400`"))
+        .stderr(predicate::str::contains(
+            "remove custom chart/axis/print formatting",
+        ));
+}
+
+#[test]
+fn reverse_rejects_multi_run_chart_titles_instead_of_flattening_runs() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("multi-run-chart-title.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart1.xml", |xml| {
+        xml.replace(
+            "</a:p>",
+            "<a:r><a:rPr lang=\"en-US\"/><a:t>suffix</a:t></a:r></a:p>",
+        )
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "multi-paragraph or multi-run title",
+        ))
+        .stderr(predicate::str::contains("one unformatted title string"));
 }
 
 #[test]

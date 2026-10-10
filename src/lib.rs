@@ -1851,7 +1851,9 @@ fn validate_worksheet_children(
 fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     reject_unknown_props(
         chart,
-        &["type", "cell", "width", "height", "name", "altText"],
+        &[
+            "type", "cell", "width", "height", "name", "altText", "title",
+        ],
         "Chart",
     )?;
     let chart_type = chart
@@ -1892,7 +1894,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             )));
         }
     }
-    for property in ["name", "altText"] {
+    for property in ["name", "altText", "title"] {
         if let Some(value) = chart.props.get(property) {
             let Some(value) = value.as_str() else {
                 return Err(Error::Compile(format!(

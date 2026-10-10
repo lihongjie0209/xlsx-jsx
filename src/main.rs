@@ -716,6 +716,9 @@ fn compile_chart(
     if let Some(alt_text) = component.props.get("altText").and_then(Value::as_str) {
         chart.set_alt_text(alt_text);
     }
+    if let Some(title) = component.props.get("title").and_then(Value::as_str) {
+        chart.title().set_name(title);
+    }
     if let Some(width) = component.props.get("width").and_then(Value::as_u64) {
         chart.set_width(u32::try_from(width).expect("validated Chart.width"));
     }
@@ -3451,7 +3454,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -3461,6 +3464,11 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .alt_text
             .as_ref()
             .map(|value| format!(" altText={{{value:?}}}"))
+            .unwrap_or_default(),
+        chart
+            .title
+            .as_ref()
+            .map(|value| format!(" title={{{value:?}}}"))
             .unwrap_or_default()
     );
     for series in &chart.series {
@@ -6092,6 +6100,18 @@ fn parse_chart_xml(
         "chartSpace",
         "lang",
         "chart",
+        "title",
+        "tx",
+        "rich",
+        "bodyPr",
+        "lstStyle",
+        "p",
+        "pPr",
+        "defRPr",
+        "r",
+        "rPr",
+        "t",
+        "endParaRPr",
         "plotArea",
         "layout",
         "barChart",
@@ -6142,12 +6162,6 @@ fn parse_chart_xml(
         "varyColors",
         "firstSliceAng",
         "txPr",
-        "bodyPr",
-        "lstStyle",
-        "p",
-        "pPr",
-        "defRPr",
-        "endParaRPr",
     ];
     let mut reader = XmlReader::from_str(xml);
     let mut stack = Vec::<String>::new();
@@ -6156,6 +6170,11 @@ fn parse_chart_xml(
     let mut formula_target: Option<&'static str> = None;
     let mut title_source_open = false;
     let mut category_source_open = false;
+    let mut chart_title_open = false;
+    let mut chart_title: Option<String> = None;
+    let mut title_paragraphs = 0_usize;
+    let mut title_runs = 0_usize;
+    let mut title_text_nodes = 0_usize;
     loop {
         match reader.read_event() {
             Ok(event @ (Event::Start(_) | Event::Empty(_))) => {
@@ -6164,12 +6183,66 @@ fn parse_chart_xml(
                     unreachable!()
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if stack.iter().any(|ancestor| ancestor == "title")
+                    && ![
+                        "tx",
+                        "rich",
+                        "bodyPr",
+                        "lstStyle",
+                        "p",
+                        "pPr",
+                        "defRPr",
+                        "r",
+                        "rPr",
+                        "t",
+                        "endParaRPr",
+                        "layout",
+                    ]
+                    .contains(&tag.as_str())
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has a formula or unsupported structure in the chart title; use one static unformatted title string"
+                    )));
+                }
                 if !allowed_tags.contains(&tag.as_str()) {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` contains unsupported `<{tag}>` semantics; remove chart titles/formatting or add matching Chart properties and reverse support"
                     )));
                 }
                 audit_chart_attributes(&event, &tag, part, reader.decoder(), chart_type)?;
+                if tag == "title" {
+                    if stack
+                        .iter()
+                        .any(|ancestor| ancestor == "catAx" || ancestor == "valAx")
+                        || !stack.iter().any(|ancestor| ancestor == "chart")
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an axis title; this DSL supports only Chart.title, so remove axis titles or extend axis-title support"
+                        )));
+                    }
+                    if chart_title_open || chart_title.is_some() {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has repeated chart titles; retain at most one Chart.title"
+                        )));
+                    }
+                    chart_title_open = true;
+                    if is_empty {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an empty title; use one static title string or remove the title element"
+                        )));
+                    }
+                }
+                if chart_title_open {
+                    match tag.as_str() {
+                        "p" => title_paragraphs += 1,
+                        "r" => title_runs += 1,
+                        "t" => {
+                            title_text_nodes += 1;
+                            chart_title.get_or_insert_default();
+                        }
+                        _ => {}
+                    }
+                }
                 match tag.as_str() {
                     "barChart" => chart_type = Some(set_chart_type(chart_type, "bar", part)?),
                     "lineChart" => chart_type = Some(set_chart_type(chart_type, "line", part)?),
@@ -6233,6 +6306,13 @@ fn parse_chart_xml(
                 }
             }
             Ok(Event::Text(text)) => {
+                if chart_title_open && stack.last().is_some_and(|tag| tag == "t") {
+                    let title_text = text
+                        .xml_content(XmlVersion::Implicit1_0)
+                        .map_err(|error| Error::Reverse(error.to_string()))?
+                        .into_owned();
+                    chart_title.get_or_insert_default().push_str(&title_text);
+                }
                 if let Some(target) = formula_target.take() {
                     let formula = text
                         .decode()
@@ -6261,10 +6341,41 @@ fn parse_chart_xml(
                     }
                 }
             }
+            Ok(Event::GeneralRef(reference)) if chart_title_open => {
+                let entity = reference
+                    .decode()
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                let resolved = reference
+                    .resolve_char_ref()
+                    .map_err(|error| Error::Reverse(error.to_string()))?
+                    .map_or_else(
+                        || quick_xml::escape::resolve_predefined_entity(&entity).map(str::to_owned),
+                        |character| Some(character.to_string()),
+                    )
+                    .ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "chart part `{part}` title contains unsupported entity `&{entity};`; use standard XML character references"
+                        ))
+                    })?;
+                chart_title.get_or_insert_default().push_str(&resolved);
+            }
             Ok(Event::End(event)) => {
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
                 if tag == "f" {
                     formula_target = None;
+                }
+                if tag == "title" && chart_title_open {
+                    chart_title_open = false;
+                    if title_paragraphs != 1 || title_runs != 1 || title_text_nodes != 1 {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a multi-paragraph or multi-run title; use one unformatted title string"
+                        )));
+                    }
+                    if chart_title.as_ref().is_none_or(String::is_empty) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an empty or non-literal title; use one static title string"
+                        )));
+                    }
                 }
                 if tag == "tx"
                     && std::mem::take(&mut title_source_open)
@@ -6342,6 +6453,7 @@ fn parse_chart_xml(
         width,
         height,
         name: anchor.name,
+        title: chart_title,
         alt_text: anchor.alt_text,
         series,
     })
@@ -6672,7 +6784,7 @@ fn audit_chart_attributes(
             .map_err(|error| Error::Reverse(error.to_string()))?
             .into_owned();
         let accepted = match (tag, key.as_str()) {
-            ("lang", "val") | ("endParaRPr", "lang") => value == "en-US",
+            ("lang", "val") | ("endParaRPr" | "rPr", "lang") => value == "en-US",
             ("barDir", "val") => matches!(value.as_str(), "col" | "bar"),
             ("grouping", "val") => match chart_type {
                 Some("line") => value == "standard",
@@ -9191,6 +9303,7 @@ struct WorksheetChart {
     width: u32,
     height: u32,
     name: String,
+    title: Option<String>,
     alt_text: Option<String>,
     series: Vec<WorksheetChartSeries>,
 }
