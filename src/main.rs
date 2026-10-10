@@ -740,6 +740,9 @@ fn compile_chart(
         if let Some(name) = series.props.get("name").and_then(Value::as_str) {
             chart_series.set_name(name);
         }
+        if let Some(title) = series.props.get("title").and_then(Value::as_str) {
+            chart_series.set_name(title);
+        }
     }
     worksheet
         .insert_chart(row, column, &chart)
@@ -3480,6 +3483,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(name) = &series.name {
             let _ = write!(output, " name={{{name:?}}}");
         }
+        if let Some(title) = &series.title {
+            let _ = write!(output, " title={{{title:?}}}");
+        }
         output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
@@ -6171,6 +6177,7 @@ fn parse_chart_xml(
     let mut title_source_open = false;
     let mut category_source_open = false;
     let mut chart_title_open = false;
+    let mut series_literal_title_open = false;
     let mut chart_title: Option<String> = None;
     let mut title_paragraphs = 0_usize;
     let mut title_runs = 0_usize;
@@ -6256,8 +6263,21 @@ fn parse_chart_xml(
                         values: String::new(),
                         categories: None,
                         name: None,
+                        title: None,
                     }),
                     "tx" if !series.is_empty() => title_source_open = true,
+                    "v" if !series.is_empty()
+                        && stack.last().is_some_and(|ancestor| ancestor == "tx") =>
+                    {
+                        let current = series.last_mut().expect("series exists");
+                        if current.title.is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a literal series title; retain one title per series"
+                            )));
+                        }
+                        current.title = Some(String::new());
+                        series_literal_title_open = !is_empty;
+                    }
                     "cat" if !series.is_empty() => category_source_open = true,
                     "f" if !series.is_empty() => {
                         formula_target = if stack.iter().any(|ancestor| ancestor == "tx") {
@@ -6306,6 +6326,15 @@ fn parse_chart_xml(
                 }
             }
             Ok(Event::Text(text)) => {
+                if series_literal_title_open {
+                    let title_text = text
+                        .xml_content(XmlVersion::Implicit1_0)
+                        .map_err(|error| Error::Reverse(error.to_string()))?
+                        .into_owned();
+                    if let Some(current) = series.last_mut() {
+                        current.title.get_or_insert_default().push_str(&title_text);
+                    }
+                }
                 if chart_title_open && stack.last().is_some_and(|tag| tag == "t") {
                     let title_text = text
                         .xml_content(XmlVersion::Implicit1_0)
@@ -6341,7 +6370,7 @@ fn parse_chart_xml(
                     }
                 }
             }
-            Ok(Event::GeneralRef(reference)) if chart_title_open => {
+            Ok(Event::GeneralRef(reference)) if chart_title_open || series_literal_title_open => {
                 let entity = reference
                     .decode()
                     .map_err(|error| Error::Reverse(error.to_string()))?;
@@ -6357,12 +6386,19 @@ fn parse_chart_xml(
                             "chart part `{part}` title contains unsupported entity `&{entity};`; use standard XML character references"
                         ))
                     })?;
-                chart_title.get_or_insert_default().push_str(&resolved);
+                if chart_title_open {
+                    chart_title.get_or_insert_default().push_str(&resolved);
+                } else if let Some(current) = series.last_mut() {
+                    current.title.get_or_insert_default().push_str(&resolved);
+                }
             }
             Ok(Event::End(event)) => {
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
                 if tag == "f" {
                     formula_target = None;
+                }
+                if tag == "v" && series_literal_title_open {
+                    series_literal_title_open = false;
                 }
                 if tag == "title" && chart_title_open {
                     chart_title_open = false;
@@ -6377,13 +6413,34 @@ fn parse_chart_xml(
                         )));
                     }
                 }
-                if tag == "tx"
-                    && std::mem::take(&mut title_source_open)
-                    && series.last().is_some_and(|item| item.name.is_none())
-                {
-                    return Err(Error::Reverse(format!(
-                        "chart part `{part}` has a literal series title instead of a source-cell reference; use a cell reference or extend `Series.name`"
-                    )));
+                if tag == "tx" && std::mem::take(&mut title_source_open) {
+                    let current = series.last().ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "chart part `{part}` contains a series title outside a data series"
+                        ))
+                    })?;
+                    if current.name.is_none() {
+                        let Some(title) =
+                            current.title.as_deref().filter(|title| !title.is_empty())
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a series title without a source or literal value; add Series.name as a cell reference or Series.title as static text"
+                            )));
+                        };
+                        if title.chars().count() > 255 || !title.chars().all(is_valid_xml_character)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a literal series title outside the 1–255 valid XML character subset; shorten or repair it"
+                            )));
+                        }
+                        if chart_formula_sheet_name(title).is_some()
+                            && chart_formula_has_valid_reference(title, false)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a literal series title `{title}` that the writer would reinterpret as a cell reference; change the title text or use a source reference"
+                            )));
+                        }
+                    }
                 }
                 if tag == "cat"
                     && std::mem::take(&mut category_source_open)
@@ -9326,6 +9383,7 @@ struct WorksheetChartSeries {
     values: String,
     categories: Option<String>,
     name: Option<String>,
+    title: Option<String>,
 }
 
 #[derive(Clone)]

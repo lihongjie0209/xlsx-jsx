@@ -1936,7 +1936,11 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 series_index + 1
             )));
         }
-        reject_unknown_props(&series, &["values", "categories", "name"], "Series")?;
+        reject_unknown_props(
+            &series,
+            &["values", "categories", "name", "title"],
+            "Series",
+        )?;
         let values = series
             .props
             .get("values")
@@ -1959,6 +1963,35 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
             {
                 return Err(Error::Compile(format!(
                     "Series.{key} `{formula}` must be a sheet-qualified A1 reference without a leading `=`; use a cell/range such as `Data!$A$1` or `Data!$A$1:$A$5`"
+                )));
+            }
+        }
+        if series.props.contains_key("name") && series.props.contains_key("title") {
+            return Err(Error::Compile(format!(
+                "Series {} cannot set both name and title; use name for a source cell reference or title for literal text",
+                series_index + 1
+            )));
+        }
+        if let Some(value) = series.props.get("title") {
+            let Some(title) = value.as_str() else {
+                return Err(Error::Compile(format!(
+                    "Series {}.title must be a string; use quoted text or remove the property",
+                    series_index + 1
+                )));
+            };
+            if valid_chart_source_reference(title, false) {
+                return Err(Error::Compile(format!(
+                    "Series {}.title `{title}` looks like a sheet-qualified A1 reference, which rust_xlsxwriter interprets as a formula; rephrase it as literal text or use Series.name for the reference",
+                    series_index + 1
+                )));
+            }
+            if title.is_empty()
+                || title.chars().count() > 255
+                || !title.chars().all(is_valid_xml_character)
+            {
+                return Err(Error::Compile(format!(
+                    "Series {}.title must contain 1–255 valid XML characters; shorten it or remove control characters",
+                    series_index + 1
                 )));
             }
         }

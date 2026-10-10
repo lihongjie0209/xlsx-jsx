@@ -10,7 +10,7 @@ export default <Workbook>
   <Worksheet name="Sales">
     <Chart type="column" cell="D2" width={480} height={288} name="Revenue and expenses" title="Monthly revenue &amp; expenses — 2026" altText="Monthly revenue compared with expenses">
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
-      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" name="Data!$C$1" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" />
     </Chart>
     <Chart type="line" cell="K2" width={480} height={288}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />

@@ -487,6 +487,7 @@ fn assert_chart_title_round_trip(source: &str) {
         source.contains("title={\"Monthly revenue & expenses — 2026\"}"),
         "{source}"
     );
+    assert!(source.contains("title={\"Expenses & travel\"}"), "{source}");
 }
 
 #[test]
@@ -507,6 +508,48 @@ fn validates_chart_title_length_with_repair_guidance() {
         .failure()
         .stderr(predicate::str::contains("Chart.title"))
         .stderr(predicate::str::contains("shorten it"));
+}
+
+#[test]
+fn rejects_conflicting_series_reference_and_literal_title() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("conflicting-series-title.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!A1:A2" name="Data!B1" title="Revenue" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid fixture is written");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot set both name and title"))
+        .stderr(predicate::str::contains(
+            "use name for a source cell reference",
+        ));
+}
+
+#[test]
+fn rejects_literal_series_title_ambiguous_with_a_cell_reference() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("ambiguous-series-title.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!A1:A2" title="Data!$B$1" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid fixture is written");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "looks like a sheet-qualified A1 reference",
+        ))
+        .stderr(predicate::str::contains("rephrase it as literal text"));
 }
 
 #[test]
@@ -536,7 +579,7 @@ fn reverse_rejects_empty_chart_titles_with_repair_guidance() {
 }
 
 #[test]
-fn reverse_rejects_literal_chart_series_titles_instead_of_dropping_them() {
+fn reverse_rejects_cached_series_titles_without_a_source_or_literal_title() {
     let directory = tempdir().expect("temporary directory is available");
     let external = directory.path().join("literal-chart-title.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -557,8 +600,37 @@ fn reverse_rejects_literal_chart_series_titles_instead_of_dropping_them() {
         .arg(output)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("literal series title"))
-        .stderr(predicate::str::contains("use a cell reference"));
+        .stderr(predicate::str::contains(
+            "series title without a source or literal value",
+        ))
+        .stderr(predicate::str::contains("Series.title as static text"));
+}
+
+#[test]
+fn reverse_rejects_literal_series_titles_that_writer_would_reinterpret() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory
+        .path()
+        .join("ambiguous-external-series-title.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart1.xml", |xml| {
+        xml.replace("<c:v>Expenses &amp; travel</c:v>", "<c:v>Data!$C$1</c:v>")
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "writer would reinterpret as a cell reference",
+        ))
+        .stderr(predicate::str::contains("change the title text"));
 }
 
 #[test]

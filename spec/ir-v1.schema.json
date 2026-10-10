@@ -546,12 +546,23 @@
           "properties": {
             "values": { "type": "string", "minLength": 1 },
             "categories": { "type": "string", "minLength": 1 },
-            "name": { "type": "string", "minLength": 1 }
+            "name": { "type": "string", "minLength": 1 },
+            "title": { "type": "string", "minLength": 1, "maxLength": 255 }
           },
           "additionalProperties": false
         },
         "children": { "type": "array", "maxItems": 0 }
       },
+      "allOf": [
+        {
+          "not": {
+            "properties": {
+              "props": { "required": ["name", "title"] }
+            },
+            "required": ["props"]
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "ignoreError": {

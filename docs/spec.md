@@ -60,6 +60,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   required `values` and optional `categories` and `name` sheet-qualified A1
   references. `values` and `categories` must be ranges; `name` may be a cell or
   range. Formula text omits a leading `=` and optional `$` markers are retained.
+  Alternatively, `Series.title?: string` sets a static series title (1–255
+  valid XML characters); it is mutually exclusive with `name`. Because the
+  pinned writer interprets sheet-qualified A1-looking strings as formulas,
+  `Series.title` rejects strings matching that syntax. Reverse preserves literal
+  titles separately from cell-reference names.
 - `Chart.title?: string` is a static chart title (1–255 valid XML characters).
   External titles are reversible only when they are one unformatted rich-text
   run; formulas, multiple runs, and custom title formatting fail with guidance.
