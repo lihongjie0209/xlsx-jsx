@@ -126,6 +126,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("\"title\""))
         .stdout(predicate::str::contains("xAxisTitle"))
         .stdout(predicate::str::contains("yAxisTitle"))
+        .stdout(predicate::str::contains("xAxisNumberFormat"))
+        .stdout(predicate::str::contains("yAxisNumberFormat"))
         .stdout(predicate::str::contains("legendPosition"))
         .stdout(predicate::str::contains("showLegend"))
         .stdout(predicate::str::contains("areaPercentStacked"))
@@ -449,6 +451,10 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         "{source}"
     );
     assert!(source.contains("values={\"Data!$B$2:$B$4\"}"), "{source}");
+    assert!(
+        source.contains("yAxisNumberFormat={\"$#,##0.00\"}"),
+        "{source}"
+    );
     assert!(source.contains("values={\"Data!$C$2:$C$4\"}"), "{source}");
     assert!(source.contains("<Chart type=\"line\""), "{source}");
     assert!(source.contains("<Chart type=\"bar\""), "{source}");
@@ -632,9 +638,62 @@ fn reverses_external_stock_chart_without_a_manifest() {
         .arg(&output_path)
         .assert()
         .success();
-    let source = std::fs::read_to_string(output_path).expect("reversed JSX exists");
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
     assert!(source.contains("<Chart type=\"stock\""), "{source}");
     assert_eq!(source.matches("<Series ").count(), 3, "{source}");
+}
+
+#[test]
+fn reverses_external_chart_axis_number_formats_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-format.xlsx");
+    let output_path = directory.path().join("external-axis-format.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.x_axis().set_num_format("mmm");
+    chart.y_axis().set_num_format("$#,##0.00");
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("xAxisNumberFormat={\"mmm\"}"), "{source}");
+    assert!(
+        source.contains("yAxisNumberFormat={\"$#,##0.00\"}"),
+        "{source}"
+    );
+    let rebuilt_path = directory.path().join("rebuilt-axis-format.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let mut rebuilt =
+        ZipArchive::new(std::fs::File::open(rebuilt_path).expect("rebuilt workbook exists"))
+            .expect("rebuilt workbook is a ZIP package");
+    let mut chart_xml = String::new();
+    rebuilt
+        .by_name("xl/charts/chart1.xml")
+        .expect("rebuilt chart exists")
+        .read_to_string(&mut chart_xml)
+        .expect("chart XML reads");
+    assert!(chart_xml.contains("formatCode=\"mmm\" sourceLinked=\"0\""));
+    assert!(chart_xml.contains("formatCode=\"$#,##0.00\" sourceLinked=\"0\""));
 }
 
 #[test]
@@ -730,6 +789,25 @@ fn validates_stock_series_share_one_category_range() {
         .failure()
         .stderr(predicate::str::contains("same explicit categories range"))
         .stderr(predicate::str::contains("shared date/category range"));
+}
+
+#[test]
+fn rejects_axis_number_formats_for_ambiguous_scatter_axes() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-axis-format.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisNumberFormat="0.00"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not supported for scatter"))
+        .stderr(predicate::str::contains("unambiguous category/value axes"));
 }
 
 #[test]

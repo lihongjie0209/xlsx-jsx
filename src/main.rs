@@ -736,6 +736,7 @@ fn compile_chart(
     if let Some(title) = component.props.get("yAxisTitle").and_then(Value::as_str) {
         chart.y_axis().set_name(title);
     }
+    configure_chart_axis_number_formats(&mut chart, component);
     if component.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
         chart.legend().set_hidden();
     }
@@ -788,6 +789,23 @@ fn compile_chart(
         .insert_chart(row, column, &chart)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+}
+
+fn configure_chart_axis_number_formats(chart: &mut Chart, component: &Node) {
+    if let Some(format) = component
+        .props
+        .get("xAxisNumberFormat")
+        .and_then(Value::as_str)
+    {
+        chart.x_axis().set_num_format(format);
+    }
+    if let Some(format) = component
+        .props
+        .get("yAxisNumberFormat")
+        .and_then(Value::as_str)
+    {
+        chart.y_axis().set_num_format(format);
+    }
 }
 
 fn chart_type_from_name(chart_type: &str) -> ChartType {
@@ -3526,7 +3544,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -3551,6 +3569,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .y_axis_title
             .as_ref()
             .map(|value| format!(" yAxisTitle={{{value:?}}}"))
+            .unwrap_or_default(),
+        chart
+            .x_axis_number_format
+            .as_ref()
+            .map(|value| format!(" xAxisNumberFormat={{{value:?}}}"))
+            .unwrap_or_default(),
+        chart
+            .y_axis_number_format
+            .as_ref()
+            .map(|value| format!(" yAxisNumberFormat={{{value:?}}}"))
             .unwrap_or_default(),
         if chart.show_legend {
             ""
@@ -6303,6 +6331,10 @@ fn parse_chart_xml(
     let mut chart_title: Option<String> = None;
     let mut x_axis_title: Option<String> = None;
     let mut y_axis_title: Option<String> = None;
+    let mut x_axis_number_format: Option<String> = None;
+    let mut y_axis_number_format: Option<String> = None;
+    let mut x_axis_number_format_seen = false;
+    let mut y_axis_number_format_seen = false;
     let mut legend_seen = false;
     let mut legend_deleted = false;
     let mut legend_position: Option<&'static str> = None;
@@ -6589,6 +6621,88 @@ fn parse_chart_xml(
                                     .map_err(|error| Error::Reverse(error.to_string()))?;
                                 first_slice_angle = value.parse::<u16>().ok();
                             }
+                        }
+                    }
+                    "numFmt" => {
+                        let category_axis_context = stack
+                            .iter()
+                            .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"));
+                        let value_axis_context = stack.iter().any(|ancestor| ancestor == "valAx");
+                        if !category_axis_context && !value_axis_context {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a number format outside a primary axis; remove it or extend chart number-format support"
+                            )));
+                        }
+                        let mut format_code = None;
+                        let mut source_linked = None;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            let value = attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    reader.decoder(),
+                                )
+                                .map_err(|error| Error::Reverse(error.to_string()))?
+                                .into_owned();
+                            match attribute.key.local_name().as_ref() {
+                                b"formatCode" => format_code = Some(value),
+                                b"sourceLinked" => {
+                                    source_linked = Some(matches!(value.as_str(), "1" | "true"));
+                                }
+                                _ => {}
+                            }
+                        }
+                        let format_code = format_code.ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has an axis numFmt without formatCode; add an explicit Excel number format"
+                            ))
+                        })?;
+                        let Some(source_linked) = source_linked else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an axis numFmt without sourceLinked; use an explicit sourceLinked boolean"
+                            )));
+                        };
+                        if chart_type.is_some_and(|value| value.starts_with("scatter"))
+                            && !source_linked
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a fixed number format on a scatter value axis, whose X/Y role is ambiguous; remove it or use a category-axis chart"
+                            )));
+                        }
+                        if source_linked {
+                            let is_writer_default = format_code == "General"
+                                || (format_code == "0%"
+                                    && chart_type.is_some_and(is_percent_stacked_chart_type))
+                                || (format_code == "dd/mm/yyyy"
+                                    && chart_type == Some("stock")
+                                    && category_axis_context);
+                            if !is_writer_default {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has non-default source-linked axis format `{format_code}`; use sourceLinked=false for a fixed format or remove the override"
+                                )));
+                            }
+                        } else {
+                            if format_code.is_empty()
+                                || format_code.chars().count() > 255
+                                || !format_code.chars().all(is_valid_xml_character)
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an axis format outside the 1–255 XML-safe character range; repair the format code"
+                                )));
+                            }
+                            let (seen, target) = if category_axis_context {
+                                (&mut x_axis_number_format_seen, &mut x_axis_number_format)
+                            } else {
+                                (&mut y_axis_number_format_seen, &mut y_axis_number_format)
+                            };
+                            if *seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats an explicit axis number format; keep one format per primary axis"
+                                )));
+                            }
+                            *seen = true;
+                            *target = Some(format_code);
                         }
                     }
                     "ser" => series.push(WorksheetChartSeries {
@@ -7033,6 +7147,8 @@ fn parse_chart_xml(
         title: chart_title,
         x_axis_title,
         y_axis_title,
+        x_axis_number_format,
+        y_axis_number_format,
         show_legend,
         legend_position: legend_position.filter(|position| *position != "right"),
         hole_size: hole_size.filter(|size| *size != 50),
@@ -7585,8 +7701,10 @@ fn audit_chart_attributes(
             ("tickLblPos", "val") => value == "nextTo",
             ("majorTickMark", "val") => value == "cross",
             ("crosses", "val") => value == "autoZero",
-            ("auto" | "plotVisOnly" | "marker" | "varyColors", "val")
-            | ("numFmt", "sourceLinked") => value == "1",
+            ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
+            ("numFmt", "sourceLinked") => {
+                matches!(value.as_str(), "0" | "1" | "false" | "true")
+            }
             ("smooth", "val") => matches!(value.as_str(), "0" | "1" | "false" | "true"),
             ("symbol", "val") => value == "none",
             ("lblAlgn", "val") => value == "ctr",
@@ -7598,8 +7716,9 @@ fn audit_chart_attributes(
                 _ => value == "between",
             },
             ("numFmt", "formatCode") => {
-                value == "General"
-                    || (chart_type.is_some_and(is_percent_stacked_chart_type) && value == "0%")
+                !value.is_empty()
+                    && value.chars().count() <= 255
+                    && value.chars().all(is_valid_xml_character)
             }
             ("legendPos", "val") => matches!(value.as_str(), "r" | "l" | "t" | "b" | "tr"),
             ("bodyPr", "rot") => chart_type == Some("stock") && value == "-5400000",
@@ -10115,6 +10234,8 @@ struct WorksheetChart {
     title: Option<String>,
     x_axis_title: Option<String>,
     y_axis_title: Option<String>,
+    x_axis_number_format: Option<String>,
+    y_axis_number_format: Option<String>,
     show_legend: bool,
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,

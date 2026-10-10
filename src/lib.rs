@@ -1890,6 +1890,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "title",
             "xAxisTitle",
             "yAxisTitle",
+            "xAxisNumberFormat",
+            "yAxisNumberFormat",
             "showLegend",
             "legendPosition",
             "holeSize",
@@ -1913,6 +1915,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         )));
     }
     validate_chart_axis_titles(chart, chart_type)?;
+    validate_chart_axis_number_formats(chart, chart_type)?;
     validate_doughnut_hole_size(chart, chart_type)?;
     validate_chart_slice_angle(chart, chart_type)?;
     validate_chart_legend(chart)?;
@@ -1995,6 +1998,42 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
         return Err(Error::Compile(
             "pie and doughnut Charts have no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_chart_axis_number_formats(chart: &Node, chart_type: &str) -> Result<()> {
+    let properties = ["xAxisNumberFormat", "yAxisNumberFormat"];
+    if !properties
+        .iter()
+        .any(|property| chart.props.contains_key(*property))
+    {
+        return Ok(());
+    }
+    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+        return Err(Error::Compile(
+            "Chart axis number formats are not supported for scatter, pie, or doughnut charts; use an area, bar, column, line, radar, or stock chart with unambiguous category/value axes".into(),
+        ));
+    }
+    for property in properties {
+        let Some(value) = chart.props.get(property) else {
+            continue;
+        };
+        let Some(format) = value.as_str() else {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be a string; use a format code such as `#,##0.00`"
+            )));
+        };
+        if format.is_empty() || format.chars().count() > 255 {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must contain 1 to 255 characters; shorten or provide a valid Excel number format"
+            )));
+        }
+        if !format.chars().all(is_valid_xml_character) {
+            return Err(Error::Compile(format!(
+                "Chart.{property} contains a character invalid in XML; remove control characters from the number format"
+            )));
+        }
     }
     Ok(())
 }

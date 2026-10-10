@@ -114,6 +114,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   Y-axis titles (1–255 valid XML characters) for non-pie charts. Reverse maps
   the OOXML category axis to X and value axis to Y; only a single unformatted
   rich-text run is supported. Formula titles and custom formatting are rejected.
+- `Chart.xAxisNumberFormat?: string` and `Chart.yAxisNumberFormat?: string`
+  set Excel number-format codes on the corresponding category/date and value
+  axes. Each is a non-empty, XML-safe format code of at most 255 characters;
+  omission keeps the writer's source-linked default. The properties are
+  mutually exclusive with pie/doughnut charts and scatter charts (whose two
+  axes are both value axes and cannot be unambiguously mapped to X/Y by this
+  writer subset). Reverse preserves explicit `sourceLinked=false` codes and
+  rejects non-default source-linked codes rather than dropping them.
 - `Chart.showLegend?: boolean` defaults to `true`; `Chart.legendPosition?:
   "right" | "left" | "top" | "bottom" | "topRight"` defaults to `"right"`.
   `legendPosition` cannot be combined with `showLegend={false}` because the
