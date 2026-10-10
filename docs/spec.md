@@ -130,6 +130,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   category/date axis because this DSL currently exposes only value-axis bounds.
   Horizontal bar charts use the same value-axis meaning even though the writer
   swaps its internal axis objects.
+- `Chart.yAxisMajorUnit?: number` and `Chart.yAxisMinorUnit?: number` set the
+  major and minor tick intervals on the numeric value axis. Each provided
+  interval must be finite and greater than zero; omission leaves Excel's
+  automatic interval. These properties are not valid for scatter, pie, or
+  doughnut charts. Reverse preserves `<valAx><majorUnit>/<minorUnit>` values and
+  rejects intervals on category/date axes instead of dropping them.
 - `Chart.showLegend?: boolean` defaults to `true`; `Chart.legendPosition?:
   "right" | "left" | "top" | "bottom" | "topRight"` defaults to `"right"`.
   `legendPosition` cannot be combined with `showLegend={false}` because the

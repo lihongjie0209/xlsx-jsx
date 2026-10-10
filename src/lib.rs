@@ -1894,6 +1894,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisNumberFormat",
             "yAxisMin",
             "yAxisMax",
+            "yAxisMajorUnit",
+            "yAxisMinorUnit",
             "showLegend",
             "legendPosition",
             "holeSize",
@@ -1942,6 +1944,21 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             )));
         }
     }
+    validate_chart_text_properties(chart)?;
+    validate_chart_series(chart)?;
+    validate_scatter_chart(chart, chart_type)?;
+    if chart_type == "stock" {
+        validate_stock_chart(chart)?;
+    }
+    if matches!(chart_type, "pie" | "doughnut") && chart.children.len() != 1 {
+        return Err(Error::Compile(
+            "pie and doughnut Charts accept exactly one Series; split the data into separate charts or choose area, column, bar, or line".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     for property in ["name", "altText", "title", "xAxisTitle", "yAxisTitle"] {
         if let Some(value) = chart.props.get(property) {
             let Some(value) = value.as_str() else {
@@ -1967,16 +1984,6 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             }
         }
     }
-    validate_chart_series(chart)?;
-    validate_scatter_chart(chart, chart_type)?;
-    if chart_type == "stock" {
-        validate_stock_chart(chart)?;
-    }
-    if matches!(chart_type, "pie" | "doughnut") && chart.children.len() != 1 {
-        return Err(Error::Compile(
-            "pie and doughnut Charts accept exactly one Series; split the data into separate charts or choose area, column, bar, or line".into(),
-        ));
-    }
     Ok(())
 }
 
@@ -1984,6 +1991,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_titles(chart, chart_type)?;
     validate_chart_axis_number_formats(chart, chart_type)?;
     validate_chart_axis_bounds(chart, chart_type)?;
+    validate_chart_axis_units(chart, chart_type)?;
     validate_chart_legend(chart)
 }
 
@@ -2077,6 +2085,35 @@ fn parse_chart_axis_bound(chart: &Node, property: &str) -> Result<Option<f64>> {
         )));
     };
     Ok(Some(bound))
+}
+
+fn validate_chart_axis_units(chart: &Node, chart_type: &str) -> Result<()> {
+    let properties = ["yAxisMajorUnit", "yAxisMinorUnit"];
+    if !properties
+        .iter()
+        .any(|property| chart.props.contains_key(*property))
+    {
+        return Ok(());
+    }
+    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+        return Err(Error::Compile(
+            "Chart y-axis units are not supported for scatter, pie, or doughnut charts; use an area, bar, column, line, radar, or stock chart, or omit the units".into(),
+        ));
+    }
+    for property in properties {
+        let Some(value) = chart.props.get(property) else {
+            continue;
+        };
+        if !value
+            .as_f64()
+            .is_some_and(|unit| unit.is_finite() && unit > 0.0)
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be finite and greater than zero; provide a positive numeric interval or omit it for automatic intervals"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_scatter_chart(chart: &Node, chart_type: &str) -> Result<()> {

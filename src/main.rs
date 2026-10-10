@@ -738,6 +738,7 @@ fn compile_chart(
     }
     configure_chart_axis_number_formats(&mut chart, component);
     configure_chart_axis_bounds(&mut chart, component);
+    configure_chart_axis_units(&mut chart, component);
     if component.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
         chart.legend().set_hidden();
     }
@@ -825,6 +826,33 @@ fn configure_chart_axis_bounds(chart: &mut Chart, component: &Node) {
     }
     if let Some(maximum) = component.props.get("yAxisMax").and_then(Value::as_f64) {
         value_axis.set_max(maximum);
+    }
+}
+
+fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
+    let value_axis = if component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|chart_type| chart_type.starts_with("bar"))
+    {
+        chart.x_axis()
+    } else {
+        chart.y_axis()
+    };
+    if let Some(unit) = component
+        .props
+        .get("yAxisMajorUnit")
+        .and_then(Value::as_f64)
+    {
+        value_axis.set_major_unit(unit);
+    }
+    if let Some(unit) = component
+        .props
+        .get("yAxisMinorUnit")
+        .and_then(Value::as_f64)
+    {
+        value_axis.set_minor_unit(unit);
     }
 }
 
@@ -3564,7 +3592,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -3607,6 +3635,14 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         chart
             .y_axis_max
             .map(|value| format!(" yAxisMax={{{value}}}"))
+            .unwrap_or_default(),
+        chart
+            .y_axis_major_unit
+            .map(|value| format!(" yAxisMajorUnit={{{value}}}"))
+            .unwrap_or_default(),
+        chart
+            .y_axis_minor_unit
+            .map(|value| format!(" yAxisMinorUnit={{{value}}}"))
             .unwrap_or_default(),
         if chart.show_legend {
             ""
@@ -6312,6 +6348,8 @@ fn parse_chart_xml(
         "orientation",
         "min",
         "max",
+        "majorUnit",
+        "minorUnit",
         "axPos",
         "tickLblPos",
         "crossAx",
@@ -6369,6 +6407,10 @@ fn parse_chart_xml(
     let mut y_axis_max = None;
     let mut y_axis_min_seen = false;
     let mut y_axis_max_seen = false;
+    let mut y_axis_major_unit = None;
+    let mut y_axis_minor_unit = None;
+    let mut y_axis_major_unit_seen = false;
+    let mut y_axis_minor_unit_seen = false;
     let mut legend_seen = false;
     let mut legend_deleted = false;
     let mut legend_position: Option<&'static str> = None;
@@ -6797,6 +6839,63 @@ fn parse_chart_xml(
                         }
                         *seen = true;
                         *target = Some(bound);
+                    }
+                    "majorUnit" | "minorUnit" => {
+                        let category_axis_context = stack
+                            .iter()
+                            .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"));
+                        let value_axis_context = stack.iter().any(|ancestor| ancestor == "valAx");
+                        if category_axis_context {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} on a category/date axis, which this DSL does not model; remove that interval or use only value-axis intervals"
+                            )));
+                        }
+                        if !value_axis_context {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} outside a primary value axis; repair the axis structure"
+                            )));
+                        }
+                        if chart_type.is_some_and(|value| {
+                            value.starts_with("scatter") || matches!(value, "pie" | "doughnut")
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has value-axis intervals for a chart without one unambiguous value axis; remove the intervals or use a supported category/value chart"
+                            )));
+                        }
+                        let mut unit = None;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                unit = value
+                                    .parse::<f64>()
+                                    .ok()
+                                    .filter(|value| value.is_finite() && *value > 0.0);
+                            }
+                        }
+                        let Some(unit) = unit else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-positive, non-finite, or missing {tag}; provide a finite positive interval"
+                            )));
+                        };
+                        let (seen, target) = if tag == "majorUnit" {
+                            (&mut y_axis_major_unit_seen, &mut y_axis_major_unit)
+                        } else {
+                            (&mut y_axis_minor_unit_seen, &mut y_axis_minor_unit)
+                        };
+                        if *seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats {tag}; keep at most one interval of each kind"
+                            )));
+                        }
+                        *seen = true;
+                        *target = Some(unit);
                     }
                     "ser" => series.push(WorksheetChartSeries {
                         values: String::new(),
@@ -7252,6 +7351,8 @@ fn parse_chart_xml(
         y_axis_number_format,
         y_axis_min,
         y_axis_max,
+        y_axis_major_unit,
+        y_axis_minor_unit,
         show_legend,
         legend_position: legend_position.filter(|position| *position != "right"),
         hole_size: hole_size.filter(|size| *size != 50),
@@ -7761,96 +7862,98 @@ fn audit_chart_attributes(
             .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
             .map_err(|error| Error::Reverse(error.to_string()))?
             .into_owned();
-        let accepted = match (tag, key.as_str()) {
-            ("lang", "val") | ("endParaRPr" | "rPr", "lang") => value == "en-US",
-            ("barDir", "val") => matches!(value.as_str(), "col" | "bar"),
-            ("radarStyle", "val") => {
-                chart_type == Some("radar")
-                    && matches!(value.as_str(), "standard" | "marker" | "filled")
-            }
-            ("scatterStyle", "val") => {
-                chart_type == Some("scatter")
-                    && matches!(value.as_str(), "lineMarker" | "smoothMarker")
-            }
-            ("ln", "w") => chart_type == Some("scatter") && value == "28575",
-            ("grouping", "val") => match chart_type {
-                Some("area") => {
-                    matches!(value.as_str(), "standard" | "stacked" | "percentStacked")
-                }
-                Some("line") => {
-                    matches!(value.as_str(), "standard" | "stacked" | "percentStacked")
-                }
-                Some("bar" | "column") => {
-                    matches!(value.as_str(), "clustered" | "stacked" | "percentStacked")
-                }
-                _ => false,
-            },
-            ("overlap", "val") => {
-                matches!(
-                    chart_type,
-                    Some(
-                        "columnStacked"
-                            | "columnPercentStacked"
-                            | "barStacked"
-                            | "barPercentStacked"
-                    )
-                ) && value == "100"
-            }
-            ("idx" | "order" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
-                value.parse::<u32>().is_ok()
-            }
-            ("orientation", "val") => value == "minMax",
-            ("min" | "max", "val") => value.parse::<f64>().is_ok_and(f64::is_finite),
-            ("axPos", "val") => matches!(value.as_str(), "b" | "l"),
-            ("tickLblPos", "val") => value == "nextTo",
-            ("majorTickMark", "val") => value == "cross",
-            ("crosses", "val") => value == "autoZero",
-            ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
-            ("numFmt", "sourceLinked") => {
-                matches!(value.as_str(), "0" | "1" | "false" | "true")
-            }
-            ("smooth", "val") => matches!(value.as_str(), "0" | "1" | "false" | "true"),
-            ("symbol", "val") => value == "none",
-            ("lblAlgn", "val") => value == "ctr",
-            ("lblOffset", "val") => value == "100",
-            ("crossBetween", "val") => match chart_type {
-                Some("area" | "areaStacked" | "areaPercentStacked" | "scatter") => {
-                    value == "midCat"
-                }
-                _ => value == "between",
-            },
-            ("numFmt", "formatCode") => {
-                !value.is_empty()
-                    && value.chars().count() <= 255
-                    && value.chars().all(is_valid_xml_character)
-            }
-            ("legendPos", "val") => matches!(value.as_str(), "r" | "l" | "t" | "b" | "tr"),
-            ("bodyPr", "rot") => chart_type == Some("stock") && value == "-5400000",
-            ("bodyPr", "vert") => chart_type == Some("stock") && value == "horz",
-            ("holeSize", "val") => {
-                chart_type == Some("doughnut")
-                    && value
-                        .parse::<u8>()
-                        .is_ok_and(|size| (10..=90).contains(&size))
-            }
-            ("gapWidth", "val") => chart_type == Some("stock") && value == "150",
-            ("firstSliceAng", "val") => {
-                matches!(chart_type, Some("pie" | "doughnut"))
-                    && value.parse::<u16>().is_ok_and(|angle| angle <= 360)
-            }
-            ("pPr", "rtl") => value == "0",
-            ("pageMargins", "b" | "t") => value == "0.75",
-            ("pageMargins", "l" | "r") => value == "0.7",
-            ("pageMargins", "header" | "footer") => value == "0.3",
-            _ => false,
-        };
-        if !accepted {
+        if !is_supported_chart_attribute(tag, &key, &value, chart_type) {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` has unsupported `{tag}@{key}={value}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
             )));
         }
     }
     Ok(())
+}
+
+fn is_supported_chart_attribute(
+    tag: &str,
+    key: &str,
+    value: &str,
+    chart_type: Option<&'static str>,
+) -> bool {
+    match (tag, key) {
+        ("lang", "val") | ("endParaRPr" | "rPr", "lang") => value == "en-US",
+        ("barDir", "val") => matches!(value, "col" | "bar"),
+        ("radarStyle", "val") => {
+            chart_type == Some("radar") && matches!(value, "standard" | "marker" | "filled")
+        }
+        ("scatterStyle", "val") => {
+            chart_type == Some("scatter") && matches!(value, "lineMarker" | "smoothMarker")
+        }
+        ("ln", "w") => chart_type == Some("scatter") && value == "28575",
+        ("grouping", "val") => match chart_type {
+            Some("area") => {
+                matches!(value, "standard" | "stacked" | "percentStacked")
+            }
+            Some("line") => {
+                matches!(value, "standard" | "stacked" | "percentStacked")
+            }
+            Some("bar" | "column") => {
+                matches!(value, "clustered" | "stacked" | "percentStacked")
+            }
+            _ => false,
+        },
+        ("overlap", "val") => {
+            matches!(
+                chart_type,
+                Some("columnStacked" | "columnPercentStacked" | "barStacked" | "barPercentStacked")
+            ) && value == "100"
+        }
+        ("idx" | "order" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
+            value.parse::<u32>().is_ok()
+        }
+        ("orientation", "val") => value == "minMax",
+        ("min" | "max", "val") => value.parse::<f64>().is_ok_and(f64::is_finite),
+        ("majorUnit" | "minorUnit", "val") => value
+            .parse::<f64>()
+            .is_ok_and(|unit| unit.is_finite() && unit > 0.0),
+        ("axPos", "val") => matches!(value, "b" | "l"),
+        ("tickLblPos", "val") => value == "nextTo",
+        ("majorTickMark", "val") => value == "cross",
+        ("crosses", "val") => value == "autoZero",
+        ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
+        ("numFmt", "sourceLinked") => {
+            matches!(value, "0" | "1" | "false" | "true")
+        }
+        ("smooth", "val") => matches!(value, "0" | "1" | "false" | "true"),
+        ("symbol", "val") => value == "none",
+        ("lblAlgn", "val") => value == "ctr",
+        ("lblOffset", "val") => value == "100",
+        ("crossBetween", "val") => match chart_type {
+            Some("area" | "areaStacked" | "areaPercentStacked" | "scatter") => value == "midCat",
+            _ => value == "between",
+        },
+        ("numFmt", "formatCode") => {
+            !value.is_empty()
+                && value.chars().count() <= 255
+                && value.chars().all(is_valid_xml_character)
+        }
+        ("legendPos", "val") => matches!(value, "r" | "l" | "t" | "b" | "tr"),
+        ("bodyPr", "rot") => chart_type == Some("stock") && value == "-5400000",
+        ("bodyPr", "vert") => chart_type == Some("stock") && value == "horz",
+        ("holeSize", "val") => {
+            chart_type == Some("doughnut")
+                && value
+                    .parse::<u8>()
+                    .is_ok_and(|size| (10..=90).contains(&size))
+        }
+        ("gapWidth", "val") => chart_type == Some("stock") && value == "150",
+        ("firstSliceAng", "val") => {
+            matches!(chart_type, Some("pie" | "doughnut"))
+                && value.parse::<u16>().is_ok_and(|angle| angle <= 360)
+        }
+        ("pPr", "rtl") => value == "0",
+        ("pageMargins", "b" | "t") => value == "0.75",
+        ("pageMargins", "l" | "r") => value == "0.7",
+        ("pageMargins", "header" | "footer") => value == "0.3",
+        _ => false,
+    }
 }
 
 #[expect(
@@ -10342,6 +10445,8 @@ struct WorksheetChart {
     y_axis_number_format: Option<String>,
     y_axis_min: Option<f64>,
     y_axis_max: Option<f64>,
+    y_axis_major_unit: Option<f64>,
+    y_axis_minor_unit: Option<f64>,
     show_legend: bool,
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,

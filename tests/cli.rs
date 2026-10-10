@@ -130,6 +130,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisNumberFormat"))
         .stdout(predicate::str::contains("yAxisMin"))
         .stdout(predicate::str::contains("yAxisMax"))
+        .stdout(predicate::str::contains("yAxisMajorUnit"))
+        .stdout(predicate::str::contains("yAxisMinorUnit"))
         .stdout(predicate::str::contains("legendPosition"))
         .stdout(predicate::str::contains("showLegend"))
         .stdout(predicate::str::contains("areaPercentStacked"))
@@ -764,6 +766,145 @@ fn reverses_external_chart_value_axis_bounds_without_a_manifest() {
         .expect("bar chart XML reads");
     assert!(bar_chart_xml.contains("<c:max val=\"250\"/>"));
     assert!(bar_chart_xml.contains("<c:min val=\"-30\"/>"));
+}
+
+#[test]
+fn reverses_external_chart_value_axis_units_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-units.xlsx");
+    let output_path = directory.path().join("external-axis-units.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.y_axis().set_major_unit(20.5).set_minor_unit(2.5);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    let mut bar_chart = XlsxChart::new(ChartType::Bar);
+    bar_chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    bar_chart.x_axis().set_major_unit(50).set_minor_unit(5);
+    worksheet.insert_chart(20, 5, &bar_chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("yAxisMajorUnit={20.5}"), "{source}");
+    assert!(source.contains("yAxisMinorUnit={2.5}"), "{source}");
+    assert!(source.contains("yAxisMajorUnit={50}"), "{source}");
+    assert!(source.contains("yAxisMinorUnit={5}"), "{source}");
+    let rebuilt_path = directory.path().join("rebuilt-axis-units.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let mut rebuilt =
+        ZipArchive::new(std::fs::File::open(rebuilt_path).expect("rebuilt workbook exists"))
+            .expect("rebuilt workbook is a ZIP package");
+    for (part, major, minor) in [
+        ("xl/charts/chart1.xml", "20.5", "2.5"),
+        ("xl/charts/chart2.xml", "50", "5"),
+    ] {
+        let mut chart_xml = String::new();
+        rebuilt
+            .by_name(part)
+            .expect("rebuilt chart exists")
+            .read_to_string(&mut chart_xml)
+            .expect("chart XML reads");
+        assert!(chart_xml.contains(&format!("<c:majorUnit val=\"{major}\"/>")));
+        assert!(chart_xml.contains(&format!("<c:minorUnit val=\"{minor}\"/>")));
+    }
+}
+
+#[test]
+fn reverse_rejects_category_axis_units_instead_of_dropping_them() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("category-axis.tsx");
+    let workbook = directory.path().join("category-axis.xlsx");
+    let reversed = directory.path().join("category-axis-reverse.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
+        xml.replacen("</c:catAx>", "<c:majorUnit val=\"2\"/></c:catAx>", 1)
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "majorUnit on a category/date axis",
+        ))
+        .stderr(predicate::str::contains("remove that interval"));
+}
+
+#[test]
+fn rejects_non_positive_chart_axis_units_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-axis-unit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" yAxisMajorUnit={0}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "yAxisMajorUnit must be finite and greater than zero",
+        ))
+        .stderr(predicate::str::contains("omit it for automatic intervals"));
+}
+
+#[test]
+fn rejects_chart_axis_units_for_scatter_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-axis-unit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" yAxisMinorUnit={1}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not supported for scatter"))
+        .stderr(predicate::str::contains("omit the units"));
 }
 
 #[test]
