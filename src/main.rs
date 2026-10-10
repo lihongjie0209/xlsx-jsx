@@ -739,6 +739,7 @@ fn compile_chart(
     configure_chart_axis_number_formats(&mut chart, component);
     configure_chart_axis_bounds(&mut chart, component);
     configure_chart_axis_log_base(&mut chart, component);
+    configure_chart_value_axis_reversed(&mut chart, component);
     configure_chart_axis_units(&mut chart, component);
     configure_chart_gridlines(&mut chart, component);
     if component.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
@@ -846,6 +847,28 @@ fn configure_chart_axis_log_base(chart: &mut Chart, component: &Node) {
         chart.y_axis()
     };
     value_axis.set_log_base(u16::try_from(base).expect("validated Chart.yAxisLogBase"));
+}
+
+fn configure_chart_value_axis_reversed(chart: &mut Chart, component: &Node) {
+    if component
+        .props
+        .get("valueAxisReversed")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return;
+    }
+    let value_axis = if component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|chart_type| chart_type.starts_with("bar"))
+    {
+        chart.x_axis()
+    } else {
+        chart.y_axis()
+    };
+    value_axis.set_reverse();
 }
 
 fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
@@ -3726,6 +3749,12 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
             chart.y_axis_log_base.map(|value| format!("{{{value}}}")),
         ),
         (
+            "valueAxisReversed",
+            chart
+                .value_axis_reversed
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
             "yAxisMajorUnit",
             chart.y_axis_major_unit.map(|value| format!("{{{value}}}")),
         ),
@@ -6495,6 +6524,9 @@ fn parse_chart_xml(
     let mut y_axis_max = None;
     let mut y_axis_log_base = None;
     let mut y_axis_log_base_seen = false;
+    let mut value_axis_reversed = None;
+    let mut value_axis_reversed_seen = false;
+    let mut nonstandard_axis_position_seen = false;
     let mut y_axis_min_seen = false;
     let mut y_axis_max_seen = false;
     let mut y_axis_major_unit = None;
@@ -6586,6 +6618,14 @@ fn parse_chart_xml(
                                     .map(|value| match value.as_ref() {
                                         "b" => "b",
                                         "l" => "l",
+                                        "t" => {
+                                            nonstandard_axis_position_seen = true;
+                                            "t"
+                                        }
+                                        "r" => {
+                                            nonstandard_axis_position_seen = true;
+                                            "r"
+                                        }
                                         _ => "unsupported",
                                     })
                             });
@@ -6598,26 +6638,26 @@ fn parse_chart_xml(
                                 "chart part `{part}` has {tag} outside a primary chart axis; repair the axis structure"
                             )));
                         }
-                        let Some(position @ ("b" | "l")) = current_axis_position else {
+                        let Some(position @ ("b" | "l" | "t" | "r")) = current_axis_position else {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has {tag} on an axis without a supported axPos; use bottom (b) or left (l) axis positions"
+                                "chart part `{part}` has {tag} on an axis without a supported axPos; repair the axis position or retain one primary axis"
                             )));
                         };
                         let is_major = tag == "majorGridlines";
                         let (seen, visible) = match (position, is_major) {
-                            ("b", true) => (
+                            ("b" | "t", true) => (
                                 &mut horizontal_major_gridlines_seen,
                                 &mut horizontal_major_gridlines,
                             ),
-                            ("b", false) => (
+                            ("b" | "t", false) => (
                                 &mut horizontal_minor_gridlines_seen,
                                 &mut horizontal_minor_gridlines,
                             ),
-                            ("l", true) => (
+                            ("l" | "r", true) => (
                                 &mut vertical_major_gridlines_seen,
                                 &mut vertical_major_gridlines,
                             ),
-                            ("l", false) => (
+                            ("l" | "r", false) => (
                                 &mut vertical_minor_gridlines_seen,
                                 &mut vertical_minor_gridlines,
                             ),
@@ -7065,6 +7105,50 @@ fn parse_chart_xml(
                         }
                         y_axis_log_base_seen = true;
                         y_axis_log_base = Some(base);
+                    }
+                    "orientation" => {
+                        let category_axis_context = stack
+                            .iter()
+                            .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"));
+                        let value_axis_context = stack.iter().any(|ancestor| ancestor == "valAx");
+                        let orientation = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            });
+                        if orientation.as_deref() == Some("maxMin") {
+                            if category_axis_context {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` reverses a category/date axis, which this DSL does not model; restore minMax orientation or use a value-axis chart"
+                                )));
+                            }
+                            if !value_axis_context
+                                || chart_type.is_some_and(|value| {
+                                    value.starts_with("scatter")
+                                        || matches!(value, "pie" | "doughnut")
+                                })
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` reverses an axis without one unambiguous primary value axis; restore minMax or use a supported category/value chart"
+                                )));
+                            }
+                            if value_axis_reversed_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has multiple reversed value axes; keep one primary value-axis orientation"
+                                )));
+                            }
+                            value_axis_reversed_seen = true;
+                            value_axis_reversed = Some(true);
+                        }
                     }
                     "majorUnit" | "minorUnit" => {
                         let category_axis_context = stack
@@ -7523,6 +7607,11 @@ fn parse_chart_xml(
             "chart part `{part}` has a non-positive bound on a logarithmic value axis; remove the bound or set it to a positive value"
         )));
     }
+    if nonstandard_axis_position_seen && value_axis_reversed != Some(true) {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` uses top/right axis positions without a reversed value axis; restore bottom/left positions or add explicit axis-position support"
+        )));
+    }
     if chart_type == "doughnut" && hole_size.is_none() {
         // OOXML's absent holeSize default is 10; the pinned writer emits 50.
         hole_size = Some(10);
@@ -7588,6 +7677,7 @@ fn parse_chart_xml(
         y_axis_min,
         y_axis_max,
         y_axis_log_base,
+        value_axis_reversed,
         y_axis_major_unit,
         y_axis_minor_unit,
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
@@ -8189,7 +8279,7 @@ fn is_supported_chart_attribute(
         ("idx" | "order" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
             value.parse::<u32>().is_ok()
         }
-        ("orientation", "val") => value == "minMax",
+        ("orientation", "val") => matches!(value, "minMax" | "maxMin"),
         ("logBase", "val") => value
             .parse::<u16>()
             .is_ok_and(|base| (2..=1000).contains(&base)),
@@ -8197,7 +8287,7 @@ fn is_supported_chart_attribute(
         ("majorUnit" | "minorUnit", "val") => value
             .parse::<f64>()
             .is_ok_and(|unit| unit.is_finite() && unit > 0.0),
-        ("axPos", "val") => matches!(value, "b" | "l"),
+        ("axPos", "val") => matches!(value, "b" | "l" | "t" | "r"),
         ("tickLblPos", "val") => value == "nextTo",
         ("majorTickMark", "val") => value == "cross",
         ("crosses", "val") => value == "autoZero",
@@ -10730,6 +10820,7 @@ struct WorksheetChart {
     y_axis_min: Option<f64>,
     y_axis_max: Option<f64>,
     y_axis_log_base: Option<u16>,
+    value_axis_reversed: Option<bool>,
     y_axis_major_unit: Option<f64>,
     y_axis_minor_unit: Option<f64>,
     horizontal_axis_major_gridlines: Option<bool>,

@@ -1895,6 +1895,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisMin",
             "yAxisMax",
             "yAxisLogBase",
+            "valueAxisReversed",
             "yAxisMajorUnit",
             "yAxisMinorUnit",
             "horizontalAxisMajorGridlines",
@@ -1997,6 +1998,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_number_formats(chart, chart_type)?;
     validate_chart_axis_bounds(chart, chart_type)?;
     validate_chart_axis_log_base(chart, chart_type)?;
+    validate_chart_value_axis_reversed(chart, chart_type)?;
     validate_chart_axis_units(chart, chart_type)?;
     validate_chart_gridlines(chart, chart_type)?;
     validate_chart_legend(chart)
@@ -2104,6 +2106,23 @@ fn validate_chart_axis_log_base(chart: &Node, chart_type: &str) -> Result<()> {
                 "logarithmic value axis bounds must be greater than zero; omit {property} or set it to a positive value"
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_chart_value_axis_reversed(chart: &Node, chart_type: &str) -> Result<()> {
+    let Some(reversed) = chart.props.get("valueAxisReversed") else {
+        return Ok(());
+    };
+    if !reversed.is_boolean() {
+        return Err(Error::Compile(
+            "Chart.valueAxisReversed must be a boolean; use true to reverse the numeric value-axis scale or omit it for the normal direction".into(),
+        ));
+    }
+    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+        return Err(Error::Compile(
+            "Chart.valueAxisReversed is not supported for scatter, pie, or doughnut charts because there is no single primary value axis; omit it or use a supported category/value chart".into(),
+        ));
     }
     Ok(())
 }

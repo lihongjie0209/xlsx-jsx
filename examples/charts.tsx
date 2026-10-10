@@ -12,7 +12,7 @@ export default <Workbook>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" />
     </Chart>
-    <Chart type="line" cell="K2" width={480} height={288} showLegend={false}>
+    <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
     </Chart>
     <Chart type="bar" cell="D20" width={480} height={288}>

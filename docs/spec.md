@@ -143,6 +143,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   or `yAxisMax` must be greater than zero, and series data must contain positive
   values for Excel to plot it. Reverse preserves `<valAx><scaling><logBase>` and
   rejects category/date-axis or otherwise ambiguous log scales.
+- `Chart.valueAxisReversed?: boolean` reverses the primary value-axis scale
+  (`<c:scaling><c:orientation val="maxMin"/>`). Omission or `false` keeps the
+  normal minimum-to-maximum direction. It applies to area, column, bar, line,
+  radar, and stock charts; horizontal bar charts still refer to their numeric
+  value axis. Scatter charts (two value axes) and pie/doughnut charts (no axes)
+  reject it. Reverse preserves explicit reversed value-axis orientation and
+  rejects reversed category/date axes rather than silently normalizing them.
 - `Chart.horizontalAxisMajorGridlines?: boolean`,
   `Chart.horizontalAxisMinorGridlines?: boolean`,
   `Chart.verticalAxisMajorGridlines?: boolean`, and
