@@ -1,0 +1,5 @@
+/target/
+/tools/openxml-validator/bin/
+/tools/openxml-validator/obj/
+*.xlsx
+*.tmp

@@ -1,0 +1,1200 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://xlsx-jsx.dev/spec/ir-v1.schema.json",
+  "title": "xlsx-jsx IR v1",
+  "type": "object",
+  "required": ["version", "workbook"],
+  "properties": {
+    "version": { "const": 1 },
+    "workbook": { "$ref": "#/$defs/workbook" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "workbook": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "Workbook" },
+        "props": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "title": { "type": "string" },
+            "subject": { "type": "string" },
+            "author": { "type": "string" },
+            "keywords": { "type": "string" },
+            "description": { "type": "string" }
+          }
+        },
+        "children": {
+          "type": "array",
+          "minItems": 1,
+          "prefixItems": [
+            {
+              "properties": {
+                "props": {
+                  "properties": {
+                    "visibility": { "const": "visible" }
+                  }
+                }
+              }
+            }
+          ],
+          "items": { "oneOf": [{ "$ref": "#/$defs/worksheet" }, { "$ref": "#/$defs/definedName" }] }
+        }
+      },
+      "additionalProperties": false
+    },
+    "worksheet": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "Worksheet" },
+        "props": {
+          "type": "object",
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "active": { "type": "boolean" },
+            "firstTab": { "type": "boolean" },
+            "tabColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "visibility": { "enum": ["visible", "hidden", "veryHidden"] },
+            "defaultRowHeightPixels": { "type": "integer", "minimum": 1, "maximum": 545 },
+            "hideUnusedRows": { "type": "boolean" },
+            "showGridlines": { "type": "boolean" },
+            "view": { "enum": ["normal", "pageLayout", "pageBreakPreview"] },
+            "topLeftCell": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
+            "selection": {
+              "type": "object",
+              "required": ["activeCell", "range"],
+              "additionalProperties": false,
+              "properties": {
+                "activeCell": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
+                "range": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}(:\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6})?$" }
+              }
+            },
+            "printGridlines": { "type": "boolean" },
+            "horizontalPageBreaks": { "type": "array", "maxItems": 1023, "uniqueItems": true, "items": { "type": "integer", "minimum": 1, "maximum": 1048575 } },
+            "verticalPageBreaks": { "type": "array", "maxItems": 1023, "uniqueItems": true, "items": { "type": "integer", "minimum": 1, "maximum": 16383 } },
+            "pageMargins": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": false,
+              "properties": {
+                "left": { "type": "number", "minimum": 0 },
+                "right": { "type": "number", "minimum": 0 },
+                "top": { "type": "number", "minimum": 0 },
+                "bottom": { "type": "number", "minimum": 0 },
+                "header": { "type": "number", "minimum": 0 },
+                "footer": { "type": "number", "minimum": 0 }
+              }
+            },
+            "printScale": { "type": "integer", "minimum": 10, "maximum": 400 },
+            "fitToPages": {
+              "type": "object",
+              "required": ["width", "height"],
+              "additionalProperties": false,
+              "properties": {
+                "width": { "type": "integer", "minimum": 0, "maximum": 65535 },
+                "height": { "type": "integer", "minimum": 0, "maximum": 65535 }
+              }
+            },
+            "orientation": { "enum": ["portrait", "landscape"] },
+            "paperSize": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "centerHorizontally": { "type": "boolean" },
+            "centerVertically": { "type": "boolean" },
+            "printBlackAndWhite": { "type": "boolean" },
+            "printDraft": { "type": "boolean" },
+            "printHeadings": { "type": "boolean" },
+            "pageOrder": { "enum": ["downThenOver", "overThenDown"] },
+            "printArea": { "type": "string", "minLength": 3 },
+            "repeatRows": { "type": "string", "minLength": 3 },
+            "repeatColumns": { "type": "string", "minLength": 3 },
+            "header": { "type": "string" },
+            "footer": { "type": "string" },
+            "headerFooterScaleWithDoc": { "type": "boolean" },
+            "headerFooterAlignWithPage": { "type": "boolean" },
+            "protection": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "selectLockedCells": { "type": "boolean" },
+                "selectUnlockedCells": { "type": "boolean" },
+                "formatCells": { "type": "boolean" },
+                "formatColumns": { "type": "boolean" },
+                "formatRows": { "type": "boolean" },
+                "insertColumns": { "type": "boolean" },
+                "insertRows": { "type": "boolean" },
+                "insertLinks": { "type": "boolean" },
+                "deleteColumns": { "type": "boolean" },
+                "deleteRows": { "type": "boolean" },
+                "sort": { "type": "boolean" },
+                "useAutoFilter": { "type": "boolean" },
+                "usePivotTables": { "type": "boolean" },
+                "editScenarios": { "type": "boolean" },
+                "editObjects": { "type": "boolean" }
+              }
+            },
+            "zoom": { "type": "integer", "minimum": 10, "maximum": 400 },
+            "rightToLeft": { "type": "boolean" },
+            "summaryBelow": { "type": "boolean" },
+            "summaryRight": { "type": "boolean" },
+            "autoFilter": { "type": "string", "minLength": 5, "maxLength": 25, "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}:\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
+            "autoFilterColumns": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["column"],
+                "properties": {
+                  "column": { "type": "integer", "minimum": 0, "maximum": 16383 },
+                  "values": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+                  "includeBlanks": { "type": "boolean" },
+                  "customFilters": {
+                    "type": "object",
+                    "required": ["logic", "conditions"],
+                    "properties": {
+                      "logic": { "enum": ["and", "or"] },
+                      "conditions": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 2,
+                        "items": {
+                          "type": "object",
+                          "required": ["value"],
+                          "properties": {
+                            "operator": { "enum": ["lessThan", "notEqual", "greaterThan", "lessThanOrEqual", "greaterThanOrEqual"] },
+                            "value": { "type": "string" }
+                          },
+                          "additionalProperties": false
+                        }
+                      }
+                    },
+                    "allOf": [
+                      {
+                        "if": {
+                          "properties": {
+                            "conditions": { "maxItems": 1 }
+                          },
+                          "required": ["conditions"]
+                        },
+                        "then": {
+                          "properties": { "logic": { "const": "or" } }
+                        }
+                      }
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "anyOf": [
+                  { "required": ["values"] },
+                  { "required": ["includeBlanks"] },
+                  { "required": ["customFilters"] }
+                ],
+                "not": {
+                  "anyOf": [
+                    { "required": ["customFilters", "values"] },
+                    { "required": ["customFilters", "includeBlanks"] }
+                  ]
+                },
+                "allOf": [
+                  {
+                    "if": {
+                      "required": ["includeBlanks"],
+                      "not": { "required": ["values"] }
+                    },
+                    "then": {
+                      "properties": { "includeBlanks": { "const": true } }
+                    }
+                  }
+                ],
+                "additionalProperties": false
+              }
+            },
+            "freezeRows": { "type": "integer", "minimum": 0, "maximum": 1048575 },
+            "freezeColumns": { "type": "integer", "minimum": 0, "maximum": 16383 },
+            "freezeTopLeftCell": { "type": "string", "minLength": 2, "maxLength": 12, "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "anyOf": [
+                  { "required": ["freezeRows"] },
+                  { "required": ["freezeColumns"] },
+                  { "required": ["freezeTopLeftCell"] }
+                ]
+              },
+              "then": {
+                "anyOf": [
+                  { "properties": { "freezeRows": { "minimum": 1 } }, "required": ["freezeRows"] },
+                  { "properties": { "freezeColumns": { "minimum": 1 } }, "required": ["freezeColumns"] }
+                ]
+              }
+            },
+            {
+              "if": { "required": ["freezeTopLeftCell"] },
+              "then": {
+                "anyOf": [
+                  { "properties": { "freezeRows": { "minimum": 1 } }, "required": ["freezeRows"] },
+                  { "properties": { "freezeColumns": { "minimum": 1 } }, "required": ["freezeColumns"] }
+                ]
+              }
+            }
+          ],
+          "additionalProperties": false
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/definedName" },
+              { "$ref": "#/$defs/column" },
+              { "$ref": "#/$defs/dataValidation" },
+              { "$ref": "#/$defs/conditionalFormat" },
+              { "$ref": "#/$defs/ignoreError" },
+              { "$ref": "#/$defs/table" },
+              { "$ref": "#/$defs/note" },
+              { "$ref": "#/$defs/row" }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "definedName": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "DefinedName" },
+        "props": {
+          "type": "object",
+          "required": ["name", "formula"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "formula": { "type": "string", "minLength": 1 }
+          },
+          "allOf": [
+            { "not": { "required": ["totalLabel", "totalFunction"] } },
+            { "not": { "required": ["totalLabel", "totalFormula"] } },
+            { "not": { "required": ["totalFormula", "totalFunction"] } }
+          ],
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "column": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "Column" },
+        "props": {
+          "type": "object",
+          "required": ["min", "max"],
+          "properties": {
+            "min": { "type": "integer", "minimum": 1, "maximum": 16384 },
+            "max": { "type": "integer", "minimum": 1, "maximum": 16384 },
+            "widthPixels": { "type": "integer", "minimum": 1, "maximum": 1790 },
+            "hidden": { "type": "boolean" },
+            "collapsed": { "type": "boolean" },
+            "outlineLevel": { "type": "integer", "minimum": 1, "maximum": 7 }
+          },
+          "allOf": [{ "$ref": "#/$defs/formatProps" }],
+          "unevaluatedProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "table": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "Table" },
+        "props": {
+          "type": "object",
+          "required": ["range", "name"],
+          "properties": {
+            "range": { "type": "string", "minLength": 4, "maxLength": 25, "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}:\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
+            "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "style": { "type": "string", "pattern": "^(TableStyleNone|TableStyleLight([1-9]|1[0-9]|2[01])|TableStyleMedium([1-9]|1[0-9]|2[0-8])|TableStyleDark([1-9]|10|11))$" },
+            "autoFilter": { "type": "boolean" },
+            "bandedRows": { "type": "boolean" },
+            "bandedColumns": { "type": "boolean" },
+            "firstColumn": { "type": "boolean" },
+            "lastColumn": { "type": "boolean" },
+            "totalsRow": { "type": "boolean" },
+            "altText": { "type": "string" },
+            "altTextTitle": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/tableColumn" } }
+      },
+      "additionalProperties": false
+    },
+    "tableColumn": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "TableColumn" },
+        "props": {
+          "type": "object",
+          "properties": {
+            "totalLabel": { "type": "string" },
+            "totalFunction": { "type": "string", "enum": ["none", "average", "count", "countNumbers", "max", "min", "sum", "stdDev", "var"] },
+            "totalFormula": { "type": "string", "minLength": 1 },
+            "formula": { "type": "string", "minLength": 1 },
+            "format": { "$ref": "#/$defs/tableColumnFormat" },
+            "headerFormat": { "$ref": "#/$defs/tableColumnFormat" }
+          },
+          "allOf": [
+            {
+              "if": {
+                "required": ["format"],
+                "properties": { "format": { "required": ["script"] } }
+              },
+              "then": {
+                "properties": {
+                  "format": {
+                    "anyOf": [
+                      { "required": ["bold"] },
+                      { "required": ["italic"] },
+                      { "required": ["strikethrough"] },
+                      { "required": ["underline"] },
+                      { "required": ["fontColor"] },
+                      { "required": ["fillColor"] },
+                      { "required": ["fillPattern"] },
+                      { "required": ["fillForegroundColor"] },
+                      { "required": ["fillBackgroundColor"] },
+                      { "required": ["numberFormat"] },
+                      { "required": ["borderTop"] },
+                      { "required": ["borderRight"] },
+                      { "required": ["borderBottom"] },
+                      { "required": ["borderLeft"] },
+                      { "required": ["borderTopColor"] },
+                      { "required": ["borderRightColor"] },
+                      { "required": ["borderBottomColor"] },
+                      { "required": ["borderLeftColor"] },
+                      { "required": ["borderDiagonalType"] }
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "tableColumnFormat": {
+      "type": "object",
+      "properties": {
+        "bold": { "const": true },
+        "italic": { "const": true },
+        "strikethrough": { "const": true },
+        "underline": { "enum": ["single", "double", "singleAccounting", "doubleAccounting"] },
+        "script": { "enum": ["superscript", "subscript"] },
+        "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "fillPattern": { "enum": ["none", "solid", "mediumGray", "darkGray", "lightGray", "darkHorizontal", "darkVertical", "darkDown", "darkUp", "darkGrid", "darkTrellis", "lightHorizontal", "lightVertical", "lightDown", "lightUp", "lightGrid", "lightTrellis", "gray125", "gray0625"] },
+        "fillForegroundColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "fillBackgroundColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "numberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "borderTop": { "$ref": "#/$defs/borderStyle" },
+        "borderRight": { "$ref": "#/$defs/borderStyle" },
+        "borderBottom": { "$ref": "#/$defs/borderStyle" },
+        "borderLeft": { "$ref": "#/$defs/borderStyle" },
+        "borderTopColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "borderRightColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "borderBottomColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "borderLeftColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "borderDiagonalType": { "enum": ["up", "down", "upDown"] }
+      },
+      "minProperties": 1,
+      "not": {
+        "anyOf": [
+          { "required": ["fillColor", "fillPattern"] },
+          { "required": ["fillColor", "fillForegroundColor"] },
+          { "required": ["fillColor", "fillBackgroundColor"] },
+          { "required": ["fillForegroundColor"], "not": { "required": ["fillPattern"] } },
+          { "required": ["fillBackgroundColor"], "not": { "required": ["fillPattern"] } },
+          { "properties": { "fillPattern": { "const": "none" } }, "required": ["fillPattern", "fillForegroundColor"] },
+          { "properties": { "fillPattern": { "const": "none" } }, "required": ["fillPattern", "fillBackgroundColor"] }
+        ]
+      },
+      "additionalProperties": false
+    },
+    "note": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "Note" },
+        "props": {
+          "type": "object",
+          "required": ["cell", "text"],
+          "properties": {
+            "cell": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
+            "text": { "type": "string", "maxLength": 32713 },
+            "author": { "type": "string", "maxLength": 52 },
+            "authorPrefix": { "type": "boolean" },
+            "visible": { "type": "boolean" },
+            "width": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+            "height": { "type": "integer", "minimum": 1, "maximum": 4294967295 },
+            "backgroundColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "fontSize": { "type": "number", "minimum": 1, "maximum": 409 },
+            "fontFamily": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "altText": { "type": "string", "maxLength": 255 }
+          },
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "ignoreError": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "IgnoreError" },
+        "props": {
+          "type": "object",
+          "required": ["range", "errorType"],
+          "properties": {
+            "range": { "type": "string", "minLength": 1, "maxLength": 25 },
+            "errorType": { "enum": ["numberStoredAsText", "evalError", "formula", "emptyCellReference", "formulaRange", "listDataValidation", "TwoDigitTextYear", "unlockedFormula", "calculatedColumn"] }
+          },
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "dataValidation": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "DataValidation" },
+        "props": {
+          "type": "object",
+          "required": ["range", "type"],
+          "properties": {
+            "range": { "type": "string", "minLength": 4, "maxLength": 25, "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}:\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
+            "type": { "enum": ["any", "list", "whole", "decimal", "date", "time", "textLength", "custom"] },
+            "source": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "formula1": { "type": "string", "minLength": 1, "maxLength": 8192 },
+            "formula2": { "type": "string", "minLength": 1, "maxLength": 8192 },
+            "operator": { "enum": ["between", "notBetween", "equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual"] },
+            "allowBlank": { "type": "boolean" },
+            "showDropDown": { "type": "boolean" },
+            "showInputMessage": { "type": "boolean" },
+            "showErrorMessage": { "type": "boolean" },
+            "inputTitle": { "type": "string", "maxLength": 32 },
+            "inputMessage": { "type": "string", "maxLength": 255 },
+            "errorTitle": { "type": "string", "maxLength": 32 },
+            "errorMessage": { "type": "string", "maxLength": 255 },
+            "errorStyle": { "enum": ["stop", "warning", "information"] }
+          },
+          "allOf": [
+            {
+              "if": { "properties": { "type": { "const": "any" } }, "required": ["type"] },
+              "then": {
+                "not": { "anyOf": [{ "required": ["source"] }, { "required": ["formula1"] }, { "required": ["formula2"] }, { "required": ["operator"] }] },
+                "properties": { "errorStyle": { "const": "stop" } }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "list" } }, "required": ["type"] },
+              "then": {
+                "required": ["source"],
+                "not": { "anyOf": [{ "required": ["formula1"] }, { "required": ["formula2"] }, { "required": ["operator"] }] }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "custom" } }, "required": ["type"] },
+              "then": {
+                "required": ["formula1"],
+                "not": { "anyOf": [{ "required": ["source"] }, { "required": ["formula2"] }, { "required": ["operator"] }] }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "enum": ["whole", "decimal", "date", "time", "textLength"] } }, "required": ["type"] },
+              "then": {
+                "required": ["formula1"],
+                "not": { "required": ["source"] }
+              }
+            },
+            {
+              "if": { "properties": { "operator": { "enum": ["between", "notBetween"] } }, "required": ["operator"] },
+              "then": { "required": ["formula2"] }
+            }
+          ],
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "conditionalFormat": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "ConditionalFormat" },
+        "props": {
+          "type": "object",
+          "required": ["range", "type"],
+          "properties": {
+            "range": { "type": "string", "minLength": 4, "maxLength": 25, "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}:\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
+            "type": { "enum": ["colorScale2", "colorScale3", "cellIs", "formula", "text", "dataBar", "iconSet", "top10", "average", "date", "blank", "error", "duplicate"] },
+            "stopIfTrue": { "type": "boolean" },
+            "minColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "midColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "maxColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "minType": { "enum": ["automatic", "min", "max", "number", "percent", "percentile", "formula"] },
+            "midType": { "enum": ["min", "max", "number", "percent", "percentile", "formula"] },
+            "maxType": { "enum": ["automatic", "min", "max", "number", "percent", "percentile", "formula"] },
+            "minValue": { "anyOf": [{ "type": "number" }, { "type": "string", "minLength": 1, "maxLength": 8192 }] },
+            "midValue": { "anyOf": [{ "type": "number" }, { "type": "string", "minLength": 1, "maxLength": 8192 }] },
+            "maxValue": { "anyOf": [{ "type": "number" }, { "type": "string", "minLength": 1, "maxLength": 8192 }] },
+            "operator": { "enum": ["equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual", "between", "notBetween", "containsText", "notContains", "beginsWith", "endsWith"] },
+            "rule": { "enum": ["top", "bottom", "topPercent", "bottomPercent", "aboveAverage", "belowAverage", "equalOrAboveAverage", "equalOrBelowAverage", "oneStdDevAbove", "oneStdDevBelow", "twoStdDevAbove", "twoStdDevBelow", "threeStdDevAbove", "threeStdDevBelow", "yesterday", "today", "tomorrow", "last7Days", "lastWeek", "thisWeek", "nextWeek", "lastMonth", "thisMonth", "nextMonth", "blank", "nonBlank", "error", "nonError", "duplicate", "unique"] },
+            "rank": { "type": "integer", "minimum": 1, "maximum": 1000 },
+            "text": { "type": "string", "maxLength": 255, "pattern": "^[^\\\"]*$" },
+            "formula1": { "type": "string", "minLength": 1, "maxLength": 8192 },
+            "formula2": { "type": "string", "minLength": 1, "maxLength": 8192 },
+            "bold": { "type": "boolean", "const": true },
+            "italic": { "type": "boolean", "const": true },
+            "strikethrough": { "type": "boolean", "const": true },
+            "underline": { "enum": ["single", "double", "singleAccounting", "doubleAccounting"] },
+            "script": { "enum": ["superscript", "subscript"] },
+            "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fillPattern": { "enum": ["none", "solid", "mediumGray", "darkGray", "lightGray", "darkHorizontal", "darkVertical", "darkDown", "darkUp", "darkGrid", "darkTrellis", "lightHorizontal", "lightVertical", "lightDown", "lightUp", "lightGrid", "lightTrellis", "gray125", "gray0625"] },
+            "fillForegroundColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fillBackgroundColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "numberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "borderTop": { "enum": ["thin", "medium", "dashed", "dotted", "thick", "double", "hair", "mediumDashed", "dashDot", "mediumDashDot", "dashDotDot", "mediumDashDotDot", "slantDashDot"] },
+            "borderRight": { "enum": ["thin", "medium", "dashed", "dotted", "thick", "double", "hair", "mediumDashed", "dashDot", "mediumDashDot", "dashDotDot", "mediumDashDotDot", "slantDashDot"] },
+            "borderBottom": { "enum": ["thin", "medium", "dashed", "dotted", "thick", "double", "hair", "mediumDashed", "dashDot", "mediumDashDot", "dashDotDot", "mediumDashDotDot", "slantDashDot"] },
+            "borderLeft": { "enum": ["thin", "medium", "dashed", "dotted", "thick", "double", "hair", "mediumDashed", "dashDot", "mediumDashDot", "dashDotDot", "mediumDashDotDot", "slantDashDot"] },
+            "borderTopColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "borderRightColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "borderBottomColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "borderLeftColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "barOnly": { "type": "boolean" },
+            "solidFill": { "type": "boolean" },
+            "border": { "type": "boolean" },
+            "direction": { "enum": ["context", "leftToRight", "rightToLeft"] },
+            "axisPosition": { "enum": ["automatic", "midpoint", "none"] },
+            "borderColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "negativeFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "negativeBorderColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "axisColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "iconType": { "enum": ["threeArrows", "threeArrowsGray", "threeFlags", "threeTrafficLights", "threeTrafficLightsWithRim", "threeSigns", "threeSymbolsCircled", "threeSymbols", "threeStars", "threeTriangles", "fourArrows", "fourArrowsGray", "fourRedToBlack", "fourHistograms", "fourTrafficLights", "fiveArrows", "fiveArrowsGray", "fiveHistograms", "fiveQuadrants", "fiveBoxes"] },
+            "reverse": { "type": "boolean" },
+            "showIconsOnly": { "type": "boolean" },
+            "icons": {
+              "type": "array", "minItems": 3, "maxItems": 5,
+              "items": {
+                "type": "object", "required": ["type", "value"],
+                "properties": {
+                  "type": { "enum": ["number", "percent", "percentile", "formula"] },
+                  "value": { "anyOf": [{ "type": "number" }, { "type": "string", "minLength": 1, "maxLength": 8192 }] },
+                  "greaterThan": { "type": "boolean" },
+                  "iconType": { "enum": ["threeArrows", "threeArrowsGray", "threeFlags", "threeTrafficLights", "threeTrafficLightsWithRim", "threeSigns", "threeSymbolsCircled", "threeSymbols", "threeStars", "threeTriangles", "fourArrows", "fourArrowsGray", "fourRedToBlack", "fourHistograms", "fourTrafficLights", "fiveArrows", "fiveArrowsGray", "fiveHistograms", "fiveQuadrants", "fiveBoxes"] },
+                  "iconIndex": { "type": "integer", "minimum": 0, "maximum": 4 },
+                  "noIcon": { "const": true }
+                },
+                "additionalProperties": false,
+                "allOf": [
+                  { "if": { "properties": { "type": { "const": "formula" } }, "required": ["type"] }, "then": { "properties": { "value": { "type": "string" } } } },
+                  { "if": { "properties": { "type": { "enum": ["number", "percent", "percentile"] } }, "required": ["type"] }, "then": { "properties": { "value": { "type": "number" } } } },
+                  { "if": { "properties": { "iconType": { "enum": ["threeArrows", "threeArrowsGray", "threeFlags", "threeTrafficLights", "threeTrafficLightsWithRim", "threeSigns", "threeSymbolsCircled", "threeSymbols", "threeStars", "threeTriangles", "fourArrows", "fourArrowsGray", "fourRedToBlack", "fourHistograms", "fourTrafficLights", "fiveArrows", "fiveArrowsGray", "fiveHistograms", "fiveQuadrants", "fiveBoxes"] } }, "required": ["iconType"] }, "then": { "required": ["iconIndex"] } },
+                  { "if": { "properties": { "noIcon": { "const": true } }, "required": ["noIcon"] }, "then": { "not": { "anyOf": [{ "required": ["iconType"] }, { "required": ["iconIndex"] }] } } }
+                ]
+              }
+            }
+          },
+          "allOf": [
+            {
+              "not": {
+                "anyOf": [
+                  { "required": ["fillColor", "fillPattern"] },
+                  { "required": ["fillColor", "fillForegroundColor"] },
+                  { "required": ["fillColor", "fillBackgroundColor"] },
+                  { "required": ["fillForegroundColor"], "not": { "required": ["fillPattern"] } },
+                  { "required": ["fillBackgroundColor"], "not": { "required": ["fillPattern"] } },
+                  { "properties": { "fillPattern": { "const": "none" } }, "required": ["fillPattern", "fillForegroundColor"] },
+                  { "properties": { "fillPattern": { "const": "none" } }, "required": ["fillPattern", "fillBackgroundColor"] }
+                ]
+              }
+            },
+            {
+              "if": { "properties": { "type": { "enum": ["colorScale2", "colorScale3"] } }, "required": ["type"] },
+              "then": {
+                "required": ["minColor", "maxColor"],
+                "not": { "anyOf": [{ "required": ["fillPattern"] }, { "required": ["fillForegroundColor"] }, { "required": ["fillBackgroundColor"] }] }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "colorScale3" } }, "required": ["type"] },
+              "then": { "required": ["midColor"] }
+            },
+            {
+              "if": { "properties": { "type": { "const": "cellIs" } }, "required": ["type"] },
+              "then": {
+                "required": ["operator", "formula1"],
+                "not": { "anyOf": [
+                  { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] },
+                  { "required": ["minType"] }, { "required": ["midType"] }, { "required": ["maxType"] },
+                  { "required": ["minValue"] }, { "required": ["midValue"] }, { "required": ["maxValue"] }
+                ] },
+                "anyOf": [
+                  { "required": ["bold"] },
+                  { "required": ["italic"] },
+                  { "required": ["fontColor"] },
+                  { "required": ["fillColor"] },
+                  { "required": ["fillPattern"] },
+                  { "required": ["fillForegroundColor"] },
+                  { "required": ["fillBackgroundColor"] }
+                ]
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "formula" } }, "required": ["type"] },
+              "then": {
+                "required": ["formula1"],
+                "not": { "anyOf": [
+                  { "required": ["operator"] }, { "required": ["formula2"] },
+                  { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] },
+                  { "required": ["minType"] }, { "required": ["midType"] }, { "required": ["maxType"] },
+                  { "required": ["minValue"] }, { "required": ["midValue"] }, { "required": ["maxValue"] }
+                ] },
+                "anyOf": [
+                  { "required": ["bold"] },
+                  { "required": ["italic"] },
+                  { "required": ["fontColor"] },
+                  { "required": ["fillColor"] },
+                  { "required": ["fillPattern"] },
+                  { "required": ["fillForegroundColor"] },
+                  { "required": ["fillBackgroundColor"] }
+                ]
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "text" } }, "required": ["type"] },
+              "then": {
+                "required": ["operator", "text"],
+                "properties": {
+                  "operator": { "enum": ["containsText", "notContains", "beginsWith", "endsWith"] }
+                },
+                "not": { "anyOf": [
+                  { "required": ["formula1"] }, { "required": ["formula2"] },
+                  { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] },
+                  { "required": ["minType"] }, { "required": ["midType"] }, { "required": ["maxType"] },
+                  { "required": ["minValue"] }, { "required": ["midValue"] }, { "required": ["maxValue"] }
+                ] },
+                "anyOf": [
+                  { "required": ["bold"] },
+                  { "required": ["italic"] },
+                  { "required": ["fontColor"] },
+                  { "required": ["fillColor"] },
+                  { "required": ["fillPattern"] },
+                  { "required": ["fillForegroundColor"] },
+                  { "required": ["fillBackgroundColor"] }
+                ]
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "dataBar" } }, "required": ["type"] },
+              "then": {
+                "not": { "anyOf": [
+                  { "required": ["midColor"] }, { "required": ["midType"] }, { "required": ["midValue"] },
+                  { "required": ["operator"] }, { "required": ["text"] },
+                  { "required": ["formula1"] }, { "required": ["formula2"] },
+                  { "required": ["bold"] }, { "required": ["italic"] },
+                  { "required": ["fontColor"] }, { "required": ["stopIfTrue"] },
+                  { "required": ["fillPattern"] }, { "required": ["fillForegroundColor"] }, { "required": ["fillBackgroundColor"] },
+                  { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] },
+                  { "required": ["icons"] }, { "required": ["iconType"] }, { "required": ["reverse"] }, { "required": ["showIconsOnly"] }
+                ] }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "iconSet" } }, "required": ["type"] },
+              "then": {
+                "not": { "anyOf": [
+                  { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] },
+                  { "required": ["minType"] }, { "required": ["midType"] }, { "required": ["maxType"] },
+                  { "required": ["minValue"] }, { "required": ["midValue"] }, { "required": ["maxValue"] },
+                  { "required": ["operator"] }, { "required": ["formula1"] }, { "required": ["formula2"] },
+                  { "required": ["text"] }, { "required": ["bold"] }, { "required": ["italic"] },
+                  { "required": ["fontColor"] }, { "required": ["fillColor"] },
+                  { "required": ["fillPattern"] }, { "required": ["fillForegroundColor"] }, { "required": ["fillBackgroundColor"] },
+                  { "required": ["barOnly"] }, { "required": ["solidFill"] }, { "required": ["border"] },
+                  { "required": ["direction"] }, { "required": ["axisPosition"] }, { "required": ["borderColor"] },
+                  { "required": ["negativeFillColor"] }, { "required": ["negativeBorderColor"] }, { "required": ["axisColor"] },
+                  { "required": ["barOnly"] }, { "required": ["solidFill"] }, { "required": ["border"] },
+                  { "required": ["direction"] }, { "required": ["axisPosition"] }, { "required": ["borderColor"] }
+                ] }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "top10" } }, "required": ["type"] },
+              "then": {
+                "not": { "anyOf": [
+                  { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] },
+                  { "required": ["minType"] }, { "required": ["midType"] }, { "required": ["maxType"] },
+                  { "required": ["minValue"] }, { "required": ["midValue"] }, { "required": ["maxValue"] },
+                  { "required": ["operator"] }, { "required": ["formula1"] }, { "required": ["formula2"] },
+                  { "required": ["text"] }, { "required": ["barOnly"] }, { "required": ["solidFill"] },
+                  { "required": ["border"] }, { "required": ["direction"] }, { "required": ["axisPosition"] },
+                  { "required": ["borderColor"] }, { "required": ["negativeFillColor"] },
+                  { "required": ["negativeBorderColor"] }, { "required": ["axisColor"] },
+                  { "required": ["iconType"] }, { "required": ["reverse"] },
+                  { "required": ["showIconsOnly"] }, { "required": ["icons"] }
+                ] }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "average" } }, "required": ["type"] },
+              "then": { "properties": { "rule": { "enum": ["aboveAverage", "belowAverage", "equalOrAboveAverage", "equalOrBelowAverage", "oneStdDevAbove", "oneStdDevBelow", "twoStdDevAbove", "twoStdDevBelow", "threeStdDevAbove", "threeStdDevBelow"] } }, "not": { "anyOf": [{ "required": ["rank"] }, { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] }, { "required": ["operator"] }, { "required": ["formula1"] }, { "required": ["formula2"] }, { "required": ["text"] }, { "required": ["icons"] }, { "required": ["iconType"] }, { "required": ["barOnly"] }, { "required": ["solidFill"] }, { "required": ["border"] }, { "required": ["direction"] }, { "required": ["axisPosition"] }, { "required": ["borderColor"] }, { "required": ["negativeFillColor"] }, { "required": ["negativeBorderColor"] }, { "required": ["axisColor"] }] } }
+            },
+            {
+              "if": { "properties": { "type": { "const": "date" } }, "required": ["type"] },
+              "then": { "properties": { "rule": { "enum": ["yesterday", "today", "tomorrow", "last7Days", "lastWeek", "thisWeek", "nextWeek", "lastMonth", "thisMonth", "nextMonth"] } }, "not": { "anyOf": [{ "required": ["rank"] }, { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] }, { "required": ["operator"] }, { "required": ["formula1"] }, { "required": ["formula2"] }, { "required": ["text"] }, { "required": ["icons"] }, { "required": ["iconType"] }, { "required": ["barOnly"] }, { "required": ["solidFill"] }, { "required": ["border"] }, { "required": ["direction"] }, { "required": ["axisPosition"] }, { "required": ["borderColor"] }, { "required": ["negativeFillColor"] }, { "required": ["negativeBorderColor"] }, { "required": ["axisColor"] }] } }
+            },
+            {
+              "if": { "properties": { "type": { "const": "blank" } }, "required": ["type"] },
+              "then": { "properties": { "rule": { "enum": ["blank", "nonBlank"] } }, "not": { "anyOf": [{ "required": ["rank"] }, { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] }, { "required": ["operator"] }, { "required": ["formula1"] }, { "required": ["formula2"] }, { "required": ["text"] }, { "required": ["icons"] }, { "required": ["iconType"] }, { "required": ["barOnly"] }, { "required": ["solidFill"] }, { "required": ["border"] }, { "required": ["direction"] }, { "required": ["axisPosition"] }, { "required": ["borderColor"] }, { "required": ["negativeFillColor"] }, { "required": ["negativeBorderColor"] }, { "required": ["axisColor"] }] } }
+            },
+            {
+              "if": { "properties": { "type": { "const": "error" } }, "required": ["type"] },
+              "then": { "properties": { "rule": { "enum": ["error", "nonError"] } }, "not": { "anyOf": [{ "required": ["rank"] }, { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] }, { "required": ["operator"] }, { "required": ["formula1"] }, { "required": ["formula2"] }, { "required": ["text"] }, { "required": ["icons"] }, { "required": ["iconType"] }, { "required": ["barOnly"] }, { "required": ["solidFill"] }, { "required": ["border"] }, { "required": ["direction"] }, { "required": ["axisPosition"] }, { "required": ["borderColor"] }, { "required": ["negativeFillColor"] }, { "required": ["negativeBorderColor"] }, { "required": ["axisColor"] }] } }
+            },
+            {
+              "if": { "properties": { "type": { "const": "duplicate" } }, "required": ["type"] },
+              "then": { "properties": { "rule": { "enum": ["duplicate", "unique"] } }, "not": { "anyOf": [{ "required": ["rank"] }, { "required": ["minColor"] }, { "required": ["midColor"] }, { "required": ["maxColor"] }, { "required": ["operator"] }, { "required": ["formula1"] }, { "required": ["formula2"] }, { "required": ["text"] }, { "required": ["icons"] }, { "required": ["iconType"] }, { "required": ["barOnly"] }, { "required": ["solidFill"] }, { "required": ["border"] }, { "required": ["direction"] }, { "required": ["axisPosition"] }, { "required": ["borderColor"] }, { "required": ["negativeFillColor"] }, { "required": ["negativeBorderColor"] }, { "required": ["axisColor"] }] } }
+            },
+            {
+              "if": { "properties": { "type": { "enum": ["colorScale2", "colorScale3", "cellIs", "formula", "text", "dataBar", "iconSet"] } }, "required": ["type"] },
+              "then": { "not": { "anyOf": [{ "required": ["rule"] }, { "required": ["rank"] }] } }
+            },
+            {
+              "if": { "properties": { "type": { "const": "top10" }, "rule": { "enum": ["topPercent", "bottomPercent"] } }, "required": ["type", "rule"] },
+              "then": { "properties": { "rank": { "maximum": 100 } } }
+            },
+            {
+              "if": {
+                "properties": {
+                  "type": { "const": "iconSet" },
+                  "iconType": { "enum": ["threeStars", "threeTriangles", "fiveBoxes"] }
+                },
+                "required": ["type", "iconType"]
+              },
+              "then": {
+                "properties": {
+                  "reverse": { "const": false },
+                  "showIconsOnly": { "const": false },
+                  "stopIfTrue": { "const": false },
+                  "icons": { "items": { "properties": { "greaterThan": { "const": false } } } }
+                }
+              }
+            },
+            {
+              "if": {
+                "properties": {
+                  "type": { "const": "iconSet" },
+                  "icons": {
+                    "contains": {
+                      "anyOf": [
+                        { "required": ["iconType"] },
+                        { "properties": { "noIcon": { "const": true } }, "required": ["noIcon"] }
+                      ]
+                    }
+                  }
+                },
+                "required": ["type", "icons"]
+              },
+              "then": {
+                "properties": {
+                  "reverse": { "const": false },
+                  "showIconsOnly": { "const": false },
+                  "stopIfTrue": { "const": false },
+                  "icons": { "items": { "properties": { "greaterThan": { "const": false } } } }
+                }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "const": "cellIs" } }, "required": ["type"] },
+              "then": {
+                "properties": {
+                  "operator": { "enum": ["equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual", "between", "notBetween"] }
+                }
+              }
+            },
+            {
+              "if": { "properties": { "type": { "enum": ["colorScale2", "colorScale3"] } }, "required": ["type"] },
+              "then": { "not": { "anyOf": [
+                { "required": ["operator"] }, { "required": ["formula1"] }, { "required": ["formula2"] },
+                { "required": ["bold"] }, { "required": ["italic"] }, { "required": ["fontColor"] }, { "required": ["fillColor"] }
+              ] } }
+            },
+            {
+              "if": { "properties": { "operator": { "enum": ["between", "notBetween"] } }, "required": ["operator"] },
+              "then": { "required": ["formula2"] }
+            },
+            {
+              "if": { "properties": { "operator": { "enum": ["equal", "notEqual", "greaterThan", "greaterThanOrEqual", "lessThan", "lessThanOrEqual"] } }, "required": ["operator"] },
+              "then": { "not": { "required": ["formula2"] } }
+            },
+            {
+              "if": { "properties": { "minType": { "enum": ["number", "percent", "percentile", "formula"] } }, "required": ["minType"] },
+              "then": { "required": ["minValue"] }
+            },
+            {
+              "if": { "properties": { "midType": { "enum": ["number", "percent", "percentile", "formula"] } }, "required": ["midType"] },
+              "then": { "required": ["midValue"] }
+            },
+            {
+              "if": { "properties": { "maxType": { "enum": ["number", "percent", "percentile", "formula"] } }, "required": ["maxType"] },
+              "then": { "required": ["maxValue"] }
+            }
+          ],
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "row": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "Row" },
+        "props": {
+          "type": "object",
+          "properties": {
+            "height": { "type": "number", "minimum": 0.75, "maximum": 409.5, "multipleOf": 0.75 },
+            "hidden": { "type": "boolean" },
+            "collapsed": { "type": "boolean" },
+            "outlineLevel": { "type": "integer", "minimum": 1, "maximum": 7 }
+          },
+          "allOf": [{ "$ref": "#/$defs/formatProps" }],
+          "unevaluatedProperties": false
+        },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/cell" } }
+      },
+      "additionalProperties": false
+    },
+    "cell": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "Cell" },
+        "props": {
+          "type": "object",
+          "properties": {
+            "value": { "$ref": "#/$defs/scalar" },
+            "formula": { "type": "string", "minLength": 1 },
+            "formulaResult": {
+              "anyOf": [
+                { "type": "string" },
+                { "type": "number" },
+                { "type": "boolean" },
+                { "type": "null" }
+              ]
+            },
+            "arrayFormulaRange": { "type": "string", "minLength": 3, "maxLength": 25, "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}:\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
+            "dynamicArray": { "type": "boolean" },
+            "checkbox": { "type": "boolean" },
+            "date": {
+              "type": "string",
+              "pattern": "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?)?$"
+            },
+            "hyperlink": { "type": "string", "minLength": 1, "maxLength": 2080 },
+            "hyperlinkTooltip": { "type": "string" },
+            "rowSpan": { "type": "integer", "minimum": 1, "maximum": 1048576 },
+            "columnSpan": { "type": "integer", "minimum": 1, "maximum": 16384 },
+            "bold": { "type": "boolean" },
+            "italic": { "type": "boolean" },
+            "horizontalAlign": { "enum": ["left", "center", "right", "distributed"] },
+            "verticalAlign": { "enum": ["top", "center", "bottom"] },
+            "indent": { "type": "integer", "minimum": 1, "maximum": 255 },
+            "wrapText": { "type": "boolean" },
+            "shrinkToFit": { "type": "boolean" },
+            "textRotation": { "anyOf": [{ "type": "integer", "minimum": -90, "maximum": 90 }, { "const": 270 }] },
+            "readingDirection": { "enum": ["leftToRight", "rightToLeft"] },
+            "quotePrefix": { "type": "boolean" },
+            "locked": { "type": "boolean" },
+            "formulaHidden": { "type": "boolean" },
+            "numberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fillPattern": { "enum": ["none", "solid", "mediumGray", "darkGray", "lightGray", "darkHorizontal", "darkVertical", "darkDown", "darkUp", "darkGrid", "darkTrellis", "lightHorizontal", "lightVertical", "lightDown", "lightUp", "lightGrid", "lightTrellis", "gray125", "gray0625"] },
+            "fillForegroundColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fillBackgroundColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "fontSize": { "type": "number", "minimum": 1, "maximum": 409 },
+            "fontFamily": { "type": "integer", "minimum": 0, "maximum": 5 },
+            "fontCharset": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "underline": { "enum": ["single", "double", "singleAccounting", "doubleAccounting"] },
+            "strikethrough": { "type": "boolean" },
+            "script": { "enum": ["superscript", "subscript"] },
+            "borderTop": { "$ref": "#/$defs/borderStyle" },
+            "borderRight": { "$ref": "#/$defs/borderStyle" },
+            "borderBottom": { "$ref": "#/$defs/borderStyle" },
+            "borderLeft": { "$ref": "#/$defs/borderStyle" },
+            "borderTopColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "borderRightColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "borderBottomColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "borderLeftColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "borderDiagonal": { "$ref": "#/$defs/borderStyle" },
+            "borderDiagonalColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "borderDiagonalType": { "enum": ["up", "down", "upDown"] }
+          },
+          "not": {
+            "properties": {
+              "wrapText": { "const": true },
+              "shrinkToFit": { "const": true }
+            },
+            "required": ["wrapText", "shrinkToFit"]
+          },
+          "allOf": [
+            {
+              "not": {
+                "anyOf": [
+                  { "required": ["fillColor", "fillPattern"] },
+                  { "required": ["fillColor", "fillForegroundColor"] },
+                  { "required": ["fillColor", "fillBackgroundColor"] },
+                  { "required": ["fillForegroundColor"], "not": { "required": ["fillPattern"] } },
+                  { "required": ["fillBackgroundColor"], "not": { "required": ["fillPattern"] } },
+                  { "properties": { "fillPattern": { "const": "none" } }, "required": ["fillPattern", "fillForegroundColor"] },
+                  { "properties": { "fillPattern": { "const": "none" } }, "required": ["fillPattern", "fillBackgroundColor"] }
+                ]
+              }
+            },
+            {
+              "if": { "required": ["indent"] },
+              "then": {
+                "required": ["horizontalAlign"],
+                "properties": {
+                  "horizontalAlign": { "enum": ["left", "right", "distributed"] }
+                }
+              }
+            },
+            {
+              "not": {
+                "properties": {
+                  "horizontalAlign": { "const": "distributed" },
+                  "shrinkToFit": { "const": true }
+                },
+                "required": ["horizontalAlign", "shrinkToFit"]
+              }
+            }
+          ],
+          "additionalProperties": false
+        },
+        "children": {
+          "type": "array",
+          "items": { "oneOf": [{ "$ref": "#/$defs/scalar" }, { "$ref": "#/$defs/textRun" }] }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "props": { "properties": { "dynamicArray": { "const": true } }, "required": ["dynamicArray"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "props": {
+                "required": ["formula"],
+                "not": { "anyOf": [{ "required": ["value"] }, { "required": ["date"] }, { "required": ["hyperlink"] }, { "required": ["formulaResult"] }, { "required": ["rowSpan"] }, { "required": ["columnSpan"] }] }
+              },
+              "children": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "props": { "required": ["arrayFormulaRange"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "props": {
+                "required": ["formula"],
+                "not": { "anyOf": [{ "required": ["value"] }, { "required": ["date"] }, { "required": ["hyperlink"] }, { "required": ["formulaResult"] }, { "required": ["rowSpan"] }, { "required": ["columnSpan"] }] }
+              },
+              "children": { "maxItems": 0 }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "children": { "contains": { "$ref": "#/$defs/textRun" } } }, "required": ["children"] },
+          "then": {
+            "properties": { "children": { "minItems": 1, "items": { "$ref": "#/$defs/textRun" } } },
+            "not": { "properties": { "props": { "anyOf": [{ "required": ["value"] }, { "required": ["formula"] }, { "required": ["formulaResult"] }, { "required": ["date"] }, { "required": ["hyperlink"] }, { "required": ["hyperlinkTooltip"] }] } }, "required": ["props"] }
+          }
+        },
+        {
+          "if": {
+            "properties": { "props": { "required": ["hyperlink"] } },
+            "required": ["props"]
+          },
+          "then": {
+            "properties": {
+              "props": {
+                "not": { "anyOf": [{ "required": ["formula"] }, { "required": ["date"] }] }
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "props": { "properties": { "value": { "type": "string" } }, "required": ["value"] },
+                  "children": { "maxItems": 0 }
+                }
+              },
+              {
+                "properties": {
+                  "props": { "not": { "required": ["value"] } },
+                  "children": { "minItems": 1, "maxItems": 1, "items": { "type": "string" } }
+                }
+              }
+            ]
+          }
+        },
+        {
+          "if": { "properties": { "props": { "required": ["hyperlinkTooltip"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "required": ["hyperlink"] } } }
+        },
+        {
+          "if": { "properties": { "props": { "required": ["formulaResult"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "props": {
+                "required": ["formula"],
+                "not": { "anyOf": [{ "required": ["arrayFormulaRange"] }, { "properties": { "dynamicArray": { "const": true } }, "required": ["dynamicArray"] }] }
+              }
+            }
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "textRun": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "TextRun" },
+        "props": {
+          "type": "object",
+          "properties": {
+            "bold": { "type": "boolean" },
+            "italic": { "type": "boolean" },
+            "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "fontSize": { "type": "number", "minimum": 1, "maximum": 409 },
+            "fontFamily": { "type": "integer", "minimum": 0, "maximum": 5 },
+            "fontCharset": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "underline": { "enum": ["single", "double", "singleAccounting", "doubleAccounting"] },
+            "strikethrough": { "type": "boolean" },
+            "script": { "enum": ["superscript", "subscript"] }
+          },
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "minItems": 1, "maxItems": 1, "items": { "type": "string", "minLength": 1 } }
+      },
+      "additionalProperties": false
+    },
+    "formatProps": {
+      "type": "object",
+      "properties": {
+        "bold": { "type": "boolean" },
+        "italic": { "type": "boolean" },
+        "horizontalAlign": { "enum": ["left", "center", "right", "distributed"] },
+        "verticalAlign": { "enum": ["top", "center", "bottom"] },
+        "indent": { "type": "integer", "minimum": 1, "maximum": 255 },
+        "wrapText": { "type": "boolean" },
+        "shrinkToFit": { "type": "boolean" },
+        "textRotation": { "anyOf": [{ "type": "integer", "minimum": -90, "maximum": 90 }, { "const": 270 }] },
+        "readingDirection": { "enum": ["leftToRight", "rightToLeft"] },
+        "quotePrefix": { "type": "boolean" },
+        "locked": { "type": "boolean" },
+        "formulaHidden": { "type": "boolean" },
+        "numberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "fillPattern": { "enum": ["none", "solid", "mediumGray", "darkGray", "lightGray", "darkHorizontal", "darkVertical", "darkDown", "darkUp", "darkGrid", "darkTrellis", "lightHorizontal", "lightVertical", "lightDown", "lightUp", "lightGrid", "lightTrellis", "gray125", "gray0625"] },
+        "fillForegroundColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "fillBackgroundColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "fontSize": { "type": "number", "minimum": 1, "maximum": 409 },
+        "fontFamily": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "fontCharset": { "type": "integer", "minimum": 0, "maximum": 255 },
+        "underline": { "enum": ["single", "double", "singleAccounting", "doubleAccounting"] },
+        "strikethrough": { "type": "boolean" },
+        "script": { "enum": ["superscript", "subscript"] },
+        "borderTop": { "$ref": "#/$defs/borderStyle" },
+        "borderRight": { "$ref": "#/$defs/borderStyle" },
+        "borderBottom": { "$ref": "#/$defs/borderStyle" },
+        "borderLeft": { "$ref": "#/$defs/borderStyle" },
+        "borderTopColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "borderRightColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "borderBottomColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "borderLeftColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "borderDiagonal": { "$ref": "#/$defs/borderStyle" },
+        "borderDiagonalColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "borderDiagonalType": { "enum": ["up", "down", "upDown"] }
+      },
+      "not": {
+        "properties": {
+          "wrapText": { "const": true },
+          "shrinkToFit": { "const": true }
+        },
+        "required": ["wrapText", "shrinkToFit"]
+      },
+      "allOf": [
+        {
+          "not": {
+            "anyOf": [
+              { "required": ["fillColor", "fillPattern"] },
+              { "required": ["fillColor", "fillForegroundColor"] },
+              { "required": ["fillColor", "fillBackgroundColor"] },
+              { "required": ["fillForegroundColor"], "not": { "required": ["fillPattern"] } },
+              { "required": ["fillBackgroundColor"], "not": { "required": ["fillPattern"] } },
+              { "properties": { "fillPattern": { "const": "none" } }, "required": ["fillPattern", "fillForegroundColor"] },
+              { "properties": { "fillPattern": { "const": "none" } }, "required": ["fillPattern", "fillBackgroundColor"] }
+            ]
+          }
+        },
+        {
+          "if": { "required": ["indent"] },
+          "then": {
+            "required": ["horizontalAlign"],
+            "properties": { "horizontalAlign": { "enum": ["left", "right", "distributed"] } }
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "horizontalAlign": { "const": "distributed" },
+              "shrinkToFit": { "const": true }
+            },
+            "required": ["horizontalAlign", "shrinkToFit"]
+          }
+        }
+      ]
+    },
+    "scalar": {
+      "anyOf": [
+        { "type": "string" },
+        { "type": "number" },
+        { "type": "boolean" },
+        { "type": "null" }
+      ]
+    },
+    "borderStyle": {
+      "enum": ["none", "thin", "medium", "dashed", "dotted", "thick", "double", "hair", "mediumDashed", "dashDot", "mediumDashDot", "dashDotDot", "mediumDashDotDot", "slantDashDot"]
+    }
+  }
+}

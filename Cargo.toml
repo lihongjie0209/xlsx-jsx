@@ -1,0 +1,47 @@
+[package]
+name = "xlsx-jsx"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Compile executable JSX/TSX spreadsheets to XLSX and reverse supported XLSX files"
+readme = "README.md"
+
+[lib]
+name = "xlsx_jsx"
+path = "src/lib.rs"
+
+[[bin]]
+name = "xlsx-jsx"
+path = "src/main.rs"
+
+[dependencies]
+calamine = { version = "0.36.1", features = ["dates"] }
+chrono = { version = "0.4", default-features = false, features = ["std"] }
+clap = { version = "4.6.6", features = ["derive"] }
+deno_ast = { version = "0.53.3", features = ["transpiling"] }
+deno_core = "0.410.0"
+deno_error = "0.7.1"
+quick-xml = "0.41.0"
+rust_xlsxwriter = "0.99.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.149"
+thiserror = "2.0.18"
+tokio = { version = "1.49.0", features = ["rt", "macros"] }
+url = "2.5.8"
+zip = { version = "8.4.0", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+assert_cmd = "2.1.2"
+predicates = "3.1.4"
+tempfile = "3.27.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
+
+[profile.dist]
+inherits = "release"
+lto = "thin"
