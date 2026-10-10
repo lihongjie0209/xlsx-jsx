@@ -1861,6 +1861,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "title",
             "xAxisTitle",
             "yAxisTitle",
+            "showLegend",
+            "legendPosition",
         ],
         "Chart",
     )?;
@@ -1888,6 +1890,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "pie Chart has no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
         ));
     }
+    validate_chart_legend(chart)?;
     let cell = chart
         .props
         .get("cell")
@@ -1941,6 +1944,40 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         return Err(Error::Compile(
             "pie Chart accepts exactly one Series; split the data into separate charts or choose column, bar, or line".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_chart_legend(chart: &Node) -> Result<()> {
+    if let Some(value) = chart.props.get("showLegend")
+        && !value.is_boolean()
+    {
+        return Err(Error::Compile(
+            "Chart.showLegend must be a boolean; use true or false".into(),
+        ));
+    }
+    if chart
+        .props
+        .get("showLegend")
+        .is_some_and(|value| value.as_bool() == Some(false))
+        && chart.props.contains_key("legendPosition")
+    {
+        return Err(Error::Compile(
+            "Chart cannot set legendPosition when showLegend={false}; remove legendPosition or show the legend".into(),
+        ));
+    }
+    if let Some(value) = chart.props.get("legendPosition") {
+        let Some(position) = value.as_str() else {
+            return Err(Error::Compile(
+                "Chart.legendPosition must be a string; use right, left, top, bottom, or topRight"
+                    .into(),
+            ));
+        };
+        if !["right", "left", "top", "bottom", "topRight"].contains(&position) {
+            return Err(Error::Compile(format!(
+                "Chart.legendPosition `{position}` is unsupported; use right, left, top, bottom, or topRight"
+            )));
+        }
     }
     Ok(())
 }

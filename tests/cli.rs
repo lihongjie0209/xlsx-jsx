@@ -122,7 +122,9 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("categories"))
         .stdout(predicate::str::contains("\"title\""))
         .stdout(predicate::str::contains("xAxisTitle"))
-        .stdout(predicate::str::contains("yAxisTitle"));
+        .stdout(predicate::str::contains("yAxisTitle"))
+        .stdout(predicate::str::contains("legendPosition"))
+        .stdout(predicate::str::contains("showLegend"));
 }
 
 #[test]
@@ -492,6 +494,8 @@ fn assert_chart_title_round_trip(source: &str) {
     assert!(source.contains("title={\"Expenses & travel\"}"), "{source}");
     assert!(source.contains("xAxisTitle={\"Month\"}"), "{source}");
     assert!(source.contains("yAxisTitle={\"Revenue ($)\"}"), "{source}");
+    assert!(source.contains("legendPosition=\"bottom\""), "{source}");
+    assert!(source.contains("showLegend={false}"), "{source}");
 }
 
 #[test]
@@ -531,6 +535,48 @@ fn rejects_axis_titles_on_pie_charts_with_repair_guidance() {
         .failure()
         .stderr(predicate::str::contains("pie Chart has no X/Y axes"))
         .stderr(predicate::str::contains("remove xAxisTitle and yAxisTitle"));
+}
+
+#[test]
+fn rejects_hidden_chart_legend_with_position() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("hidden-positioned-legend.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" showLegend={false} legendPosition="top"><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid fixture is written");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cannot set legendPosition"))
+        .stderr(predicate::str::contains("showLegend={false}"));
+}
+
+#[test]
+fn validates_chart_legend_position_with_supported_values() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-legend-position.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" legendPosition="bottoms"><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid fixture is written");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "legendPosition `bottoms` is unsupported",
+        ))
+        .stderr(predicate::str::contains(
+            "right, left, top, bottom, or topRight",
+        ));
 }
 
 #[test]

@@ -497,6 +497,8 @@
             "title": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "showLegend": { "type": "boolean" },
+            "legendPosition": { "enum": ["right", "left", "top", "bottom", "topRight"] },
             "width": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "height": { "type": "integer", "minimum": 1, "maximum": 1790 }
           },
@@ -519,6 +521,17 @@
                 }
               }
             }
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": { "showLegend": { "const": false } },
+                "required": ["legendPosition", "showLegend"]
+              }
+            },
+            "required": ["props"]
           }
         }
       ],

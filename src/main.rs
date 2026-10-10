@@ -11,10 +11,10 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use rust_xlsxwriter::{
-    Chart, ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
-    ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
-    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
-    ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
+    Chart, ChartLegendPosition, ChartType, Color, ConditionalFormat2ColorScale,
+    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
+    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
+    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
     ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
     ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
     ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
@@ -724,6 +724,24 @@ fn compile_chart(
     }
     if let Some(title) = component.props.get("yAxisTitle").and_then(Value::as_str) {
         chart.y_axis().set_name(title);
+    }
+    if component.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
+        chart.legend().set_hidden();
+    }
+    if let Some(position) = component
+        .props
+        .get("legendPosition")
+        .and_then(Value::as_str)
+    {
+        let position = match position {
+            "right" => ChartLegendPosition::Right,
+            "left" => ChartLegendPosition::Left,
+            "top" => ChartLegendPosition::Top,
+            "bottom" => ChartLegendPosition::Bottom,
+            "topRight" => ChartLegendPosition::TopRight,
+            _ => unreachable!("validated Chart.legendPosition"),
+        };
+        chart.legend().set_position(position);
     }
     if let Some(width) = component.props.get("width").and_then(Value::as_u64) {
         chart.set_width(u32::try_from(width).expect("validated Chart.width"));
@@ -3463,7 +3481,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -3488,6 +3506,15 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .y_axis_title
             .as_ref()
             .map(|value| format!(" yAxisTitle={{{value:?}}}"))
+            .unwrap_or_default(),
+        if chart.show_legend {
+            ""
+        } else {
+            " showLegend={false}"
+        },
+        chart
+            .legend_position
+            .map(|value| format!(" legendPosition=\"{value}\""))
             .unwrap_or_default()
     );
     for series in &chart.series {
@@ -6173,6 +6200,7 @@ fn parse_chart_xml(
         "numFmt",
         "legend",
         "legendPos",
+        "delete",
         "printSettings",
         "headerFooter",
         "pageMargins",
@@ -6198,6 +6226,9 @@ fn parse_chart_xml(
     let mut chart_title: Option<String> = None;
     let mut x_axis_title: Option<String> = None;
     let mut y_axis_title: Option<String> = None;
+    let mut legend_seen = false;
+    let mut legend_deleted = false;
+    let mut legend_position: Option<&'static str> = None;
     let mut chart_title_text = String::new();
     let mut title_paragraphs = 0_usize;
     let mut title_runs = 0_usize;
@@ -6237,6 +6268,56 @@ fn parse_chart_xml(
                     )));
                 }
                 audit_chart_attributes(&event, &tag, part, reader.decoder(), chart_type)?;
+                match tag.as_str() {
+                    "legend" => {
+                        if legend_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats its legend; retain at most one legend"
+                            )));
+                        }
+                        legend_seen = true;
+                    }
+                    "legendPos" => {
+                        if !stack.iter().any(|ancestor| ancestor == "legend")
+                            || legend_position.is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an out-of-place or repeated legendPos; keep one position inside legend"
+                            )));
+                        }
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                legend_position = Some(match value.as_ref() {
+                                    "r" => "right",
+                                    "l" => "left",
+                                    "t" => "top",
+                                    "b" => "bottom",
+                                    "tr" => "topRight",
+                                    _ => unreachable!("legendPos value was audited"),
+                                });
+                            }
+                        }
+                    }
+                    "delete" => {
+                        if stack.last().is_none_or(|ancestor| ancestor != "legend")
+                            || legend_deleted
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a delete element outside legend or repeats it; remove it or extend chart deletion support"
+                            )));
+                        }
+                        legend_deleted = true;
+                    }
+                    _ => {}
+                }
                 if tag == "title" {
                     let target = if stack.iter().any(|ancestor| ancestor == "catAx") {
                         "xAxisTitle"
@@ -6537,6 +6618,12 @@ fn parse_chart_xml(
             "chart part `{part}` is a pie chart with axis titles; remove the titles or use a chart type with X/Y axes"
         )));
     }
+    let show_legend = legend_seen && !legend_deleted;
+    if !show_legend && legend_position.is_some_and(|position| position != "right") {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a hidden legend with a non-default position; remove legendPos because it cannot be reproduced while hidden"
+        )));
+    }
     for item in &series {
         for (property, formula, require_range) in [
             ("values", Some(item.values.as_str()), true),
@@ -6568,6 +6655,8 @@ fn parse_chart_xml(
         title: chart_title,
         x_axis_title,
         y_axis_title,
+        show_legend,
+        legend_position: legend_position.filter(|position| *position != "right"),
         alt_text: anchor.alt_text,
         series,
     })
@@ -6919,7 +7008,7 @@ fn audit_chart_attributes(
             ("lblOffset", "val") => value == "100",
             ("crossBetween", "val") => value == "between",
             ("numFmt", "formatCode") => value == "General",
-            ("legendPos", "val") => value == "r",
+            ("legendPos", "val") => matches!(value.as_str(), "r" | "l" | "t" | "b" | "tr"),
             ("firstSliceAng", "val") | ("pPr", "rtl") => value == "0",
             ("pageMargins", "b" | "t") => value == "0.75",
             ("pageMargins", "l" | "r") => value == "0.7",
@@ -9420,6 +9509,8 @@ struct WorksheetChart {
     title: Option<String>,
     x_axis_title: Option<String>,
     y_axis_title: Option<String>,
+    show_legend: bool,
+    legend_position: Option<&'static str>,
     alt_text: Option<String>,
     series: Vec<WorksheetChartSeries>,
 }

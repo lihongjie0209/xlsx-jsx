@@ -72,6 +72,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   Y-axis titles (1–255 valid XML characters) for non-pie charts. Reverse maps
   the OOXML category axis to X and value axis to Y; only a single unformatted
   rich-text run is supported. Formula titles and custom formatting are rejected.
+- `Chart.showLegend?: boolean` defaults to `true`; `Chart.legendPosition?:
+  "right" | "left" | "top" | "bottom" | "topRight"` defaults to `"right"`.
+  `legendPosition` cannot be combined with `showLegend={false}` because the
+  writer omits the hidden legend and its position.
 - `Chart.name?: string` preserves the workbook chart object name and
   `Chart.altText?: string` preserves its accessibility description. Both are
   limited to 255 valid XML characters. Reverse emits an explicit name because
