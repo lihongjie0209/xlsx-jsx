@@ -122,6 +122,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   axes are both value axes and cannot be unambiguously mapped to X/Y by this
   writer subset). Reverse preserves explicit `sourceLinked=false` codes and
   rejects non-default source-linked codes rather than dropping them.
+- `Chart.yAxisMin?: number` and `Chart.yAxisMax?: number` set the numeric bounds
+  of the chart's value axis and default to automatic scaling when omitted. Each
+  value must be finite; if both are supplied, the minimum must be less than the
+  maximum. These properties are not valid for scatter, pie, or doughnut charts.
+  Reverse preserves `<valAx><scaling><min/max>` values and rejects bounds on a
+  category/date axis because this DSL currently exposes only value-axis bounds.
+  Horizontal bar charts use the same value-axis meaning even though the writer
+  swaps its internal axis objects.
 - `Chart.showLegend?: boolean` defaults to `true`; `Chart.legendPosition?:
   "right" | "left" | "top" | "bottom" | "topRight"` defaults to `"right"`.
   `legendPosition` cannot be combined with `showLegend={false}` because the
@@ -136,9 +144,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - Reverse supports two-cell chart anchors with zero start offsets, whole-pixel
   sizes, standard 64×20-pixel worksheet geometry across the chart footprint,
   writer-default chart/axis presentation apart from supported static chart and
-  axis titles. Custom formatting, non-title axis settings, other drawing
-  shapes, custom dimensions in the anchor footprint, and other chart kinds fail
-  with repair guidance.
+  axis titles, X/Y number formats, and value-axis bounds. Other custom chart
+  formatting, axis settings, drawing shapes, custom dimensions in the anchor
+  footprint, and other chart kinds fail with repair guidance.
 
 ### Workbook
 

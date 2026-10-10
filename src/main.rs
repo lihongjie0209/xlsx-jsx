@@ -737,6 +737,7 @@ fn compile_chart(
         chart.y_axis().set_name(title);
     }
     configure_chart_axis_number_formats(&mut chart, component);
+    configure_chart_axis_bounds(&mut chart, component);
     if component.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
         chart.legend().set_hidden();
     }
@@ -805,6 +806,25 @@ fn configure_chart_axis_number_formats(chart: &mut Chart, component: &Node) {
         .and_then(Value::as_str)
     {
         chart.y_axis().set_num_format(format);
+    }
+}
+
+fn configure_chart_axis_bounds(chart: &mut Chart, component: &Node) {
+    let value_axis = if component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|chart_type| chart_type.starts_with("bar"))
+    {
+        chart.x_axis()
+    } else {
+        chart.y_axis()
+    };
+    if let Some(minimum) = component.props.get("yAxisMin").and_then(Value::as_f64) {
+        value_axis.set_min(minimum);
+    }
+    if let Some(maximum) = component.props.get("yAxisMax").and_then(Value::as_f64) {
+        value_axis.set_max(maximum);
     }
 }
 
@@ -3544,7 +3564,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -3579,6 +3599,14 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .y_axis_number_format
             .as_ref()
             .map(|value| format!(" yAxisNumberFormat={{{value:?}}}"))
+            .unwrap_or_default(),
+        chart
+            .y_axis_min
+            .map(|value| format!(" yAxisMin={{{value}}}"))
+            .unwrap_or_default(),
+        chart
+            .y_axis_max
+            .map(|value| format!(" yAxisMax={{{value}}}"))
             .unwrap_or_default(),
         if chart.show_legend {
             ""
@@ -6282,6 +6310,8 @@ fn parse_chart_xml(
         "dateAx",
         "scaling",
         "orientation",
+        "min",
+        "max",
         "axPos",
         "tickLblPos",
         "crossAx",
@@ -6335,6 +6365,10 @@ fn parse_chart_xml(
     let mut y_axis_number_format: Option<String> = None;
     let mut x_axis_number_format_seen = false;
     let mut y_axis_number_format_seen = false;
+    let mut y_axis_min = None;
+    let mut y_axis_max = None;
+    let mut y_axis_min_seen = false;
+    let mut y_axis_max_seen = false;
     let mut legend_seen = false;
     let mut legend_deleted = false;
     let mut legend_position: Option<&'static str> = None;
@@ -6704,6 +6738,65 @@ fn parse_chart_xml(
                             *seen = true;
                             *target = Some(format_code);
                         }
+                    }
+                    "min" | "max" => {
+                        if stack.last().is_none_or(|ancestor| ancestor != "scaling") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an axis bound outside c:scaling; repair the axis XML"
+                            )));
+                        }
+                        let category_axis_context = stack
+                            .iter()
+                            .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"));
+                        let value_axis_context = stack.iter().any(|ancestor| ancestor == "valAx");
+                        if category_axis_context {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has bounds on a category/date axis, which this DSL does not model; remove those bounds or use only value-axis bounds"
+                            )));
+                        }
+                        if !value_axis_context {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has bounds outside a primary value axis; repair the axis structure"
+                            )));
+                        }
+                        if chart_type.is_some_and(|value| {
+                            value.starts_with("scatter") || matches!(value, "pie" | "doughnut")
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has value-axis bounds for a chart without one unambiguous value axis; remove the bounds or use a supported category/value chart"
+                            )));
+                        }
+                        let mut bound = None;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                bound = value.parse::<f64>().ok().filter(|value| value.is_finite());
+                            }
+                        }
+                        let Some(bound) = bound else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-finite or missing axis bound; provide a finite numeric val"
+                            )));
+                        };
+                        let (seen, target) = if tag == "min" {
+                            (&mut y_axis_min_seen, &mut y_axis_min)
+                        } else {
+                            (&mut y_axis_max_seen, &mut y_axis_max)
+                        };
+                        if *seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats the {tag} axis bound; keep at most one bound of each kind"
+                            )));
+                        }
+                        *seen = true;
+                        *target = Some(bound);
                     }
                     "ser" => series.push(WorksheetChartSeries {
                         values: String::new(),
@@ -7087,6 +7180,14 @@ fn parse_chart_xml(
             "chart part `{part}` has firstSliceAng without a valid value; set val to an integer from 0 through 360"
         )));
     }
+    if y_axis_min
+        .zip(y_axis_max)
+        .is_some_and(|(minimum, maximum)| minimum >= maximum)
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has y-axis minimum greater than or equal to its maximum; lower the minimum or raise the maximum"
+        )));
+    }
     if chart_type == "doughnut" && hole_size.is_none() {
         // OOXML's absent holeSize default is 10; the pinned writer emits 50.
         hole_size = Some(10);
@@ -7149,6 +7250,8 @@ fn parse_chart_xml(
         y_axis_title,
         x_axis_number_format,
         y_axis_number_format,
+        y_axis_min,
+        y_axis_max,
         show_legend,
         legend_position: legend_position.filter(|position| *position != "right"),
         hole_size: hole_size.filter(|size| *size != 50),
@@ -7697,6 +7800,7 @@ fn audit_chart_attributes(
                 value.parse::<u32>().is_ok()
             }
             ("orientation", "val") => value == "minMax",
+            ("min" | "max", "val") => value.parse::<f64>().is_ok_and(f64::is_finite),
             ("axPos", "val") => matches!(value.as_str(), "b" | "l"),
             ("tickLblPos", "val") => value == "nextTo",
             ("majorTickMark", "val") => value == "cross",
@@ -10236,6 +10340,8 @@ struct WorksheetChart {
     y_axis_title: Option<String>,
     x_axis_number_format: Option<String>,
     y_axis_number_format: Option<String>,
+    y_axis_min: Option<f64>,
+    y_axis_max: Option<f64>,
     show_legend: bool,
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,

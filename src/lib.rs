@@ -1892,6 +1892,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisTitle",
             "xAxisNumberFormat",
             "yAxisNumberFormat",
+            "yAxisMin",
+            "yAxisMax",
             "showLegend",
             "legendPosition",
             "holeSize",
@@ -1914,11 +1916,9 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "Chart.type `{chart_type}` is unsupported; use area, column, bar, line, radar, scatter, pie, or doughnut"
         )));
     }
-    validate_chart_axis_titles(chart, chart_type)?;
-    validate_chart_axis_number_formats(chart, chart_type)?;
+    validate_chart_presentation(chart, chart_type)?;
     validate_doughnut_hole_size(chart, chart_type)?;
     validate_chart_slice_angle(chart, chart_type)?;
-    validate_chart_legend(chart)?;
     let cell = chart
         .props
         .get("cell")
@@ -1980,6 +1980,13 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     Ok(())
 }
 
+fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
+    validate_chart_axis_titles(chart, chart_type)?;
+    validate_chart_axis_number_formats(chart, chart_type)?;
+    validate_chart_axis_bounds(chart, chart_type)?;
+    validate_chart_legend(chart)
+}
+
 fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
     if chart_type.starts_with("scatter")
         && ["xAxisTitle", "yAxisTitle"]
@@ -2036,6 +2043,40 @@ fn validate_chart_axis_number_formats(chart: &Node, chart_type: &str) -> Result<
         }
     }
     Ok(())
+}
+
+fn validate_chart_axis_bounds(chart: &Node, chart_type: &str) -> Result<()> {
+    if !chart.props.contains_key("yAxisMin") && !chart.props.contains_key("yAxisMax") {
+        return Ok(());
+    }
+    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+        return Err(Error::Compile(
+            "yAxisMin/yAxisMax are not supported for scatter, pie, or doughnut charts; use a chart with one category axis and one value axis, or omit the bounds for automatic scaling".into(),
+        ));
+    }
+    let minimum = parse_chart_axis_bound(chart, "yAxisMin")?;
+    let maximum = parse_chart_axis_bound(chart, "yAxisMax")?;
+    if minimum
+        .zip(maximum)
+        .is_some_and(|(minimum, maximum)| minimum >= maximum)
+    {
+        return Err(Error::Compile(
+            "Chart.yAxisMin must be less than yAxisMax; increase the maximum, lower the minimum, or omit one bound to use automatic scaling".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn parse_chart_axis_bound(chart: &Node, property: &str) -> Result<Option<f64>> {
+    let Some(value) = chart.props.get(property) else {
+        return Ok(None);
+    };
+    let Some(bound) = value.as_f64().filter(|bound| bound.is_finite()) else {
+        return Err(Error::Compile(format!(
+            "Chart.{property} must be a finite number; use a numeric bound or omit it for automatic scaling"
+        )));
+    };
+    Ok(Some(bound))
 }
 
 fn validate_scatter_chart(chart: &Node, chart_type: &str) -> Result<()> {

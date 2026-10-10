@@ -128,6 +128,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisTitle"))
         .stdout(predicate::str::contains("xAxisNumberFormat"))
         .stdout(predicate::str::contains("yAxisNumberFormat"))
+        .stdout(predicate::str::contains("yAxisMin"))
+        .stdout(predicate::str::contains("yAxisMax"))
         .stdout(predicate::str::contains("legendPosition"))
         .stdout(predicate::str::contains("showLegend"))
         .stdout(predicate::str::contains("areaPercentStacked"))
@@ -455,6 +457,8 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         source.contains("yAxisNumberFormat={\"$#,##0.00\"}"),
         "{source}"
     );
+    assert!(source.contains("yAxisMin={0}"), "{source}");
+    assert!(source.contains("yAxisMax={20}"), "{source}");
     assert!(source.contains("values={\"Data!$C$2:$C$4\"}"), "{source}");
     assert!(source.contains("<Chart type=\"line\""), "{source}");
     assert!(source.contains("<Chart type=\"bar\""), "{source}");
@@ -694,6 +698,112 @@ fn reverses_external_chart_axis_number_formats_without_a_manifest() {
         .expect("chart XML reads");
     assert!(chart_xml.contains("formatCode=\"mmm\" sourceLinked=\"0\""));
     assert!(chart_xml.contains("formatCode=\"$#,##0.00\" sourceLinked=\"0\""));
+}
+
+#[test]
+fn reverses_external_chart_value_axis_bounds_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-bounds.xlsx");
+    let output_path = directory.path().join("external-axis-bounds.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.y_axis().set_min(-25.5).set_max(100.25);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    let mut bar_chart = XlsxChart::new(ChartType::Bar);
+    bar_chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    bar_chart.x_axis().set_min(-30.0).set_max(250.0);
+    worksheet.insert_chart(20, 5, &bar_chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("yAxisMin={-25.5}"), "{source}");
+    assert!(source.contains("yAxisMax={100.25}"), "{source}");
+    assert!(source.contains("yAxisMin={-30}"), "{source}");
+    assert!(source.contains("yAxisMax={250}"), "{source}");
+    let rebuilt_path = directory.path().join("rebuilt-axis-bounds.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let mut rebuilt =
+        ZipArchive::new(std::fs::File::open(rebuilt_path).expect("rebuilt workbook exists"))
+            .expect("rebuilt workbook is a ZIP package");
+    let mut chart_xml = String::new();
+    rebuilt
+        .by_name("xl/charts/chart1.xml")
+        .expect("rebuilt chart exists")
+        .read_to_string(&mut chart_xml)
+        .expect("chart XML reads");
+    assert!(chart_xml.contains("<c:max val=\"100.25\"/>"));
+    assert!(chart_xml.contains("<c:min val=\"-25.5\"/>"));
+    let mut bar_chart_xml = String::new();
+    rebuilt
+        .by_name("xl/charts/chart2.xml")
+        .expect("rebuilt bar chart exists")
+        .read_to_string(&mut bar_chart_xml)
+        .expect("bar chart XML reads");
+    assert!(bar_chart_xml.contains("<c:max val=\"250\"/>"));
+    assert!(bar_chart_xml.contains("<c:min val=\"-30\"/>"));
+}
+
+#[test]
+fn rejects_chart_value_axis_bounds_when_minimum_is_not_below_maximum() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-axis-bounds.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" yAxisMin={100} yAxisMax={100}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "yAxisMin must be less than yAxisMax",
+        ))
+        .stderr(predicate::str::contains("automatic scaling"));
+}
+
+#[test]
+fn rejects_value_axis_bounds_for_scatter_charts_with_actionable_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-axis-bounds.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" yAxisMin={0}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not supported for scatter"))
+        .stderr(predicate::str::contains("automatic scaling"));
 }
 
 #[test]

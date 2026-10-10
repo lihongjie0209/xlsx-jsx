@@ -499,6 +499,8 @@
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "yAxisMin": { "type": "number" },
+            "yAxisMax": { "type": "number" },
             "showLegend": { "type": "boolean" },
             "legendPosition": { "enum": ["right", "left", "top", "bottom", "topRight"] },
             "holeSize": { "type": "integer", "minimum": 10, "maximum": 90 },
@@ -512,7 +514,7 @@
       },
       "allOf": [
         {
-          "if": { "properties": { "props": { "properties": { "type": { "const": "pie" } }, "required": ["type"] } }, "required": ["props"] },
+          "if": { "properties": { "props": { "properties": { "type": { "enum": ["pie", "doughnut"] } }, "required": ["type"] } }, "required": ["props"] },
           "then": {
             "properties": {
               "children": { "maxItems": 1 },
@@ -520,7 +522,30 @@
                 "not": {
                   "anyOf": [
                     { "required": ["xAxisTitle"] },
-                    { "required": ["yAxisTitle"] }
+                    { "required": ["yAxisTitle"] },
+                    { "required": ["xAxisNumberFormat"] },
+                    { "required": ["yAxisNumberFormat"] },
+                    { "required": ["yAxisMin"] },
+                    { "required": ["yAxisMax"] }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "props": { "properties": { "type": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "props": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["xAxisTitle"] },
+                    { "required": ["yAxisTitle"] },
+                    { "required": ["xAxisNumberFormat"] },
+                    { "required": ["yAxisNumberFormat"] },
+                    { "required": ["yAxisMin"] },
+                    { "required": ["yAxisMax"] }
                   ]
                 }
               }
