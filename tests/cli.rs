@@ -126,7 +126,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("legendPosition"))
         .stdout(predicate::str::contains("showLegend"))
         .stdout(predicate::str::contains("areaPercentStacked"))
-        .stdout(predicate::str::contains("holeSize"));
+        .stdout(predicate::str::contains("holeSize"))
+        .stdout(predicate::str::contains("firstSliceAngle"));
 }
 
 #[test]
@@ -438,6 +439,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     assert!(source.contains("<Chart type=\"line\""), "{source}");
     assert!(source.contains("<Chart type=\"bar\""), "{source}");
     assert!(source.contains("<Chart type=\"pie\""), "{source}");
+    assert!(source.contains("firstSliceAngle={210}"), "{source}");
     assert!(source.contains("<Chart type=\"area\""), "{source}");
     assert!(source.contains("<Chart type=\"areaStacked\""), "{source}");
     assert!(
@@ -458,6 +460,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         );
     }
     assert!(source.contains("<Chart type=\"doughnut\""), "{source}");
+    assert!(source.contains("firstSliceAngle={45}"), "{source}");
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -469,6 +472,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     );
     assert_area_chart_groupings(&mut archive);
     assert_doughnut_hole_size(&mut archive);
+    assert_first_slice_angles(&mut archive);
 
     let rebuilt = directory.path().join("charts-roundtrip.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -494,6 +498,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     );
     assert_area_chart_groupings(&mut rebuilt_archive);
     assert_doughnut_hole_size(&mut rebuilt_archive);
+    assert_first_slice_angles(&mut rebuilt_archive);
     drop(rebuilt_archive);
     let twice_reversed = directory.path().join("charts-roundtrip.tsx");
     Command::cargo_bin("xlsx-jsx")
@@ -537,6 +542,11 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     }
     assert!(
         second_source.contains("<Chart type=\"doughnut\""),
+        "{second_source}"
+    );
+    assert!(
+        second_source.contains("firstSliceAngle={210}")
+            && second_source.contains("firstSliceAngle={45}"),
         "{second_source}"
     );
     assert!(
@@ -584,6 +594,21 @@ fn assert_doughnut_hole_size(archive: &mut ZipArchive<std::fs::File>) {
         .read_to_string(&mut chart_xml)
         .expect("doughnut chart XML is readable");
     assert!(chart_xml.contains("<c:holeSize val=\"65\""), "{chart_xml}");
+}
+
+fn assert_first_slice_angles(archive: &mut ZipArchive<std::fs::File>) {
+    for (part, angle) in [("xl/charts/chart4.xml", 210), ("xl/charts/chart14.xml", 45)] {
+        let mut chart_xml = String::new();
+        archive
+            .by_name(part)
+            .expect("pie or doughnut chart part exists")
+            .read_to_string(&mut chart_xml)
+            .expect("pie or doughnut chart XML is readable");
+        assert!(
+            chart_xml.contains(&format!("<c:firstSliceAng val=\"{angle}\"")),
+            "{chart_xml}"
+        );
+    }
 }
 
 fn assert_chart_title_round_trip(source: &str) {
@@ -728,6 +753,40 @@ fn validates_doughnut_hole_size_bounds_and_chart_type() {
         .failure()
         .stderr(predicate::str::contains("only valid for a doughnut chart"))
         .stderr(predicate::str::contains("type=\"doughnut\""));
+}
+
+#[test]
+fn validates_first_slice_angle_range_and_chart_type() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-first-slice-angle.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="pie" cell="D2" firstSliceAngle={361}><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid DSL writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "firstSliceAngle must be an integer",
+        ))
+        .stderr(predicate::str::contains("0 through 360 degrees"));
+
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" firstSliceAngle={90}><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid DSL writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only valid for pie or doughnut"));
 }
 
 #[test]
@@ -890,6 +949,34 @@ fn reverse_preserves_the_ooxml_default_doughnut_hole_size() {
         .read_to_string(&mut chart_xml)
         .expect("doughnut chart XML is readable");
     assert!(chart_xml.contains("<c:holeSize val=\"10\""), "{chart_xml}");
+}
+
+#[test]
+fn reverse_rejects_out_of_range_first_slice_angle_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("invalid-first-slice-angle.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart4.xml", |xml| {
+        xml.replace(
+            "<c:firstSliceAng val=\"210\"/>",
+            "<c:firstSliceAng val=\"361\"/>",
+        )
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported `firstSliceAng@val=361`",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
 }
 
 #[test]

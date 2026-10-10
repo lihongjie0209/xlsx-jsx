@@ -500,6 +500,7 @@
             "showLegend": { "type": "boolean" },
             "legendPosition": { "enum": ["right", "left", "top", "bottom", "topRight"] },
             "holeSize": { "type": "integer", "minimum": 10, "maximum": 90 },
+            "firstSliceAngle": { "type": "integer", "minimum": 0, "maximum": 360 },
             "width": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "height": { "type": "integer", "minimum": 1, "maximum": 1790 }
           },

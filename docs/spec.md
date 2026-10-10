@@ -68,7 +68,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   percentages from 10 through 90, and defaults to the writer's 50% hole. The
   upstream setter accepts 0 but would serialize a schema-invalid value, so the
   DSL excludes it. If an external doughnut omits `holeSize`, reverse emits the
-  OOXML default of 10 explicitly; unsupported slice rotation is rejected.
+  OOXML default of 10 explicitly. `Chart.firstSliceAngle?: number` is valid
+  only for pie and doughnut charts, accepts integer degrees from 0 through 360,
+  and defaults to 0; reverse preserves non-default angles.
 - `cell` is an A1 cell anchor. `width` and `height` are positive integer pixels
   (1–1790); omission uses the writer defaults of 480×288 pixels. `Series` has
   required `values` and optional `categories` and `name` sheet-qualified A1

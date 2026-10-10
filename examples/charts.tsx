@@ -18,7 +18,7 @@ export default <Workbook>
     <Chart type="bar" cell="D20" width={480} height={288}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
     </Chart>
-    <Chart type="pie" cell="K20" width={480} height={288}>
+    <Chart type="pie" cell="K20" width={480} height={288} firstSliceAngle={210}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
     </Chart>
     <Chart type="area" cell="D38" width={480} height={288}>
@@ -56,7 +56,7 @@ export default <Workbook>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Line share" />
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Line expense share" />
     </Chart>
-    <Chart type="doughnut" cell="K110" width={480} height={288} holeSize={65}>
+    <Chart type="doughnut" cell="K110" width={480} height={288} holeSize={65} firstSliceAngle={45}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue mix" />
     </Chart>
   </Worksheet>

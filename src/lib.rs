@@ -1884,6 +1884,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "showLegend",
             "legendPosition",
             "holeSize",
+            "firstSliceAngle",
         ],
         "Chart",
     )?;
@@ -1902,16 +1903,9 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "Chart.type `{chart_type}` is unsupported; use area, column, bar, line, pie, or doughnut"
         )));
     }
-    if matches!(chart_type, "pie" | "doughnut")
-        && ["xAxisTitle", "yAxisTitle"]
-            .iter()
-            .any(|property| chart.props.contains_key(*property))
-    {
-        return Err(Error::Compile(
-            "pie and doughnut Charts have no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
-        ));
-    }
+    validate_chart_axis_titles(chart, chart_type)?;
     validate_doughnut_hole_size(chart, chart_type)?;
+    validate_chart_slice_angle(chart, chart_type)?;
     validate_chart_legend(chart)?;
     let cell = chart
         .props
@@ -1970,6 +1964,19 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     Ok(())
 }
 
+fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
+    if matches!(chart_type, "pie" | "doughnut")
+        && ["xAxisTitle", "yAxisTitle"]
+            .iter()
+            .any(|property| chart.props.contains_key(*property))
+    {
+        return Err(Error::Compile(
+            "pie and doughnut Charts have no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn validate_doughnut_hole_size(chart: &Node, chart_type: &str) -> Result<()> {
     if let Some(value) = chart.props.get("holeSize") {
         if chart_type != "doughnut" {
@@ -1983,6 +1990,22 @@ fn validate_doughnut_hole_size(chart: &Node, chart_type: &str) -> Result<()> {
         {
             return Err(Error::Compile(
                 "Chart.holeSize must be an integer from 10 through 90 percent; use a schema-valid hole size".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_slice_angle(chart: &Node, chart_type: &str) -> Result<()> {
+    if let Some(value) = chart.props.get("firstSliceAngle") {
+        if !matches!(chart_type, "pie" | "doughnut") {
+            return Err(Error::Compile(
+                "Chart.firstSliceAngle is only valid for pie or doughnut charts; change type or remove firstSliceAngle".into(),
+            ));
+        }
+        if value.as_u64().is_none_or(|angle| angle > 360) {
+            return Err(Error::Compile(
+                "Chart.firstSliceAngle must be an integer from 0 through 360 degrees; use a supported slice angle".into(),
             ));
         }
     }

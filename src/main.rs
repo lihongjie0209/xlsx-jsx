@@ -723,6 +723,13 @@ fn compile_chart(
     if let Some(hole_size) = component.props.get("holeSize").and_then(Value::as_u64) {
         chart.set_hole_size(u8::try_from(hole_size).expect("validated Chart.holeSize"));
     }
+    if let Some(angle) = component
+        .props
+        .get("firstSliceAngle")
+        .and_then(Value::as_u64)
+    {
+        chart.set_rotation(u16::try_from(angle).expect("validated Chart.firstSliceAngle"));
+    }
     if let Some(name) = component.props.get("name").and_then(Value::as_str) {
         chart.set_name(name);
     }
@@ -3494,7 +3501,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -3532,6 +3539,10 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         chart
             .hole_size
             .map(|value| format!(" holeSize={{{value}}}"))
+            .unwrap_or_default(),
+        chart
+            .first_slice_angle
+            .map(|value| format!(" firstSliceAngle={{{value}}}"))
             .unwrap_or_default()
     );
     for series in &chart.series {
@@ -6252,6 +6263,8 @@ fn parse_chart_xml(
     let mut legend_position: Option<&'static str> = None;
     let mut hole_size = None;
     let mut hole_size_seen = false;
+    let mut first_slice_angle = None;
+    let mut first_slice_angle_seen = false;
     let mut chart_title_text = String::new();
     let mut title_paragraphs = 0_usize;
     let mut title_runs = 0_usize;
@@ -6437,6 +6450,27 @@ fn parse_chart_xml(
                                     )
                                     .map_err(|error| Error::Reverse(error.to_string()))?;
                                 hole_size = value.parse::<u8>().ok();
+                            }
+                        }
+                    }
+                    "firstSliceAng" => {
+                        if first_slice_angle_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats firstSliceAng; retain one slice angle"
+                            )));
+                        }
+                        first_slice_angle_seen = true;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                first_slice_angle = value.parse::<u16>().ok();
                             }
                         }
                     }
@@ -6695,6 +6729,11 @@ fn parse_chart_xml(
             "chart part `{part}` has a doughnut holeSize without a valid value; set val to an integer from 10 through 90"
         )));
     }
+    if first_slice_angle_seen && first_slice_angle.is_none() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has firstSliceAng without a valid value; set val to an integer from 0 through 360"
+        )));
+    }
     if chart_type == "doughnut" && hole_size.is_none() {
         // OOXML's absent holeSize default is 10; the pinned writer emits 50.
         hole_size = Some(10);
@@ -6739,6 +6778,7 @@ fn parse_chart_xml(
         show_legend,
         legend_position: legend_position.filter(|position| *position != "right"),
         hole_size: hole_size.filter(|size| *size != 50),
+        first_slice_angle: first_slice_angle.filter(|angle| *angle != 0),
         alt_text: anchor.alt_text,
         series,
     })
@@ -7150,7 +7190,11 @@ fn audit_chart_attributes(
                         .parse::<u8>()
                         .is_ok_and(|size| (10..=90).contains(&size))
             }
-            ("firstSliceAng", "val") | ("pPr", "rtl") => value == "0",
+            ("firstSliceAng", "val") => {
+                matches!(chart_type, Some("pie" | "doughnut"))
+                    && value.parse::<u16>().is_ok_and(|angle| angle <= 360)
+            }
+            ("pPr", "rtl") => value == "0",
             ("pageMargins", "b" | "t") => value == "0.75",
             ("pageMargins", "l" | "r") => value == "0.7",
             ("pageMargins", "header" | "footer") => value == "0.3",
@@ -9653,6 +9697,7 @@ struct WorksheetChart {
     show_legend: bool,
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,
+    first_slice_angle: Option<u16>,
     alt_text: Option<String>,
     series: Vec<WorksheetChartSeries>,
 }
