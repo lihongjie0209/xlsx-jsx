@@ -703,8 +703,14 @@ fn compile_chart(
         "areaStacked" => ChartType::AreaStacked,
         "areaPercentStacked" => ChartType::AreaPercentStacked,
         "column" => ChartType::Column,
+        "columnStacked" => ChartType::ColumnStacked,
+        "columnPercentStacked" => ChartType::ColumnPercentStacked,
         "bar" => ChartType::Bar,
+        "barStacked" => ChartType::BarStacked,
+        "barPercentStacked" => ChartType::BarPercentStacked,
         "line" => ChartType::Line,
+        "lineStacked" => ChartType::LineStacked,
+        "linePercentStacked" => ChartType::LinePercentStacked,
         "pie" => ChartType::Pie,
         _ => unreachable!("validated Chart.type"),
     };
@@ -6170,6 +6176,7 @@ fn parse_chart_xml(
         "barChart",
         "barDir",
         "grouping",
+        "overlap",
         "lineChart",
         "pieChart",
         "ser",
@@ -6220,7 +6227,7 @@ fn parse_chart_xml(
     let mut reader = XmlReader::from_str(xml);
     let mut stack = Vec::<String>::new();
     let mut chart_type: Option<&'static str> = None;
-    let mut area_grouping_seen = false;
+    let mut chart_grouping_seen = false;
     let mut series = Vec::<WorksheetChartSeries>::new();
     let mut formula_target: Option<&'static str> = None;
     let mut title_source_open = false;
@@ -6371,13 +6378,13 @@ fn parse_chart_xml(
                     "barChart" => chart_type = Some(set_chart_type(chart_type, "bar", part)?),
                     "lineChart" => chart_type = Some(set_chart_type(chart_type, "line", part)?),
                     "pieChart" => chart_type = Some(set_chart_type(chart_type, "pie", part)?),
-                    "grouping" if chart_type == Some("area") => {
-                        if area_grouping_seen {
+                    "grouping" if chart_type.is_some_and(is_groupable_chart_type) => {
+                        if chart_grouping_seen {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` repeats area grouping; retain one area chart group"
+                                "chart part `{part}` repeats chart grouping; retain one chart group"
                             )));
                         }
-                        area_grouping_seen = true;
+                        chart_grouping_seen = true;
                         for attribute in event.attributes().with_checks(false) {
                             let attribute =
                                 attribute.map_err(|error| Error::Reverse(error.to_string()))?;
@@ -6388,12 +6395,13 @@ fn parse_chart_xml(
                                         reader.decoder(),
                                     )
                                     .map_err(|error| Error::Reverse(error.to_string()))?;
-                                chart_type = Some(match value.as_ref() {
-                                    "standard" => "area",
-                                    "stacked" => "areaStacked",
-                                    "percentStacked" => "areaPercentStacked",
-                                    _ => unreachable!("grouping validated above"),
-                                });
+                                chart_type = Some(
+                                    chart_type_for_grouping(
+                                        chart_type.expect("chart family was checked"),
+                                        &value,
+                                    )
+                                    .expect("grouping was validated above"),
+                                );
                             }
                         }
                     }
@@ -7001,6 +7009,35 @@ fn set_chart_type(
     Ok(candidate)
 }
 
+fn is_groupable_chart_type(chart_type: &str) -> bool {
+    matches!(chart_type, "area" | "bar" | "column" | "line")
+}
+
+fn is_percent_stacked_chart_type(chart_type: &str) -> bool {
+    matches!(
+        chart_type,
+        "areaPercentStacked" | "barPercentStacked" | "columnPercentStacked" | "linePercentStacked"
+    )
+}
+
+fn chart_type_for_grouping(base: &'static str, grouping: &str) -> Option<&'static str> {
+    match (base, grouping) {
+        ("area", "standard") => Some("area"),
+        ("area", "stacked") => Some("areaStacked"),
+        ("area", "percentStacked") => Some("areaPercentStacked"),
+        ("column", "clustered") => Some("column"),
+        ("column", "stacked") => Some("columnStacked"),
+        ("column", "percentStacked") => Some("columnPercentStacked"),
+        ("bar", "clustered") => Some("bar"),
+        ("bar", "stacked") => Some("barStacked"),
+        ("bar", "percentStacked") => Some("barPercentStacked"),
+        ("line", "standard") => Some("line"),
+        ("line", "stacked") => Some("lineStacked"),
+        ("line", "percentStacked") => Some("linePercentStacked"),
+        _ => None,
+    }
+}
+
 fn audit_chart_attributes(
     event: &BytesStart<'_>,
     tag: &str,
@@ -7025,10 +7062,25 @@ fn audit_chart_attributes(
                 Some("area") => {
                     matches!(value.as_str(), "standard" | "stacked" | "percentStacked")
                 }
-                Some("line") => value == "standard",
-                Some("bar" | "column") => value == "clustered",
+                Some("line") => {
+                    matches!(value.as_str(), "standard" | "stacked" | "percentStacked")
+                }
+                Some("bar" | "column") => {
+                    matches!(value.as_str(), "clustered" | "stacked" | "percentStacked")
+                }
                 _ => false,
             },
+            ("overlap", "val") => {
+                matches!(
+                    chart_type,
+                    Some(
+                        "columnStacked"
+                            | "columnPercentStacked"
+                            | "barStacked"
+                            | "barPercentStacked"
+                    )
+                ) && value == "100"
+            }
             ("idx" | "order" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
                 value.parse::<u32>().is_ok()
             }
@@ -7046,7 +7098,8 @@ fn audit_chart_attributes(
                 _ => value == "between",
             },
             ("numFmt", "formatCode") => {
-                value == "General" || (chart_type == Some("areaPercentStacked") && value == "0%")
+                value == "General"
+                    || (chart_type.is_some_and(is_percent_stacked_chart_type) && value == "0%")
             }
             ("legendPos", "val") => matches!(value.as_str(), "r" | "l" | "t" | "b" | "tr"),
             ("firstSliceAng", "val") | ("pPr", "rtl") => value == "0",

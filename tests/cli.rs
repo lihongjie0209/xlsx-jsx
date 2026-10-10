@@ -443,6 +443,19 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         source.contains("<Chart type=\"areaPercentStacked\""),
         "{source}"
     );
+    for chart_type in [
+        "columnStacked",
+        "columnPercentStacked",
+        "barStacked",
+        "barPercentStacked",
+        "lineStacked",
+        "linePercentStacked",
+    ] {
+        assert!(
+            source.contains(&format!("<Chart type=\"{chart_type}\"")),
+            "{source}"
+        );
+    }
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -505,6 +518,19 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         second_source.contains("<Chart type=\"areaPercentStacked\""),
         "{second_source}"
     );
+    for chart_type in [
+        "columnStacked",
+        "columnPercentStacked",
+        "barStacked",
+        "barPercentStacked",
+        "lineStacked",
+        "linePercentStacked",
+    ] {
+        assert!(
+            second_source.contains(&format!("<Chart type=\"{chart_type}\"")),
+            "{second_source}"
+        );
+    }
     assert!(
         second_source.contains("values={\"Data!$C$2:$C$4\"}"),
         "{second_source}"
@@ -513,9 +539,15 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
 }
 
 fn assert_area_chart_groupings(archive: &mut ZipArchive<std::fs::File>) {
-    for (part, grouping) in [
-        ("xl/charts/chart6.xml", "stacked"),
-        ("xl/charts/chart7.xml", "percentStacked"),
+    for (part, grouping, percent_axis, stacked_overlap) in [
+        ("xl/charts/chart6.xml", "stacked", false, false),
+        ("xl/charts/chart7.xml", "percentStacked", true, false),
+        ("xl/charts/chart8.xml", "stacked", false, true),
+        ("xl/charts/chart9.xml", "percentStacked", true, true),
+        ("xl/charts/chart10.xml", "stacked", false, true),
+        ("xl/charts/chart11.xml", "percentStacked", true, true),
+        ("xl/charts/chart12.xml", "stacked", false, false),
+        ("xl/charts/chart13.xml", "percentStacked", true, false),
     ] {
         let mut chart_xml = String::new();
         archive
@@ -527,6 +559,12 @@ fn assert_area_chart_groupings(archive: &mut ZipArchive<std::fs::File>) {
             chart_xml.contains(&format!("<c:grouping val=\"{grouping}\"")),
             "{chart_xml}"
         );
+        if percent_axis {
+            assert!(chart_xml.contains("formatCode=\"0%\""), "{chart_xml}");
+        }
+        if stacked_overlap {
+            assert!(chart_xml.contains("<c:overlap val=\"100\""), "{chart_xml}");
+        }
     }
 }
 
@@ -708,6 +746,34 @@ fn reverse_rejects_empty_chart_titles_with_repair_guidance() {
         .failure()
         .stderr(predicate::str::contains("empty title"))
         .stderr(predicate::str::contains("remove the title element"));
+}
+
+#[test]
+fn reverse_rejects_unknown_chart_grouping_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("unknown-chart-grouping.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart8.xml", |xml| {
+        xml.replace(
+            "<c:grouping val=\"stacked\"/>",
+            "<c:grouping val=\"sideways\"/>",
+        )
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported `grouping@val=sideways`",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
 }
 
 #[test]

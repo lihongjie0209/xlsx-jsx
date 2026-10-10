@@ -1851,7 +1851,19 @@ fn validate_worksheet_children(
 fn is_supported_chart_type(chart_type: &str) -> bool {
     matches!(
         chart_type,
-        "area" | "areaStacked" | "areaPercentStacked" | "column" | "bar" | "line" | "pie"
+        "area"
+            | "areaStacked"
+            | "areaPercentStacked"
+            | "column"
+            | "columnStacked"
+            | "columnPercentStacked"
+            | "bar"
+            | "barStacked"
+            | "barPercentStacked"
+            | "line"
+            | "lineStacked"
+            | "linePercentStacked"
+            | "pie"
     )
 }
 

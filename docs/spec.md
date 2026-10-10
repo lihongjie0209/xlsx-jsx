@@ -55,10 +55,13 @@ relationships and drawing anchors without relying on a private manifest.
 and a worksheet anchor. Chart components must appear before worksheet rows.
 
 - `type` is one of `area`, `areaStacked`, `areaPercentStacked`, `column`,
-  `bar`, `line`, or `pie`. `area`, `areaStacked`, and `areaPercentStacked`
-  map respectively to OOXML `areaChart` groupings `standard`, `stacked`, and
-  `percentStacked`. Reverse reconstructs the DSL type from the chart element
-  and grouping; unknown groupings fail with repair guidance.
+  `columnStacked`, `columnPercentStacked`, `bar`, `barStacked`,
+  `barPercentStacked`, `line`, `lineStacked`, `linePercentStacked`, or `pie`.
+  The `*Stacked` and `*PercentStacked` variants map to the matching OOXML chart
+  grouping; plain `area`, `column`, `bar`, and `line` use the writer's standard
+  grouping (clustered for bar/column). Reverse reconstructs the DSL type from
+  the chart element, bar direction, and grouping; unknown groupings fail with
+  repair guidance.
 - `cell` is an A1 cell anchor. `width` and `height` are positive integer pixels
   (1–1790); omission uses the writer defaults of 480×288 pixels. `Series` has
   required `values` and optional `categories` and `name` sheet-qualified A1

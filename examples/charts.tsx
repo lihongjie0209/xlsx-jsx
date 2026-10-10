@@ -32,5 +32,29 @@ export default <Workbook>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue share" />
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expense share" />
     </Chart>
+    <Chart type="columnStacked" cell="K56" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Stacked columns" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Stacked column details" />
+    </Chart>
+    <Chart type="columnPercentStacked" cell="D74" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Column share" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Column expense share" />
+    </Chart>
+    <Chart type="barStacked" cell="K74" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Stacked bars" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Stacked bar details" />
+    </Chart>
+    <Chart type="barPercentStacked" cell="D92" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Bar share" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Bar expense share" />
+    </Chart>
+    <Chart type="lineStacked" cell="K92" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Stacked lines" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Stacked line details" />
+    </Chart>
+    <Chart type="linePercentStacked" cell="D110" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Line share" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Line expense share" />
+    </Chart>
   </Worksheet>
 </Workbook>;
