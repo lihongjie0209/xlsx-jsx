@@ -130,6 +130,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisNumberFormat"))
         .stdout(predicate::str::contains("yAxisMin"))
         .stdout(predicate::str::contains("yAxisMax"))
+        .stdout(predicate::str::contains("yAxisLogBase"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
         .stdout(predicate::str::contains("yAxisMinorUnit"))
         .stdout(predicate::str::contains("horizontalAxisMajorGridlines"))
@@ -833,6 +834,118 @@ fn reverses_external_chart_value_axis_units_without_a_manifest() {
         assert!(chart_xml.contains(&format!("<c:majorUnit val=\"{major}\"/>")));
         assert!(chart_xml.contains(&format!("<c:minorUnit val=\"{minor}\"/>")));
     }
+}
+
+#[test]
+fn reverses_external_chart_value_axis_log_base_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-log-base.xlsx");
+    let output_path = directory.path().join("external-axis-log-base.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.y_axis().set_log_base(10);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    let mut bar_chart = XlsxChart::new(ChartType::Bar);
+    bar_chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    bar_chart.x_axis().set_log_base(2);
+    worksheet.insert_chart(20, 5, &bar_chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("yAxisLogBase={10}"), "{source}");
+    assert!(source.contains("yAxisLogBase={2}"), "{source}");
+    let rebuilt_path = directory.path().join("rebuilt-axis-log-base.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let column_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(column_xml.contains("<c:logBase val=\"10\"/>"));
+    let bar_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    assert!(bar_xml.contains("<c:logBase val=\"2\"/>"));
+}
+
+#[test]
+fn rejects_chart_log_base_outside_openxml_range_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-log-base.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" yAxisLogBase={1001}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "yAxisLogBase must be an integer from 2 through 1000",
+        ))
+        .stderr(predicate::str::contains("omit it for a linear axis"));
+}
+
+#[test]
+fn rejects_non_positive_bounds_on_a_logarithmic_value_axis() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("non-positive-log-bound.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" yAxisLogBase={10} yAxisMin={0}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "logarithmic value axis bounds must be greater than zero",
+        ))
+        .stderr(predicate::str::contains(
+            "omit yAxisMin or set it to a positive value",
+        ));
+}
+
+#[test]
+fn rejects_chart_log_base_for_scatter_with_actionable_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-log-base.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" yAxisLogBase={10}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not supported for scatter"))
+        .stderr(predicate::str::contains("use a category/value chart"));
 }
 
 #[test]

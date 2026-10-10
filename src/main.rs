@@ -738,6 +738,7 @@ fn compile_chart(
     }
     configure_chart_axis_number_formats(&mut chart, component);
     configure_chart_axis_bounds(&mut chart, component);
+    configure_chart_axis_log_base(&mut chart, component);
     configure_chart_axis_units(&mut chart, component);
     configure_chart_gridlines(&mut chart, component);
     if component.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
@@ -828,6 +829,23 @@ fn configure_chart_axis_bounds(chart: &mut Chart, component: &Node) {
     if let Some(maximum) = component.props.get("yAxisMax").and_then(Value::as_f64) {
         value_axis.set_max(maximum);
     }
+}
+
+fn configure_chart_axis_log_base(chart: &mut Chart, component: &Node) {
+    let Some(base) = component.props.get("yAxisLogBase").and_then(Value::as_u64) else {
+        return;
+    };
+    let value_axis = if component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|chart_type| chart_type.starts_with("bar"))
+    {
+        chart.x_axis()
+    } else {
+        chart.y_axis()
+    };
+    value_axis.set_log_base(u16::try_from(base).expect("validated Chart.yAxisLogBase"));
 }
 
 fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
@@ -3704,6 +3722,10 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
             chart.y_axis_max.map(|value| format!("{{{value}}}")),
         ),
         (
+            "yAxisLogBase",
+            chart.y_axis_log_base.map(|value| format!("{{{value}}}")),
+        ),
+        (
             "yAxisMajorUnit",
             chart.y_axis_major_unit.map(|value| format!("{{{value}}}")),
         ),
@@ -6410,6 +6432,7 @@ fn parse_chart_xml(
         "dateAx",
         "scaling",
         "orientation",
+        "logBase",
         "min",
         "max",
         "majorUnit",
@@ -6470,6 +6493,8 @@ fn parse_chart_xml(
     let mut y_axis_number_format_seen = false;
     let mut y_axis_min = None;
     let mut y_axis_max = None;
+    let mut y_axis_log_base = None;
+    let mut y_axis_log_base_seen = false;
     let mut y_axis_min_seen = false;
     let mut y_axis_max_seen = false;
     let mut y_axis_major_unit = None;
@@ -6984,6 +7009,63 @@ fn parse_chart_xml(
                         *seen = true;
                         *target = Some(bound);
                     }
+                    "logBase" => {
+                        if stack.last().is_none_or(|ancestor| ancestor != "scaling") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a logBase outside c:scaling; repair the axis XML"
+                            )));
+                        }
+                        let category_axis_context = stack
+                            .iter()
+                            .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"));
+                        let value_axis_context = stack.iter().any(|ancestor| ancestor == "valAx");
+                        if category_axis_context {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a logarithmic category/date axis, which this DSL does not model; remove logBase or use a value axis"
+                            )));
+                        }
+                        if !value_axis_context {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has logBase outside a primary value axis; repair the axis structure"
+                            )));
+                        }
+                        if chart_type.is_some_and(|value| {
+                            value.starts_with("scatter") || matches!(value, "pie" | "doughnut")
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a logBase for a chart without one unambiguous value axis; remove it or use a category/value chart"
+                            )));
+                        }
+                        let mut base = None;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                base = value
+                                    .parse::<u16>()
+                                    .ok()
+                                    .filter(|base| (2..=1000).contains(base));
+                            }
+                        }
+                        let Some(base) = base else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an invalid logarithmic base; use an integer from 2 through 1000"
+                            )));
+                        };
+                        if y_axis_log_base_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats logBase; keep one logarithmic base on the value axis"
+                            )));
+                        }
+                        y_axis_log_base_seen = true;
+                        y_axis_log_base = Some(base);
+                    }
                     "majorUnit" | "minorUnit" => {
                         let category_axis_context = stack
                             .iter()
@@ -7431,6 +7513,16 @@ fn parse_chart_xml(
             "chart part `{part}` has y-axis minimum greater than or equal to its maximum; lower the minimum or raise the maximum"
         )));
     }
+    if y_axis_log_base.is_some()
+        && y_axis_min
+            .into_iter()
+            .chain(y_axis_max)
+            .any(|bound| bound <= 0.0)
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a non-positive bound on a logarithmic value axis; remove the bound or set it to a positive value"
+        )));
+    }
     if chart_type == "doughnut" && hole_size.is_none() {
         // OOXML's absent holeSize default is 10; the pinned writer emits 50.
         hole_size = Some(10);
@@ -7495,6 +7587,7 @@ fn parse_chart_xml(
         y_axis_number_format,
         y_axis_min,
         y_axis_max,
+        y_axis_log_base,
         y_axis_major_unit,
         y_axis_minor_unit,
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
@@ -8097,6 +8190,9 @@ fn is_supported_chart_attribute(
             value.parse::<u32>().is_ok()
         }
         ("orientation", "val") => value == "minMax",
+        ("logBase", "val") => value
+            .parse::<u16>()
+            .is_ok_and(|base| (2..=1000).contains(&base)),
         ("min" | "max", "val") => value.parse::<f64>().is_ok_and(f64::is_finite),
         ("majorUnit" | "minorUnit", "val") => value
             .parse::<f64>()
@@ -10633,6 +10729,7 @@ struct WorksheetChart {
     y_axis_number_format: Option<String>,
     y_axis_min: Option<f64>,
     y_axis_max: Option<f64>,
+    y_axis_log_base: Option<u16>,
     y_axis_major_unit: Option<f64>,
     y_axis_minor_unit: Option<f64>,
     horizontal_axis_major_gridlines: Option<bool>,

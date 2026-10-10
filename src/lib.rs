@@ -1894,6 +1894,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisNumberFormat",
             "yAxisMin",
             "yAxisMax",
+            "yAxisLogBase",
             "yAxisMajorUnit",
             "yAxisMinorUnit",
             "horizontalAxisMajorGridlines",
@@ -1995,6 +1996,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_titles(chart, chart_type)?;
     validate_chart_axis_number_formats(chart, chart_type)?;
     validate_chart_axis_bounds(chart, chart_type)?;
+    validate_chart_axis_log_base(chart, chart_type)?;
     validate_chart_axis_units(chart, chart_type)?;
     validate_chart_gridlines(chart, chart_type)?;
     validate_chart_legend(chart)
@@ -2076,6 +2078,32 @@ fn validate_chart_axis_bounds(chart: &Node, chart_type: &str) -> Result<()> {
         return Err(Error::Compile(
             "Chart.yAxisMin must be less than yAxisMax; increase the maximum, lower the minimum, or omit one bound to use automatic scaling".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_chart_axis_log_base(chart: &Node, chart_type: &str) -> Result<()> {
+    let Some(base) = chart.props.get("yAxisLogBase") else {
+        return Ok(());
+    };
+    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+        return Err(Error::Compile(
+            "Chart.yAxisLogBase is not supported for scatter, pie, or doughnut charts because the value axis is ambiguous or absent; use a category/value chart or omit it for a linear axis".into(),
+        ));
+    }
+    if !base.as_u64().is_some_and(|base| (2..=1000).contains(&base)) {
+        return Err(Error::Compile(
+            "Chart.yAxisLogBase must be an integer from 2 through 1000; provide a schema-valid base or omit it for a linear axis".into(),
+        ));
+    }
+    for property in ["yAxisMin", "yAxisMax"] {
+        if let Some(bound) = parse_chart_axis_bound(chart, property)?
+            && bound <= 0.0
+        {
+            return Err(Error::Compile(format!(
+                "logarithmic value axis bounds must be greater than zero; omit {property} or set it to a positive value"
+            )));
+        }
     }
     Ok(())
 }

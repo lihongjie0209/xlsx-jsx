@@ -501,6 +501,7 @@
             "yAxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisMin": { "type": "number" },
             "yAxisMax": { "type": "number" },
+            "yAxisLogBase": { "type": "integer", "minimum": 2, "maximum": 1000 },
             "yAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "horizontalAxisMajorGridlines": { "type": "boolean" },
@@ -533,6 +534,7 @@
                     { "required": ["yAxisNumberFormat"] },
                     { "required": ["yAxisMin"] },
                     { "required": ["yAxisMax"] },
+                    { "required": ["yAxisLogBase"] },
                     { "required": ["yAxisMajorUnit"] },
                     { "required": ["yAxisMinorUnit"] },
                     { "required": ["horizontalAxisMajorGridlines"] },
@@ -558,6 +560,7 @@
                     { "required": ["yAxisNumberFormat"] },
                     { "required": ["yAxisMin"] },
                     { "required": ["yAxisMax"] },
+                    { "required": ["yAxisLogBase"] },
                     { "required": ["yAxisMajorUnit"] },
                     { "required": ["yAxisMinorUnit"] }
                   ]

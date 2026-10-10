@@ -95,5 +95,8 @@ export default <Workbook>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Low" />
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Close" />
     </Chart>
+    <Chart type="column" cell="D218" width={480} height={288} yAxisLogBase={10} yAxisMin={1}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue (log scale)" />
+    </Chart>
   </Worksheet>
 </Workbook>;

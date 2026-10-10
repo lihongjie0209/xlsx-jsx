@@ -136,6 +136,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   automatic interval. These properties are not valid for scatter, pie, or
   doughnut charts. Reverse preserves `<valAx><majorUnit>/<minorUnit>` values and
   rejects intervals on category/date axes instead of dropping them.
+- `Chart.yAxisLogBase?: integer` enables a logarithmic value axis with a base
+  from 2 through 1000. Omission leaves the value axis linear. This property is
+  available only when the chart has one unambiguous value axis; scatter, pie,
+  and doughnut charts reject it. On a logarithmic axis any explicit `yAxisMin`
+  or `yAxisMax` must be greater than zero, and series data must contain positive
+  values for Excel to plot it. Reverse preserves `<valAx><scaling><logBase>` and
+  rejects category/date-axis or otherwise ambiguous log scales.
 - `Chart.horizontalAxisMajorGridlines?: boolean`,
   `Chart.horizontalAxisMinorGridlines?: boolean`,
   `Chart.verticalAxisMajorGridlines?: boolean`, and
