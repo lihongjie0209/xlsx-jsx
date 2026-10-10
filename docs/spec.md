@@ -636,6 +636,15 @@ result into a JSON-compatible workbook IR, writes `.xlsx` files with
   written with `Format::set_font_family()` / `set_font_charset()`, and reversed
   from explicit font records. Invalid family values and non-byte charsets are
   rejected; unsupported font metadata remains an error.
+- `fontScheme?: "none" | "body" | "headings"` selects a non-theme font, or
+  links the font to the workbook theme's minor (body) or major (heading)
+  typeface. `Format::new()` defaults to `body`; reverse folds `body` to omission
+  because it recompiles to the same writer default. `none` is emitted explicitly
+  when needed to preserve a non-theme font without a literal `fontName`.
+  `fontName` independently selects a literal name and upstream also clears the
+  scheme when it is set; an explicit `fontScheme` takes precedence if both are
+  supplied. Applies to cell, row/column, and rich-text run formats; differential
+  table/conditional formats do not expose it in v1.
 - `fontSize?: number` sets the font size in points, from 1 through 409 inclusive.
   Fractional sizes are preserved. Reverse emits the numeric size and rejects
   values outside this range. Size-only styles retain the standard Calibri theme

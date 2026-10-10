@@ -2527,6 +2527,7 @@ fn build_cell_format(cell: &Node) -> xlsx_jsx::Result<Format> {
             .map_err(|error| Error::Compile(format!("invalid Cell.fontCharset: {error}")))?;
         format = format.set_font_charset(font_charset);
     }
+    format = apply_font_scheme(format, cell);
     format = apply_cell_borders(format, cell);
     let explicit_number_format = cell.props.get("numberFormat").and_then(Value::as_str);
     if let Some(horizontal_align) = cell.props.get("horizontalAlign").and_then(Value::as_str) {
@@ -2583,6 +2584,19 @@ fn build_cell_format(cell: &Node) -> xlsx_jsx::Result<Format> {
         format = format.set_num_format(number_format);
     }
     Ok(format)
+}
+
+fn apply_font_scheme(mut format: Format, cell: &Node) -> Format {
+    let Some(font_scheme) = cell.props.get("fontScheme").and_then(Value::as_str) else {
+        return format;
+    };
+    format = match font_scheme {
+        "none" => format.set_font_scheme(rust_xlsxwriter::FontScheme::None),
+        "body" => format.set_font_scheme(rust_xlsxwriter::FontScheme::Body),
+        "headings" => format.set_font_scheme(rust_xlsxwriter::FontScheme::Headings),
+        _ => format,
+    };
+    format
 }
 
 fn apply_cell_fill(mut format: Format, cell: &Node) -> xlsx_jsx::Result<Format> {
@@ -4165,6 +4179,11 @@ fn write_text_run_props(output: &mut String, style: &CellFontStyle) {
     if let Some(charset) = style.font_charset {
         let _ = write!(output, " fontCharset={{{charset}}}");
     }
+    if style.font_scheme.as_deref() == Some("major") {
+        output.push_str(" fontScheme=\"headings\"");
+    } else if style.font_scheme.as_deref() == Some("none") {
+        output.push_str(" fontScheme=\"none\"");
+    }
 }
 
 fn write_numeric_cell(output: &mut String, style: &CellFontStyle, number: &impl std::fmt::Display) {
@@ -4255,6 +4274,11 @@ fn write_style_props(output: &mut String, style: &CellFontStyle) {
     }
     if let Some(font_charset) = style.font_charset {
         let _ = write!(output, " fontCharset={{{font_charset}}}");
+    }
+    if style.font_scheme.as_deref() == Some("major") {
+        output.push_str(" fontScheme=\"headings\"");
+    } else if style.font_scheme.as_deref() == Some("none") {
+        output.push_str(" fontScheme=\"none\"");
     }
     for side in BorderSide::ALL {
         let edge = &style.borders.edges[side.index()];
@@ -5177,6 +5201,11 @@ fn parse_table_xml(
                                 if style.support == StyleSupport::Unsupported {
                                     return Err(Error::Reverse(format!(
                                         "table part `{part}` column uses a differential format outside the supported font emphasis/decoration/script/color, fill, number-format, and edge-border subset; simplify the table format or add explicit DSL and reverse support"
+                                    )));
+                                }
+                                if style.font_scheme.is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "table part `{part}` column uses a differential font scheme that TableColumn.format cannot represent; remove the theme scheme or use a regular cell/row/column style"
                                     )));
                                 }
                                 Ok(style.clone())
@@ -7274,6 +7303,7 @@ impl CellFontStyle {
     fn has_conditional_dxf_style(&self) -> bool {
         self.bold
             || self.italic
+            || self.font_scheme.is_some()
             || self.strikethrough == Some(true)
             || self.underline.is_some()
             || self.script.is_some()
@@ -7288,6 +7318,7 @@ impl CellFontStyle {
 
     fn supports_conditional_dxf(&self) -> bool {
         self.support == StyleSupport::Supported
+            && self.font_scheme.is_none()
             && (self.script.is_none()
                 || self.bold
                 || self.italic
@@ -14801,7 +14832,10 @@ impl StyleParser {
     fn parse_end(&mut self, tag: &[u8]) {
         match tag {
             b"font" => {
-                if let Some(style) = self.current_font.take() {
+                if let Some(mut style) = self.current_font.take() {
+                    if !self.fonts.is_empty() && style.font_scheme.is_none() {
+                        style.font_scheme = Some("none".to_owned());
+                    }
                     self.fonts.push(finalize_font_style(style));
                 }
             }
@@ -16089,6 +16123,8 @@ fn parse_font_scheme(
         );
     }
     match scheme.as_deref() {
+        Some("none") => style.font_scheme = Some("none".to_owned()),
+        Some("major") => style.font_scheme = Some("major".to_owned()),
         Some("minor") => style.font_scheme = Some("minor".to_owned()),
         _ => style.support = StyleSupport::Unsupported,
     }
@@ -16096,16 +16132,12 @@ fn parse_font_scheme(
 }
 
 fn finalize_font_style(mut style: CellFontStyle) -> CellFontStyle {
-    if style.font_scheme.is_some() {
-        if style
-            .font_name
-            .as_deref()
-            .is_some_and(|name| name != "Calibri")
-        {
-            style.support = StyleSupport::Unsupported;
-        } else {
+    if style.font_scheme.as_deref() == Some("minor") {
+        if style.font_name.as_deref() == Some("Calibri") {
             style.font_name = None;
         }
+        // `Format::new()` already selects the minor/body theme font.
+        style.font_scheme = None;
     }
     if matches!(style.font_family, Some(0 | 2)) {
         style.font_family = None;
@@ -16113,7 +16145,6 @@ fn finalize_font_style(mut style: CellFontStyle) -> CellFontStyle {
     if style.font_charset == Some(0) {
         style.font_charset = None;
     }
-    style.font_scheme = None;
     style
 }
 

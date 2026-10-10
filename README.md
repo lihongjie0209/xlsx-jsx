@@ -58,7 +58,7 @@ xlsx-jsx spec --format json
 | Bold and italic cell font | yes | yes | applied as boolean `Cell` props |
 | Cell, row and column fills | yes | yes | `fillColor` is the solid-fill shorthand; `fillPattern` plus optional opaque RGB foreground/background colors preserves OOXML patterns; gradients and theme/indexed colors are rejected |
 | Font color | yes | yes | `fontColor` uses opaque RGB `#RRGGBB`; theme/indexed colors are rejected |
-| Font name, size, family, charset, underline, strikethrough and script | yes | yes | Literal `fontName`; size 1–409 pt; family 0–5; charset byte; four underline styles; boolean strike; superscript/subscript |
+| Font name, size, family, charset, theme scheme, underline, strikethrough and script | yes | yes | Literal `fontName`; size 1–409 pt; family 0–5; charset byte; `fontScheme` none/body/headings; four underline styles; boolean strike; superscript/subscript |
 | Rich text cell runs | yes | yes | `<TextRun>` preserves run boundaries and supported font properties in shared or inline strings; phonetics and unmodeled run properties are rejected |
 | Cell borders | yes | yes | Four independent edge styles, diagonal style/direction, and opaque RGB colors; theme/indexed colors remain rejected |
 | Date and local datetime | yes | yes | ISO `date` property; time zones and 1904-epoch workbooks are rejected |

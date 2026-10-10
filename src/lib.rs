@@ -236,6 +236,7 @@ const FORMAT_PROPERTIES: &[&str] = &[
     "fontSize",
     "fontFamily",
     "fontCharset",
+    "fontScheme",
     "underline",
     "strikethrough",
     "script",
@@ -4490,12 +4491,14 @@ fn validate_rich_text_cell(cell: &Node, row: usize, column: usize) -> Result<()>
                 "fontSize",
                 "fontFamily",
                 "fontCharset",
+                "fontScheme",
                 "underline",
                 "strikethrough",
                 "script",
             ],
             "TextRun",
         )?;
+        validate_text_run_font_scheme(&run, row, column)?;
         if run.children.len() != 1
             || run
                 .children
@@ -4531,6 +4534,23 @@ fn validate_rich_text_cell(cell: &Node, row: usize, column: usize) -> Result<()>
         validate_cell_style(&run, row, column)?;
     }
     Ok(())
+}
+
+fn validate_text_run_font_scheme(run: &Node, row: usize, column: usize) -> Result<()> {
+    let Some(font_scheme) = run.props.get("fontScheme") else {
+        return Ok(());
+    };
+    if font_scheme
+        .as_str()
+        .is_some_and(|scheme| matches!(scheme, "none" | "body" | "headings"))
+    {
+        return Ok(());
+    }
+    Err(Error::Compile(format!(
+        "TextRun.fontScheme at row {}, column {} must be `none`, `body`, or `headings`; use a supported font scheme",
+        row + 1,
+        column + 1
+    )))
 }
 
 fn validate_cell_hyperlink(cell: &Node, row: usize, column: usize) -> Result<()> {
@@ -4922,6 +4942,17 @@ fn validate_cell_font_properties(cell: &Node, row: usize, column: usize) -> Resu
     {
         return Err(Error::Compile(format!(
             "Cell.fontCharset at row {}, column {} must be an integer byte from 0 through 255; choose an OOXML charset value",
+            row + 1,
+            column + 1
+        )));
+    }
+    if let Some(font_scheme) = cell.props.get("fontScheme")
+        && !font_scheme
+            .as_str()
+            .is_some_and(|scheme| matches!(scheme, "none" | "body" | "headings"))
+    {
+        return Err(Error::Compile(format!(
+            "Cell.fontScheme at row {}, column {} must be `none`, `body`, or `headings`; use a supported font scheme",
             row + 1,
             column + 1
         )));
@@ -7838,6 +7869,31 @@ mod tests {
             })],
         )]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_supported_font_schemes_and_rejects_unknown_values() {
+        let input = workbook(vec![worksheet(
+            "Font",
+            vec![serde_json::json!({
+                "type":"Row",
+                "children":[{"type":"Cell","props":{"value":"text","fontScheme":"headings"}}]
+            })],
+        )]);
+        assert!(input.validate().is_ok());
+
+        let invalid = workbook(vec![worksheet(
+            "Font",
+            vec![serde_json::json!({
+                "type":"Row",
+                "children":[{"type":"Cell","props":{"value":"text","fontScheme":"display"}}]
+            })],
+        )]);
+        let error = invalid
+            .validate()
+            .expect_err("unknown font scheme is rejected");
+        assert!(error.to_string().contains("fontScheme"));
+        assert!(error.to_string().contains("none`, `body`, or `headings"));
     }
 
     #[test]

@@ -491,10 +491,12 @@ fn row_and_column_default_formats_reverse_and_rebuild() {
     let worksheet = workbook.add_worksheet();
     let row_format = rust_xlsxwriter::Format::new()
         .set_bold()
-        .set_background_color("ABCDEF");
+        .set_background_color("ABCDEF")
+        .set_font_scheme(rust_xlsxwriter::FontScheme::Headings);
     let column_format = rust_xlsxwriter::Format::new()
         .set_font_color("123456")
-        .set_num_format("0.00");
+        .set_num_format("0.00")
+        .set_font_scheme(rust_xlsxwriter::FontScheme::None);
     worksheet
         .set_row_format(0, &row_format)
         .expect("row format applies");
@@ -516,6 +518,8 @@ fn row_and_column_default_formats_reverse_and_rebuild() {
     assert!(source.contains("fontColor={\"#123456\"}"), "{source}");
     assert!(source.contains("numberFormat={\"0.00\"}"), "{source}");
     assert!(source.contains("<Row bold={true}"), "{source}");
+    assert!(source.contains("fontScheme=\"headings\""), "{source}");
+    assert!(source.contains("fontScheme=\"none\""), "{source}");
     assert!(source.contains("fillColor={\"#ABCDEF\"}"), "{source}");
 
     let regenerated = directory.path().join("row-column-formats-roundtrip.xlsx");
@@ -7406,6 +7410,83 @@ fn external_font_names_and_sizes_survive_recompile() {
         .arg(&regenerated);
     command.assert().success();
     let roundtrip = directory.path().join("font-properties-roundtrip.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&regenerated)
+        .args(["-o"])
+        .arg(&roundtrip);
+    command.assert().success();
+    assert_eq!(
+        std::fs::read_to_string(roundtrip).expect("second reverse output exists"),
+        source
+    );
+}
+
+#[test]
+fn external_theme_font_schemes_survive_reverse_and_recompile() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("font-schemes.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_string_with_format(
+            0,
+            0,
+            "heading font",
+            &rust_xlsxwriter::Format::new().set_font_scheme(rust_xlsxwriter::FontScheme::Headings),
+        )
+        .expect("heading font cell writes");
+    worksheet
+        .write_string_with_format(
+            1,
+            0,
+            "body font",
+            &rust_xlsxwriter::Format::new()
+                .set_font_size(12)
+                .set_font_scheme(rust_xlsxwriter::FontScheme::Body),
+        )
+        .expect("body font cell writes");
+    worksheet
+        .write_string_with_format(
+            0,
+            1,
+            "non-theme font",
+            &rust_xlsxwriter::Format::new()
+                .set_font_size(13)
+                .set_font_scheme(rust_xlsxwriter::FontScheme::None),
+        )
+        .expect("non-theme font writes");
+    let plain_run = rust_xlsxwriter::Format::new();
+    let heading_run =
+        rust_xlsxwriter::Format::new().set_font_scheme(rust_xlsxwriter::FontScheme::Headings);
+    worksheet
+        .write_rich_string(0, 2, &[(&plain_run, "plain "), (&heading_run, "heading")])
+        .expect("rich text scheme writes");
+    workbook.save(&input).expect("workbook writes");
+
+    let reversed = directory.path().join("font-schemes.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("fontScheme=\"headings\""), "{source}");
+    assert!(source.contains("fontSize={12}"), "{source}");
+    assert!(source.contains("fontScheme=\"none\""), "{source}");
+
+    let regenerated = directory.path().join("font-schemes-roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&regenerated);
+    command.assert().success();
+    let roundtrip = directory.path().join("font-schemes-roundtrip.tsx");
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command
         .args(["reverse"])
