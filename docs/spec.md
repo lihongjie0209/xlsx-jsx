@@ -176,6 +176,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `nextTo` to omission and preserves non-default values. Pie/doughnut reject
   these properties. Secondary-axis and unsupported label-position semantics
   are rejected rather than discarded.
+- `Chart.categoryAxisLabelAlignment?: "center" | "left" | "right"` aligns
+  category-axis labels relative to tick marks. The writer default `center` is
+  omitted on reverse; `left` and `right` round-trip as OOXML `lblAlgn` values
+  `l` and `r`. This property applies to category-axis charts, including bars;
+  scatter and pie/doughnut charts reject it because they have no category axis.
+  Reverse rejects label alignment on unsupported axis structures.
 - `Chart.horizontalAxisMajorGridlines?: boolean`,
   `Chart.horizontalAxisMinorGridlines?: boolean`,
   `Chart.verticalAxisMajorGridlines?: boolean`, and

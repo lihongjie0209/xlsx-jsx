@@ -2,8 +2,8 @@ use assert_cmd::Command;
 use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
-    Chart as XlsxChart, ChartAxisLabelPosition, ChartAxisTickType, ChartLine, ChartMarker,
-    ChartType, Workbook as XlsxWorkbook,
+    Chart as XlsxChart, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
+    ChartLine, ChartMarker, ChartType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -141,6 +141,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("verticalAxisMinorTickType"))
         .stdout(predicate::str::contains("horizontalAxisLabelPosition"))
         .stdout(predicate::str::contains("verticalAxisLabelPosition"))
+        .stdout(predicate::str::contains("categoryAxisLabelAlignment"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
         .stdout(predicate::str::contains("yAxisMinorUnit"))
         .stdout(predicate::str::contains("horizontalAxisMajorGridlines"))
@@ -1128,6 +1129,125 @@ fn reverses_external_chart_axis_label_positions_without_a_manifest() {
     let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
     assert!(chart_xml.contains("<c:tickLblPos val=\"high\"/>"));
     assert!(chart_xml.contains("<c:tickLblPos val=\"low\"/>"));
+}
+
+#[test]
+fn reverses_external_category_axis_label_alignment_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-label-alignment.xlsx");
+    let output_path = directory.path().join("external-axis-label-alignment.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+
+    let mut column = XlsxChart::new(ChartType::Column);
+    column
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    column
+        .x_axis()
+        .set_label_alignment(ChartAxisLabelAlignment::Left);
+    worksheet.insert_chart(0, 5, &column).unwrap();
+
+    let mut bar = XlsxChart::new(ChartType::Bar);
+    bar.add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    bar.y_axis()
+        .set_label_alignment(ChartAxisLabelAlignment::Right);
+    worksheet.insert_chart(18, 5, &bar).unwrap();
+
+    let mut default_alignment = XlsxChart::new(ChartType::Line);
+    default_alignment
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    worksheet.insert_chart(36, 5, &default_alignment).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert_eq!(
+        source
+            .matches("categoryAxisLabelAlignment=\"left\"")
+            .count(),
+        1
+    );
+    assert_eq!(
+        source
+            .matches("categoryAxisLabelAlignment=\"right\"")
+            .count(),
+        1
+    );
+
+    let rebuilt_path = directory.path().join("rebuilt-axis-label-alignment.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let first_chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    let second_chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    let third_chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart3.xml");
+    assert!(first_chart_xml.contains("<c:lblAlgn val=\"l\"/>"));
+    assert!(second_chart_xml.contains("<c:lblAlgn val=\"r\"/>"));
+    assert!(third_chart_xml.contains("<c:lblAlgn val=\"ctr\"/>"));
+}
+
+#[test]
+fn rejects_invalid_category_axis_label_alignment_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("invalid-category-axis-label-alignment.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" categoryAxisLabelAlignment="middle"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.categoryAxisLabelAlignment must be center, left, or right",
+        ))
+        .stderr(predicate::str::contains("choose one of these alignments"));
+}
+
+#[test]
+fn rejects_category_axis_label_alignment_for_scatter_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("scatter-category-axis-label-alignment.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" categoryAxisLabelAlignment="left"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "categoryAxisLabelAlignment is not supported for scatter, pie, or doughnut charts",
+        ))
+        .stderr(predicate::str::contains("use a category-axis chart"));
 }
 
 #[test]

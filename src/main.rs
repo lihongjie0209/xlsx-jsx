@@ -11,11 +11,11 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use rust_xlsxwriter::{
-    Chart, ChartAxisLabelPosition, ChartAxisTickType, ChartLegendPosition, ChartLine, ChartMarker,
-    ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
-    ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
-    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
-    ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
+    Chart, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartLegendPosition,
+    ChartLine, ChartMarker, ChartType, Color, ConditionalFormat2ColorScale,
+    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
+    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
+    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
     ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
     ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
     ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
@@ -944,7 +944,43 @@ fn configure_chart_category_axis_settings(
 ) -> xlsx_jsx::Result<()> {
     configure_chart_category_axis_intervals(chart, component);
     configure_chart_axis_tick_types(chart, component)?;
-    configure_chart_axis_label_positions(chart, component)
+    configure_chart_axis_label_positions(chart, component)?;
+    configure_chart_category_axis_label_alignment(chart, component)
+}
+
+fn configure_chart_category_axis_label_alignment(
+    chart: &mut Chart,
+    component: &Node,
+) -> xlsx_jsx::Result<()> {
+    let Some(value) = component
+        .props
+        .get("categoryAxisLabelAlignment")
+        .and_then(Value::as_str)
+    else {
+        return Ok(());
+    };
+    let alignment = match value {
+        "center" => ChartAxisLabelAlignment::Center,
+        "left" => ChartAxisLabelAlignment::Left,
+        "right" => ChartAxisLabelAlignment::Right,
+        _ => {
+            return Err(Error::Compile(
+                "Chart.categoryAxisLabelAlignment must be center, left, or right; choose one of these alignments".into(),
+            ));
+        }
+    };
+    let category_axis = if component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|chart_type| chart_type.starts_with("bar"))
+    {
+        chart.y_axis()
+    } else {
+        chart.x_axis()
+    };
+    category_axis.set_label_alignment(alignment);
+    Ok(())
 }
 
 fn configure_chart_axis_label_positions(
@@ -3815,6 +3851,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
 
 fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     let mut properties = String::new();
+    append_chart_axis_value_properties(&mut properties, chart);
+    append_chart_axis_tick_properties(&mut properties, chart);
+    append_chart_axis_label_properties(&mut properties, chart);
+    if let Some(value) = chart.category_axis_label_alignment {
+        let _ = write!(properties, " categoryAxisLabelAlignment=\"{value}\"");
+    }
+    properties
+}
+
+fn append_chart_axis_value_properties(properties: &mut String, chart: &WorksheetChart) {
     for (name, value) in [
         (
             "xAxisTitle",
@@ -3911,9 +3957,6 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
             let _ = write!(properties, " {name}={value}");
         }
     }
-    append_chart_axis_tick_properties(&mut properties, chart);
-    append_chart_axis_label_properties(&mut properties, chart);
-    properties
 }
 
 fn append_chart_axis_label_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -6726,6 +6769,8 @@ fn parse_chart_xml(
     let mut vertical_axis_label_position: Option<&'static str> = None;
     let mut horizontal_axis_label_position_seen = false;
     let mut vertical_axis_label_position_seen = false;
+    let mut category_axis_label_alignment: Option<&'static str> = None;
+    let mut category_axis_label_alignment_seen = false;
     let mut legend_seen = false;
     let mut legend_deleted = false;
     let mut legend_position: Option<&'static str> = None;
@@ -6990,6 +7035,48 @@ fn parse_chart_xml(
                         *seen = true;
                         if label_position != "nextTo" {
                             *target = Some(label_position);
+                        }
+                    }
+                    "lblAlgn" => {
+                        if !stack.iter().any(|ancestor| ancestor == "catAx") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has lblAlgn outside a category axis; remove it or retain a supported category axis"
+                            )));
+                        }
+                        let raw_alignment = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            });
+                        let Some(alignment) =
+                            raw_alignment.and_then(|value| match value.as_str() {
+                                "ctr" => Some("center"),
+                                "l" => Some("left"),
+                                "r" => Some("right"),
+                                _ => None,
+                            })
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an unsupported lblAlgn; use ctr, l, or r"
+                            )));
+                        };
+                        if category_axis_label_alignment_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats lblAlgn; keep one category axis alignment"
+                            )));
+                        }
+                        category_axis_label_alignment_seen = true;
+                        if alignment != "center" {
+                            category_axis_label_alignment = Some(alignment);
                         }
                     }
                     "legend" => {
@@ -8056,6 +8143,7 @@ fn parse_chart_xml(
         vertical_axis_minor_tick_type,
         horizontal_axis_label_position,
         vertical_axis_label_position,
+        category_axis_label_alignment,
         y_axis_major_unit,
         y_axis_minor_unit,
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
@@ -8680,7 +8768,7 @@ fn is_supported_chart_attribute(
         }
         ("smooth", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("symbol", "val") => value == "none",
-        ("lblAlgn", "val") => value == "ctr",
+        ("lblAlgn", "val") => matches!(value, "ctr" | "l" | "r"),
         ("lblOffset", "val") => value == "100",
         ("crossBetween", "val") => match chart_type {
             Some("area" | "areaStacked" | "areaPercentStacked" | "scatter") => value == "midCat",
@@ -11218,6 +11306,7 @@ struct WorksheetChart {
     vertical_axis_minor_tick_type: Option<&'static str>,
     horizontal_axis_label_position: Option<&'static str>,
     vertical_axis_label_position: Option<&'static str>,
+    category_axis_label_alignment: Option<&'static str>,
     show_legend: bool,
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,

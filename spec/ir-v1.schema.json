@@ -511,6 +511,7 @@
             "verticalAxisMinorTickType": { "enum": ["cross", "inside", "outside", "none"] },
             "horizontalAxisLabelPosition": { "enum": ["nextTo", "high", "low", "none"] },
             "verticalAxisLabelPosition": { "enum": ["nextTo", "high", "low", "none"] },
+            "categoryAxisLabelAlignment": { "enum": ["center", "left", "right"] },
             "yAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "horizontalAxisMajorGridlines": { "type": "boolean" },
@@ -553,6 +554,7 @@
                     { "required": ["verticalAxisMinorTickType"] },
                     { "required": ["horizontalAxisLabelPosition"] },
                     { "required": ["verticalAxisLabelPosition"] },
+                    { "required": ["categoryAxisLabelAlignment"] },
                     { "required": ["yAxisMajorUnit"] },
                     { "required": ["yAxisMinorUnit"] },
                     { "required": ["horizontalAxisMajorGridlines"] },
@@ -562,6 +564,14 @@
                   ]
                 }
               }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "props": { "properties": { "type": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "props": { "not": { "required": ["categoryAxisLabelAlignment"] } }
             }
           }
         },
