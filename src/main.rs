@@ -6215,6 +6215,9 @@ fn parse_chart_xml(
         "scatterChart",
         "scatterStyle",
         "smooth",
+        "spPr",
+        "ln",
+        "noFill",
         "pieChart",
         "ser",
         "idx",
@@ -6568,6 +6571,7 @@ fn parse_chart_xml(
                         title: None,
                         marker: None,
                         smooth: None,
+                        line_hidden: None,
                     }),
                     "marker" if stack.iter().any(|ancestor| ancestor == "ser") => {
                         if let Some(current) = series.last_mut() {
@@ -6598,6 +6602,58 @@ fn parse_chart_xml(
                                     current.smooth = Some(matches!(value.as_ref(), "1" | "true"));
                                 }
                             }
+                        }
+                    }
+                    "spPr" => {
+                        if stack.last().is_none_or(|ancestor| ancestor != "ser") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has formatting outside an individual series; remove custom chart formatting or add explicit reverse support"
+                            )));
+                        }
+                    }
+                    "ln" => {
+                        if stack.last().is_none_or(|ancestor| ancestor != "spPr")
+                            || !stack.iter().any(|ancestor| ancestor == "ser")
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a line outside a series shape; remove it or add explicit chart line support"
+                            )));
+                        }
+                        let mut line_width = None;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"w" {
+                                line_width = Some(
+                                    attribute
+                                        .decoded_and_normalized_value(
+                                            XmlVersion::Implicit1_0,
+                                            reader.decoder(),
+                                        )
+                                        .map_err(|error| Error::Reverse(error.to_string()))?
+                                        .into_owned(),
+                                );
+                            }
+                        }
+                        if line_width.as_deref() != Some("28575") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a scatter series line outside the writer's default 2.25 pt width; remove custom line width or extend Chart series line formatting"
+                            )));
+                        }
+                        if let Some(current) = series.last_mut() {
+                            current.line_hidden = Some(false);
+                        }
+                    }
+                    "noFill" => {
+                        if stack.last().is_none_or(|ancestor| ancestor != "ln")
+                            || !stack.iter().any(|ancestor| ancestor == "ser")
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a fill override outside the supported hidden scatter-series line; remove it or add explicit fill formatting support"
+                            )));
+                        }
+                        if let Some(current) = series.last_mut() {
+                            current.line_hidden = Some(true);
                         }
                     }
                     "tx" if !series.is_empty() => title_source_open = true,
@@ -7360,6 +7416,40 @@ fn resolve_scatter_chart_type(
             "chart part `{part}` scatter style requests smooth lines but every series disables smoothing; align scatterStyle and series smooth settings"
         )));
     }
+    let hidden_line_overrides = series
+        .iter()
+        .filter(|item| item.line_hidden.is_some())
+        .count();
+    if hidden_line_overrides != 0 && hidden_line_overrides != series.len() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has mixed visible/hidden scatter lines; use the same line visibility for every series"
+        )));
+    }
+    if hidden_line_overrides == series.len() {
+        let hidden_lines = series
+            .iter()
+            .filter(|item| item.line_hidden == Some(true))
+            .count();
+        if hidden_lines > 0 && hidden_lines < series.len() {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has mixed visible/hidden scatter lines; use the same line visibility for every series"
+            )));
+        }
+        if hidden_lines == 0 {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has custom scatter line formatting; only the writer's hidden default line is supported"
+            )));
+        }
+        if scatter_style != Some("lineMarker")
+            || smooth_enabled > 0
+            || series.iter().any(|item| item.marker.is_some())
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` combines a hidden scatter line with marker/smoothing overrides; use default markers and no smoothing for a plain scatter chart"
+            )));
+        }
+        return Ok("scatter");
+    }
     let marker_overrides = series.iter().filter(|item| item.marker.is_some()).count();
     if marker_overrides != 0 && marker_overrides != series.len() {
         return Err(Error::Reverse(format!(
@@ -7408,6 +7498,7 @@ fn audit_chart_attributes(
                 chart_type == Some("scatter")
                     && matches!(value.as_str(), "lineMarker" | "smoothMarker")
             }
+            ("ln", "w") => chart_type == Some("scatter") && value == "28575",
             ("grouping", "val") => match chart_type {
                 Some("area") => {
                     matches!(value.as_str(), "standard" | "stacked" | "percentStacked")
@@ -9995,6 +10086,7 @@ struct WorksheetChartSeries {
     title: Option<String>,
     marker: Option<bool>,
     smooth: Option<bool>,
+    line_hidden: Option<bool>,
 }
 
 #[derive(Clone)]

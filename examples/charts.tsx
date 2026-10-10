@@ -81,5 +81,8 @@ export default <Workbook>
     <Chart type="scatterWithSmoothLinesAndMarkers" cell="D182" width={480} height={288}>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expense smoothed points" />
     </Chart>
+    <Chart type="scatter" cell="K182" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue scatter" />
+    </Chart>
   </Worksheet>
 </Workbook>;

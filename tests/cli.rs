@@ -135,6 +135,7 @@ fn spec_exposes_chart_components_and_properties() {
         .assert()
         .success()
         .stdout(predicate::str::contains("scatterWithLines"))
+        .stdout(predicate::str::contains("\"scatter\""))
         .stdout(predicate::str::contains("scatterWithLinesAndMarkers"))
         .stdout(predicate::str::contains("scatterWithSmoothLines"))
         .stdout(predicate::str::contains("scatterWithSmoothLinesAndMarkers"));
@@ -489,6 +490,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
             "{source}"
         );
     }
+    assert!(source.contains("<Chart type=\"scatter\""), "{source}");
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -685,6 +687,42 @@ fn reverse_rejects_mixed_scatter_marker_overrides_with_guidance() {
 }
 
 #[test]
+fn reverse_rejects_mixed_scatter_line_visibility_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("scatter.tsx");
+    let workbook = directory.path().join("scatter.xlsx");
+    let reversed = directory.path().join("scatter-reverse.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" title="One" /><Series values="Data!C2:C4" categories="Data!A2:A4" title="Two" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(source)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
+        xml.replacen("<a:noFill/>", "", 1)
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "mixed visible/hidden scatter lines",
+        ))
+        .stderr(predicate::str::contains("same line visibility"));
+}
+
+#[test]
 fn reverse_rejects_mixed_scatter_smoothing_with_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let source = directory.path().join("scatter-smooth.tsx");
@@ -844,6 +882,7 @@ fn assert_scatter_styles(archive: &mut ZipArchive<std::fs::File>) {
         ("xl/charts/chart19.xml", false),
         ("xl/charts/chart20.xml", true),
         ("xl/charts/chart21.xml", false),
+        ("xl/charts/chart22.xml", false),
     ] {
         let mut chart_xml = String::new();
         archive
@@ -867,6 +906,12 @@ fn assert_scatter_styles(archive: &mut ZipArchive<std::fs::File>) {
             marker_none,
             "{chart_xml}"
         );
+        if part == "xl/charts/chart22.xml" {
+            assert!(
+                chart_xml.contains("<a:ln w=\"28575\"><a:noFill/></a:ln>"),
+                "{chart_xml}"
+            );
+        }
         assert!(chart_xml.contains("<c:xVal>"), "{chart_xml}");
         assert!(chart_xml.contains("<c:yVal>"), "{chart_xml}");
     }

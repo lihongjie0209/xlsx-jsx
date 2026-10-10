@@ -57,7 +57,7 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `type` is one of `area`, `areaStacked`, `areaPercentStacked`, `column`,
   `columnStacked`, `columnPercentStacked`, `bar`, `barStacked`,
   `barPercentStacked`, `line`, `lineStacked`, `linePercentStacked`, `radar`,
-  `radarWithMarkers`, `radarFilled`, `scatterWithLines`,
+  `radarWithMarkers`, `radarFilled`, `scatter`, `scatterWithLines`,
   `scatterWithLinesAndMarkers`, `scatterWithSmoothLines`,
   `scatterWithSmoothLinesAndMarkers`, `pie`, or `doughnut`.
   The `*Stacked` and `*PercentStacked` variants map to the matching OOXML chart
@@ -72,12 +72,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - Scatter charts use `categories` as the X-value range and `values` as the
   Y-value range (the cell contents should be numeric). Both must be explicit,
   sheet-qualified one-dimensional cell ranges of equal
-  length. `scatterWithLines` connects points without markers; and
+  length. `scatter` renders markers with no connecting line;
+  `scatterWithLines` connects points without markers; and
   `scatterWithLinesAndMarkers` connects points and displays markers.
   `scatterWithSmoothLines` and `scatterWithSmoothLinesAndMarkers` use smoothed
   connections, with markers absent/present respectively. Reverse infers the
-  line smoothing and marker mode from the scatter style, per-series smoothing,
-  and marker overrides. Plain scatter, mixed per-series settings, axis titles,
+  line visibility, smoothing, and marker mode from scatter style, per-series
+  line properties, smoothing, and marker overrides. Mixed per-series settings, axis titles,
   and category-axis scatter charts fail with repair guidance.
 - Pie and doughnut charts require exactly one `Series` and have no X/Y axes.
   `Chart.holeSize?: number` is valid only for `doughnut`, uses integer

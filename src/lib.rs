@@ -1866,6 +1866,7 @@ fn is_supported_chart_type(chart_type: &str) -> bool {
             | "radar"
             | "radarWithMarkers"
             | "radarFilled"
+            | "scatter"
             | "scatterWithLines"
             | "scatterWithLinesAndMarkers"
             | "scatterWithSmoothLines"
