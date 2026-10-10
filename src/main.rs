@@ -505,66 +505,7 @@ fn compile_table(
         .ok_or_else(|| Error::Compile("Table.range must be a string".into()))?;
     let range = parse_a1_range(range_text)
         .ok_or_else(|| Error::Compile(format!("invalid Table.range `{range_text}`")))?;
-    let row_value = sheet
-        .children
-        .iter()
-        .filter(|value| value.get("type").and_then(Value::as_str) == Some("Row"))
-        .nth(range.0 as usize)
-        .ok_or_else(|| Error::Compile("Table header row is missing".into()))?;
-    let row: Node = serde_json::from_value(row_value.clone())
-        .map_err(|error| Error::Compile(error.to_string()))?;
-    let mut columns = Vec::new();
-    for col in range.1..=range.3 {
-        let cell: Node = serde_json::from_value(row.children[usize::from(col)].clone())
-            .map_err(|error| Error::Compile(error.to_string()))?;
-        let header = cell
-            .props
-            .get("value")
-            .and_then(Value::as_str)
-            .or_else(|| cell.children.first().and_then(Value::as_str))
-            .ok_or_else(|| Error::Compile("table header must be a string".into()))?;
-        let column_node = node.children.get(usize::from(col - range.1));
-        let mut column = TableColumn::new().set_header(header);
-        if let Some(column_node) = column_node {
-            let props = column_node.get("props").and_then(Value::as_object);
-            if let Some(label) = props
-                .and_then(|props| props.get("totalLabel"))
-                .and_then(Value::as_str)
-            {
-                column = column.set_total_label(label);
-            }
-            if let Some(format) = props.and_then(|props| props.get("format")) {
-                column = column.set_format(build_table_column_format(format)?);
-            }
-            if let Some(format) = props.and_then(|props| props.get("headerFormat")) {
-                column = column.set_header_format(build_table_column_format(format)?);
-            } else if has_format_properties(&cell) {
-                // Table insertion rewrites headers, so copy their cell style
-                // into the table column when the JSX uses canonical Cell props.
-                column = column.set_header_format(build_cell_format(&cell)?);
-            }
-            if let Some(formula) = props
-                .and_then(|props| props.get("formula"))
-                .and_then(Value::as_str)
-            {
-                column = column.set_formula(formula.trim_start_matches('='));
-            }
-            if let Some(formula) = props
-                .and_then(|props| props.get("totalFormula"))
-                .and_then(Value::as_str)
-            {
-                column = column.set_total_function(rust_xlsxwriter::TableFunction::Custom(
-                    Formula::new(formula.trim_start_matches('=')),
-                ));
-            } else if let Some(function) = props
-                .and_then(|props| props.get("totalFunction"))
-                .and_then(Value::as_str)
-            {
-                column = column.set_total_function(table_function(function)?);
-            }
-        }
-        columns.push(column);
-    }
+    let columns = build_table_columns(sheet, node, range)?;
     let name = node.props["name"]
         .as_str()
         .ok_or_else(|| Error::Compile("Table.name must be a string".into()))?;
@@ -600,6 +541,75 @@ fn compile_table(
         .add_table(range.0, range.1, range.2, range.3, &table)
         .map_err(|error| Error::Compile(format!("cannot create Table `{name}`: {error}")))?;
     Ok(())
+}
+
+fn build_table_columns(
+    sheet: &Node,
+    node: &Node,
+    range: (u32, u16, u32, u16),
+) -> xlsx_jsx::Result<Vec<TableColumn>> {
+    let row_value = sheet
+        .children
+        .iter()
+        .filter(|value| value.get("type").and_then(Value::as_str) == Some("Row"))
+        .nth(range.0 as usize)
+        .ok_or_else(|| Error::Compile("Table header row is missing".into()))?;
+    let row: Node = serde_json::from_value(row_value.clone())
+        .map_err(|error| Error::Compile(error.to_string()))?;
+    let mut columns = Vec::new();
+    for col in range.1..=range.3 {
+        let cell: Node = serde_json::from_value(row.children[usize::from(col)].clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        let header = cell
+            .props
+            .get("value")
+            .and_then(Value::as_str)
+            .or_else(|| cell.children.first().and_then(Value::as_str))
+            .ok_or_else(|| Error::Compile("table header must be a string".into()))?;
+        let column_node = node.children.get(usize::from(col - range.1));
+        let mut column = TableColumn::new().set_header(header);
+        if let Some(column_node) = column_node {
+            let props = column_node.get("props").and_then(Value::as_object);
+            if let Some(label) = props
+                .and_then(|props| props.get("totalLabel"))
+                .and_then(Value::as_str)
+            {
+                column = column.set_total_label(label);
+            }
+            if let Some(format) = props.and_then(|props| props.get("format")) {
+                column = column.set_format(build_table_column_format(format)?);
+            }
+            if let Some(formula) = props
+                .and_then(|props| props.get("formula"))
+                .and_then(Value::as_str)
+            {
+                column = column.set_formula(formula.trim_start_matches('='));
+            }
+            if let Some(formula) = props
+                .and_then(|props| props.get("totalFormula"))
+                .and_then(Value::as_str)
+            {
+                column = column.set_total_function(rust_xlsxwriter::TableFunction::Custom(
+                    Formula::new(formula.trim_start_matches('=')),
+                ));
+            } else if let Some(function) = props
+                .and_then(|props| props.get("totalFunction"))
+                .and_then(Value::as_str)
+            {
+                column = column.set_total_function(table_function(function)?);
+            }
+        }
+        let header_format = column_node
+            .and_then(|column| column.get("props"))
+            .and_then(|props| props.get("headerFormat"));
+        if let Some(format) = header_format {
+            column = column.set_header_format(build_table_column_format(format)?);
+        } else if has_format_properties(&cell) {
+            column = column.set_header_format(build_cell_format(&cell)?);
+        }
+        columns.push(column);
+    }
+    Ok(columns)
 }
 
 fn apply_table_accessibility_text(

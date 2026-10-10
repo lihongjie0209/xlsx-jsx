@@ -4,7 +4,7 @@ export default (
   <Workbook>
     <Worksheet name="Products">
       <Table range="A1:B3" name="Products" style="TableStyleMedium2" altText="Product pricing data" altTextTitle="Product prices">
-        <TableColumn />
+        <TableColumn headerFormat={{ fontName: "Aptos", fontSize: 12.5, fontFamily: 3, fontCharset: 128 }} />
         <TableColumn
           format={{
             strikethrough: true,

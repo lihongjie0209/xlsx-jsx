@@ -2191,6 +2191,9 @@ fn validate_table_column_format_property(
             Ok(())
         }
         "numberFormat" => validate_table_column_number_format(value, property),
+        "fontName" | "fontSize" | "fontFamily" | "fontCharset" => {
+            validate_table_column_font_property(key, value, property)
+        }
         "fillPattern"
             if value
                 .as_str()
@@ -2257,9 +2260,74 @@ fn validate_table_column_format_property(
             "TableColumn.{property}.{key} must be true; table differential formats can add emphasis but cannot encode a false override"
         ))),
         _ => Err(Error::Compile(format!(
-            "TableColumn.{property}.{key} is not supported; use bold/italic/strikethrough, underline, script, RGB colors, numberFormat, or supported edge borders"
+            "TableColumn.{property}.{key} is not supported; use font name/size/family/charset, bold/italic/strikethrough, underline, script, RGB colors, numberFormat, or supported edge borders"
         ))),
     }
+}
+
+fn validate_table_column_font_property(key: &str, value: &Value, property: &str) -> Result<()> {
+    if property != "headerFormat" {
+        return Err(Error::Compile(format!(
+            "TableColumn.format.{key} is not serialized by the pinned writer; move this font metadata to headerFormat or the header Cell"
+        )));
+    }
+    match key {
+        "fontName" => {
+            let Some(font_name) = value.as_str() else {
+                return Err(Error::Compile(
+                    "TableColumn.headerFormat.fontName must be a string; use a literal font family name".into(),
+                ));
+            };
+            if font_name.is_empty()
+                || font_name.chars().count() > 255
+                || !font_name.chars().all(is_valid_xml_character)
+            {
+                return Err(Error::Compile(
+                    "TableColumn.headerFormat.fontName must contain 1 to 255 valid XML characters; shorten it or remove control characters".into(),
+                ));
+            }
+        }
+        "fontSize" => {
+            let Some(font_size) = value.as_f64() else {
+                return Err(Error::Compile(
+                    "TableColumn.headerFormat.fontSize must be a number in points from 1 through 409".into(),
+                ));
+            };
+            if !(1.0..=409.0).contains(&font_size) {
+                return Err(Error::Compile(
+                    "TableColumn.headerFormat.fontSize must be from 1 through 409 points; choose an OOXML-compatible font size".into(),
+                ));
+            }
+        }
+        "fontFamily" => {
+            let Some(font_family) = value.as_u64() else {
+                return Err(Error::Compile(
+                    "TableColumn.headerFormat.fontFamily must be an integer from 0 through 5; use an OOXML font family value".into(),
+                ));
+            };
+            if font_family > 5 {
+                return Err(Error::Compile(
+                    "TableColumn.headerFormat.fontFamily must be from 0 through 5; use 0 (default), 1 (roman), 2 (swiss), 3 (modern), 4 (script), or 5 (decorative)".into(),
+                ));
+            }
+        }
+        "fontCharset" => {
+            if value
+                .as_u64()
+                .is_none_or(|charset| u8::try_from(charset).is_err())
+            {
+                return Err(Error::Compile(
+                    "TableColumn.headerFormat.fontCharset must be an integer byte from 0 through 255; choose an OOXML charset value".into(),
+                ));
+            }
+        }
+        _ => {
+            return Err(Error::Compile(format!(
+                "TableColumn.headerFormat.{key} is not a supported font metadata property"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_table_column_number_format(value: &Value, property: &str) -> Result<()> {
@@ -7108,6 +7176,90 @@ mod tests {
         })]);
 
         assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn accepts_table_column_font_metadata_formats() {
+        let table = |column| {
+            serde_json::json!({
+                "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                    {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[column]},
+                    {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Amount"]}]},
+                    {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":[12]}]}
+                ]
+            })
+        };
+        let input = workbook(vec![table(serde_json::json!({
+            "type":"TableColumn",
+            "props":{"headerFormat":{"fontName":"Aptos","fontSize":12.5,"fontFamily":3,"fontCharset":128}},
+            "children":[]
+        }))]);
+
+        assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn rejects_invalid_table_column_font_metadata_with_repair_guidance() {
+        let table = |column| {
+            serde_json::json!({
+                "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                    {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[column]},
+                    {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Amount"]}]},
+                    {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":[12]}]}
+                ]
+            })
+        };
+        for (property, value, expected) in [
+            (
+                "fontName",
+                serde_json::json!(""),
+                "1 to 255 valid XML characters",
+            ),
+            ("fontSize", serde_json::json!(410), "1 through 409 points"),
+            ("fontFamily", serde_json::json!(6), "0 through 5"),
+            (
+                "fontCharset",
+                serde_json::json!(256),
+                "integer byte from 0 through 255",
+            ),
+        ] {
+            let input = workbook(vec![table(serde_json::json!({
+                "type":"TableColumn",
+                "props":{"headerFormat":{property:value}},
+                "children":[]
+            }))]);
+            let error = input
+                .validate()
+                .expect_err("out-of-range font metadata must be rejected");
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+    }
+
+    #[test]
+    fn rejects_table_data_font_metadata_that_writer_drops_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[
+                    {"type":"TableColumn","props":{"format":{"fontName":"Aptos"}},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Amount"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":[12]}]}
+            ]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("pinned writer omits font metadata from data differential styles");
+
+        assert!(
+            error
+                .to_string()
+                .contains("not serialized by the pinned writer")
+        );
+        assert!(
+            error
+                .to_string()
+                .contains("move this font metadata to headerFormat")
+        );
     }
 
     #[test]

@@ -347,7 +347,21 @@
             "totalFunction": { "type": "string", "enum": ["none", "average", "count", "countNumbers", "max", "min", "sum", "stdDev", "var"] },
             "totalFormula": { "type": "string", "minLength": 1 },
             "formula": { "type": "string", "minLength": 1 },
-            "format": { "$ref": "#/$defs/tableColumnFormat" },
+            "format": {
+              "allOf": [
+                { "$ref": "#/$defs/tableColumnFormat" },
+                {
+                  "not": {
+                    "anyOf": [
+                      { "required": ["fontName"] },
+                      { "required": ["fontSize"] },
+                      { "required": ["fontFamily"] },
+                      { "required": ["fontCharset"] }
+                    ]
+                  }
+                }
+              ]
+            },
             "headerFormat": { "$ref": "#/$defs/tableColumnFormat" }
           },
           "allOf": [
@@ -364,6 +378,10 @@
                       { "required": ["italic"] },
                       { "required": ["strikethrough"] },
                       { "required": ["underline"] },
+                      { "required": ["fontName"] },
+                      { "required": ["fontSize"] },
+                      { "required": ["fontFamily"] },
+                      { "required": ["fontCharset"] },
                       { "required": ["fontColor"] },
                       { "required": ["fillColor"] },
                       { "required": ["fillPattern"] },
@@ -399,6 +417,10 @@
         "strikethrough": { "const": true },
         "underline": { "enum": ["single", "double", "singleAccounting", "doubleAccounting"] },
         "script": { "enum": ["superscript", "subscript"] },
+        "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "fontSize": { "type": "number", "minimum": 1, "maximum": 409 },
+        "fontFamily": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "fontCharset": { "type": "integer", "minimum": 0, "maximum": 255 },
         "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
         "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
         "fillPattern": { "enum": ["none", "solid", "mediumGray", "darkGray", "lightGray", "darkHorizontal", "darkVertical", "darkDown", "darkUp", "darkGrid", "darkTrellis", "lightHorizontal", "lightVertical", "lightDown", "lightUp", "lightGrid", "lightTrellis", "gray125", "gray0625"] },

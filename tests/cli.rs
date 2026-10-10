@@ -2351,6 +2351,31 @@ fn public_worksheet_visibility_example_builds_and_reverses() {
 }
 
 #[test]
+fn public_table_formats_example_reverses_header_font_metadata() {
+    let directory = tempdir().expect("temporary directory is available");
+    let output = directory.path().join("table-formats.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build", "examples/table-formats.tsx", "-o"])
+        .arg(&output);
+    command.assert().success();
+
+    let reversed = directory.path().join("table-formats.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(output)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(reversed).expect("reverse output exists");
+    assert!(source.contains("fontName={\"Aptos\"}"), "{source}");
+    assert!(source.contains("fontSize={12.5}"), "{source}");
+    assert!(source.contains("fontFamily={3}"), "{source}");
+    assert!(source.contains("fontCharset={128}"), "{source}");
+}
+
+#[test]
 fn external_tables_survive_reverse_and_recompile() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("table.xlsx");
@@ -2944,6 +2969,71 @@ fn external_table_column_number_format_round_trips() {
         .arg(&rebuilt);
     command.assert().success();
     let second_reverse = directory.path().join("table-number-format-second.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&second_reverse);
+    command.assert().success();
+    assert_eq!(
+        std::fs::read_to_string(second_reverse).expect("second reverse output exists"),
+        source
+    );
+}
+
+#[test]
+fn external_table_header_font_metadata_round_trips_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("table-header-font-metadata.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_string(0, 0, "Amount")
+        .expect("header writes");
+    worksheet.write_number(1, 0, 12.5).expect("cell writes");
+    let columns = [rust_xlsxwriter::TableColumn::new()
+        .set_header("Amount")
+        .set_header_format(
+            rust_xlsxwriter::Format::new()
+                .set_font_name("Aptos")
+                .set_font_size(12.5)
+                .set_font_family(3)
+                .set_font_charset(128),
+        )];
+    let table = rust_xlsxwriter::Table::new()
+        .set_name("Amounts")
+        .set_columns(&columns);
+    worksheet.add_table(0, 0, 1, 0, &table).expect("table adds");
+    workbook.save(&input).expect("workbook writes");
+    let reversed = directory.path().join("table-header-font-metadata.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("fontName={\"Aptos\"}"), "{source}");
+    assert!(source.contains("fontSize={12.5}"), "{source}");
+    assert!(source.contains("fontFamily={3}"), "{source}");
+    assert!(source.contains("fontCharset={128}"), "{source}");
+
+    let rebuilt = directory
+        .path()
+        .join("table-header-font-metadata-rebuilt.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+
+    let second_reverse = directory
+        .path()
+        .join("table-header-font-metadata-second.tsx");
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command
         .args(["reverse"])
