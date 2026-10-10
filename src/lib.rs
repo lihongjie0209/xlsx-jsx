@@ -1852,7 +1852,15 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     reject_unknown_props(
         chart,
         &[
-            "type", "cell", "width", "height", "name", "altText", "title",
+            "type",
+            "cell",
+            "width",
+            "height",
+            "name",
+            "altText",
+            "title",
+            "xAxisTitle",
+            "yAxisTitle",
         ],
         "Chart",
     )?;
@@ -1870,6 +1878,15 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         return Err(Error::Compile(format!(
             "Chart.type `{chart_type}` is unsupported; use column, bar, line, or pie"
         )));
+    }
+    if chart_type == "pie"
+        && ["xAxisTitle", "yAxisTitle"]
+            .iter()
+            .any(|property| chart.props.contains_key(*property))
+    {
+        return Err(Error::Compile(
+            "pie Chart has no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
+        ));
     }
     let cell = chart
         .props
@@ -1894,7 +1911,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             )));
         }
     }
-    for property in ["name", "altText", "title"] {
+    for property in ["name", "altText", "title", "xAxisTitle", "yAxisTitle"] {
         if let Some(value) = chart.props.get(property) {
             let Some(value) = value.as_str() else {
                 return Err(Error::Compile(format!(
@@ -1908,6 +1925,13 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             {
                 return Err(Error::Compile(format!(
                     "Chart.{property} must contain 1–{maximum} valid XML characters; shorten it or remove control characters"
+                )));
+            }
+            if matches!(property, "title" | "xAxisTitle" | "yAxisTitle")
+                && valid_chart_source_reference(value, false)
+            {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} `{value}` looks like a sheet-qualified A1 reference, which rust_xlsxwriter interprets as a formula; rephrase it as literal text"
                 )));
             }
         }

@@ -495,6 +495,8 @@
             "name": { "type": "string", "minLength": 1, "maxLength": 255 },
             "altText": { "type": "string", "minLength": 1, "maxLength": 255 },
             "title": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "xAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "width": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "height": { "type": "integer", "minimum": 1, "maximum": 1790 }
           },
@@ -505,7 +507,19 @@
       "allOf": [
         {
           "if": { "properties": { "props": { "properties": { "type": { "const": "pie" } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "children": { "maxItems": 1 } } }
+          "then": {
+            "properties": {
+              "children": { "maxItems": 1 },
+              "props": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["xAxisTitle"] },
+                    { "required": ["yAxisTitle"] }
+                  ]
+                }
+              }
+            }
+          }
         }
       ],
       "additionalProperties": false

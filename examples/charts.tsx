@@ -8,7 +8,7 @@ export default <Workbook>
     <Row><Cell>Mar</Cell><Cell value={15} /><Cell value={6} /></Row>
   </Worksheet>
   <Worksheet name="Sales">
-    <Chart type="column" cell="D2" width={480} height={288} name="Revenue and expenses" title="Monthly revenue &amp; expenses — 2026" altText="Monthly revenue compared with expenses">
+    <Chart type="column" cell="D2" width={480} height={288} name="Revenue and expenses" title="Monthly revenue &amp; expenses — 2026" xAxisTitle="Month" yAxisTitle="Revenue ($)" altText="Monthly revenue compared with expenses">
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" />
     </Chart>

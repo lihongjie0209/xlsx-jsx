@@ -68,6 +68,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.title?: string` is a static chart title (1–255 valid XML characters).
   External titles are reversible only when they are one unformatted rich-text
   run; formulas, multiple runs, and custom title formatting fail with guidance.
+- `Chart.xAxisTitle?: string` and `Chart.yAxisTitle?: string` set static X- and
+  Y-axis titles (1–255 valid XML characters) for non-pie charts. Reverse maps
+  the OOXML category axis to X and value axis to Y; only a single unformatted
+  rich-text run is supported. Formula titles and custom formatting are rejected.
 - `Chart.name?: string` preserves the workbook chart object name and
   `Chart.altText?: string` preserves its accessibility description. Both are
   limited to 255 valid XML characters. Reverse emits an explicit name because
@@ -77,9 +81,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   reverse/recompile.
 - Reverse supports two-cell chart anchors with zero start offsets, whole-pixel
   sizes, standard 64×20-pixel worksheet geometry across the chart footprint,
-  writer-default chart/axis presentation, and a static unformatted title. Custom formatting,
-  non-default axis settings, other drawing shapes, custom dimensions in the
-  anchor footprint, and other chart kinds fail with repair guidance.
+  writer-default chart/axis presentation apart from supported static chart and
+  axis titles. Custom formatting, non-title axis settings, other drawing
+  shapes, custom dimensions in the anchor footprint, and other chart kinds fail
+  with repair guidance.
 
 ### Workbook
 

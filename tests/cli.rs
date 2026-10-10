@@ -120,7 +120,9 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("\"const\": \"Chart\""))
         .stdout(predicate::str::contains("chartSeries"))
         .stdout(predicate::str::contains("categories"))
-        .stdout(predicate::str::contains("\"title\""));
+        .stdout(predicate::str::contains("\"title\""))
+        .stdout(predicate::str::contains("xAxisTitle"))
+        .stdout(predicate::str::contains("yAxisTitle"));
 }
 
 #[test]
@@ -488,6 +490,8 @@ fn assert_chart_title_round_trip(source: &str) {
         "{source}"
     );
     assert!(source.contains("title={\"Expenses & travel\"}"), "{source}");
+    assert!(source.contains("xAxisTitle={\"Month\"}"), "{source}");
+    assert!(source.contains("yAxisTitle={\"Revenue ($)\"}"), "{source}");
 }
 
 #[test]
@@ -508,6 +512,44 @@ fn validates_chart_title_length_with_repair_guidance() {
         .failure()
         .stderr(predicate::str::contains("Chart.title"))
         .stderr(predicate::str::contains("shorten it"));
+}
+
+#[test]
+fn rejects_axis_titles_on_pie_charts_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("pie-axis-title.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="pie" cell="D2" xAxisTitle="Category"><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid fixture is written");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("pie Chart has no X/Y axes"))
+        .stderr(predicate::str::contains("remove xAxisTitle and yAxisTitle"));
+}
+
+#[test]
+fn rejects_reference_shaped_chart_titles_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("reference-shaped-chart-title.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Data!$A$1"><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid fixture is written");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Chart.title"))
+        .stderr(predicate::str::contains("interprets as a formula"));
 }
 
 #[test]
@@ -658,6 +700,31 @@ fn reverse_rejects_formatted_chart_titles_instead_of_dropping_formatting() {
         .stderr(predicate::str::contains("unsupported `rPr@sz=1400`"))
         .stderr(predicate::str::contains(
             "remove custom chart/axis/print formatting",
+        ));
+}
+
+#[test]
+fn reverse_rejects_reference_shaped_axis_titles_writer_would_reinterpret() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("reference-shaped-axis-title.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart1.xml", |xml| {
+        xml.replace("<a:t>Month</a:t>", "<a:t>Data!$A$1</a:t>")
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("xAxisTitle"))
+        .stderr(predicate::str::contains(
+            "would reinterpret as a cell reference",
         ));
 }
 
