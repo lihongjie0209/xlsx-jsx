@@ -490,7 +490,7 @@
           "type": "object",
           "required": ["type", "cell"],
           "properties": {
-            "type": { "enum": ["area", "areaStacked", "areaPercentStacked", "column", "columnStacked", "columnPercentStacked", "bar", "barStacked", "barPercentStacked", "line", "lineStacked", "linePercentStacked", "radar", "radarWithMarkers", "radarFilled", "scatterWithLines", "scatterWithLinesAndMarkers", "pie", "doughnut"] },
+            "type": { "enum": ["area", "areaStacked", "areaPercentStacked", "column", "columnStacked", "columnPercentStacked", "bar", "barStacked", "barPercentStacked", "line", "lineStacked", "linePercentStacked", "radar", "radarWithMarkers", "radarFilled", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers", "pie", "doughnut"] },
             "cell": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
             "name": { "type": "string", "minLength": 1, "maxLength": 255 },
             "altText": { "type": "string", "minLength": 1, "maxLength": 255 },

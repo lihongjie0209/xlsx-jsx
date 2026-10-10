@@ -799,6 +799,8 @@ fn chart_type_from_name(chart_type: &str) -> ChartType {
         "scatter" => ChartType::Scatter,
         "scatterWithLines" => ChartType::ScatterStraight,
         "scatterWithLinesAndMarkers" => ChartType::ScatterStraightWithMarkers,
+        "scatterWithSmoothLines" => ChartType::ScatterSmooth,
+        "scatterWithSmoothLinesAndMarkers" => ChartType::ScatterSmoothWithMarkers,
         "pie" => ChartType::Pie,
         "doughnut" => ChartType::Doughnut,
         _ => unreachable!("validated Chart.type"),
@@ -6212,6 +6214,7 @@ fn parse_chart_xml(
         "radarStyle",
         "scatterChart",
         "scatterStyle",
+        "smooth",
         "pieChart",
         "ser",
         "idx",
@@ -6451,10 +6454,10 @@ fn parse_chart_xml(
                                         reader.decoder(),
                                     )
                                     .map_err(|error| Error::Reverse(error.to_string()))?;
-                                scatter_style = Some(if value.as_ref() == "lineMarker" {
-                                    "lineMarker"
-                                } else {
-                                    "unsupported"
+                                scatter_style = Some(match value.as_ref() {
+                                    "lineMarker" => "lineMarker",
+                                    "smoothMarker" => "smoothMarker",
+                                    _ => "unsupported",
                                 });
                             }
                         }
@@ -6563,12 +6566,12 @@ fn parse_chart_xml(
                         categories: None,
                         name: None,
                         title: None,
-                        marker_seen: false,
-                        marker_none: false,
+                        marker: None,
+                        smooth: None,
                     }),
                     "marker" if stack.iter().any(|ancestor| ancestor == "ser") => {
                         if let Some(current) = series.last_mut() {
-                            current.marker_seen = true;
+                            current.marker = Some(true);
                         }
                     }
                     "symbol"
@@ -6576,7 +6579,25 @@ fn parse_chart_xml(
                             && stack.iter().any(|ancestor| ancestor == "ser") =>
                     {
                         if let Some(current) = series.last_mut() {
-                            current.marker_none = true;
+                            current.marker = Some(false);
+                        }
+                    }
+                    "smooth" if stack.iter().any(|ancestor| ancestor == "ser") => {
+                        if let Some(current) = series.last_mut() {
+                            current.smooth = Some(true);
+                            for attribute in event.attributes().with_checks(false) {
+                                let attribute =
+                                    attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                                if attribute.key.local_name().as_ref() == b"val" {
+                                    let value = attribute
+                                        .decoded_and_normalized_value(
+                                            XmlVersion::Implicit1_0,
+                                            reader.decoder(),
+                                        )
+                                        .map_err(|error| Error::Reverse(error.to_string()))?;
+                                    current.smooth = Some(matches!(value.as_ref(), "1" | "true"));
+                                }
+                            }
                         }
                     }
                     "tx" if !series.is_empty() => title_source_open = true,
@@ -6873,23 +6894,18 @@ fn parse_chart_xml(
             }
         }
         if chart_type.starts_with("scatter") {
-            let category_range = item
+            let category_count = item
                 .categories
                 .as_deref()
                 .and_then(|formula| formula.split_once('!'))
-                .and_then(|(_, range)| parse_a1_range(range));
-            let value_range = item
+                .and_then(|(_, range)| parse_a1_range(range))
+                .and_then(one_dimensional_range_length);
+            let value_count = item
                 .values
                 .split_once('!')
-                .and_then(|(_, range)| parse_a1_range(range));
-            let ranges_match = value_range.zip(category_range).is_some_and(
-                |((vr0, vc0, vr1, vc1), (cr0, cc0, cr1, cc1))| {
-                    (vr0 == vr1 || vc0 == vc1)
-                        && (cr0 == cr1 || cc0 == cc1)
-                        && vr1 - vr0 == cr1 - cr0
-                        && vc1 - vc0 == cc1 - cc0
-                },
-            );
+                .and_then(|(_, range)| parse_a1_range(range))
+                .and_then(one_dimensional_range_length);
+            let ranges_match = value_count.zip(category_count).is_some_and(|(x, y)| x == y);
             if !ranges_match {
                 return Err(Error::Reverse(format!(
                     "chart part `{part}` scatter series must use one-dimensional X/Y ranges with equal point counts; repair categories/values or use another chart type"
@@ -7209,6 +7225,14 @@ fn chart_formula_has_valid_reference(formula: &str, require_range: bool) -> bool
     }
 }
 
+fn one_dimensional_range_length(range: (u32, u16, u32, u16)) -> Option<u32> {
+    let (first_row, first_column, last_row, last_column) = range;
+    if first_row != last_row && first_column != last_column {
+        return None;
+    }
+    Some((last_row - first_row) + u32::from(last_column - first_column) + 1)
+}
+
 fn set_chart_type(
     current: Option<&'static str>,
     candidate: &'static str,
@@ -7260,21 +7284,25 @@ fn resolve_radar_chart_type(
     if chart_type != "radar" {
         return Ok(chart_type);
     }
-    let marker_count = series.iter().filter(|item| item.marker_seen).count();
+    let marker_count = series.iter().filter(|item| item.marker.is_some()).count();
     if marker_count != 0 && marker_count != series.len() {
         return Err(Error::Reverse(format!(
             "chart part `{part}` has mixed radar marker overrides; use the same marker behavior for every series"
         )));
     }
-    let disabled_marker_count = series.iter().filter(|item| item.marker_none).count();
+    let disabled_marker_count = series
+        .iter()
+        .filter(|item| item.marker == Some(false))
+        .count();
     if disabled_marker_count != 0 && disabled_marker_count != marker_count && marker_count != 0 {
         return Err(Error::Reverse(format!(
             "chart part `{part}` has mixed radar marker visibility; use the same marker behavior for every series"
         )));
     }
-    let markers_disabled = (marker_count > 0 && series.iter().all(|item| item.marker_none))
+    let markers_disabled = (marker_count > 0
+        && series.iter().all(|item| item.marker == Some(false)))
         || radar_style == Some("standard");
-    let markers_enabled = (marker_count > 0 && series.iter().all(|item| !item.marker_none))
+    let markers_enabled = (marker_count > 0 && series.iter().all(|item| item.marker == Some(true)))
         || (marker_count == 0 && radar_style == Some("marker"));
     let markers_overridden = marker_count > 0;
     match radar_style {
@@ -7304,29 +7332,51 @@ fn resolve_scatter_chart_type(
     if chart_type != "scatter" {
         return Ok(chart_type);
     }
-    if scatter_style != Some("lineMarker") {
+    if !matches!(scatter_style, Some("lineMarker" | "smoothMarker")) {
         return Err(Error::Reverse(format!(
-            "chart part `{part}` has unsupported scatter style; use straight lines, or add matching scatter style support"
+            "chart part `{part}` has unsupported scatter style; use lineMarker or smoothMarker"
         )));
     }
-    let marker_overrides = series.iter().filter(|item| item.marker_seen).count();
+    let smooth_overrides = series.iter().filter(|item| item.smooth.is_some()).count();
+    if smooth_overrides != 0 && smooth_overrides != series.len() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has mixed per-series smoothing; use the same smoothing mode for every series"
+        )));
+    }
+    let smooth_enabled = series
+        .iter()
+        .filter(|item| item.smooth == Some(true))
+        .count();
+    if smooth_enabled != 0 && smooth_enabled != series.len() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has mixed per-series smoothing; use the same smoothing mode for every series"
+        )));
+    }
+    if scatter_style == Some("smoothMarker")
+        && smooth_overrides == series.len()
+        && smooth_enabled == 0
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` scatter style requests smooth lines but every series disables smoothing; align scatterStyle and series smooth settings"
+        )));
+    }
+    let marker_overrides = series.iter().filter(|item| item.marker.is_some()).count();
     if marker_overrides != 0 && marker_overrides != series.len() {
         return Err(Error::Reverse(format!(
             "chart part `{part}` has mixed scatter marker overrides; use the same marker behavior for every series"
         )));
     }
-    if series
-        .iter()
-        .any(|item| item.marker_seen && !item.marker_none)
-    {
+    if series.iter().any(|item| item.marker == Some(true)) {
         return Err(Error::Reverse(format!(
             "chart part `{part}` has unsupported visible scatter marker overrides; remove per-series markers or add marker style support"
         )));
     }
-    if marker_overrides == series.len() {
-        Ok("scatterWithLines")
-    } else {
-        Ok("scatterWithLinesAndMarkers")
+    let smooth = scatter_style == Some("smoothMarker") || smooth_enabled > 0;
+    match (smooth, marker_overrides == series.len()) {
+        (false, true) => Ok("scatterWithLines"),
+        (false, false) => Ok("scatterWithLinesAndMarkers"),
+        (true, true) => Ok("scatterWithSmoothLines"),
+        (true, false) => Ok("scatterWithSmoothLinesAndMarkers"),
     }
 }
 
@@ -7354,7 +7404,10 @@ fn audit_chart_attributes(
                 chart_type == Some("radar")
                     && matches!(value.as_str(), "standard" | "marker" | "filled")
             }
-            ("scatterStyle", "val") => chart_type == Some("scatter") && value == "lineMarker",
+            ("scatterStyle", "val") => {
+                chart_type == Some("scatter")
+                    && matches!(value.as_str(), "lineMarker" | "smoothMarker")
+            }
             ("grouping", "val") => match chart_type {
                 Some("area") => {
                     matches!(value.as_str(), "standard" | "stacked" | "percentStacked")
@@ -7388,6 +7441,7 @@ fn audit_chart_attributes(
             ("crosses", "val") => value == "autoZero",
             ("auto" | "plotVisOnly" | "marker" | "varyColors", "val")
             | ("numFmt", "sourceLinked") => value == "1",
+            ("smooth", "val") => matches!(value.as_str(), "0" | "1" | "false" | "true"),
             ("symbol", "val") => value == "none",
             ("lblAlgn", "val") => value == "ctr",
             ("lblOffset", "val") => value == "100",
@@ -9939,8 +9993,8 @@ struct WorksheetChartSeries {
     categories: Option<String>,
     name: Option<String>,
     title: Option<String>,
-    marker_seen: bool,
-    marker_none: bool,
+    marker: Option<bool>,
+    smooth: Option<bool>,
 }
 
 #[derive(Clone)]

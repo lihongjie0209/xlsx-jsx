@@ -1868,6 +1868,8 @@ fn is_supported_chart_type(chart_type: &str) -> bool {
             | "radarFilled"
             | "scatterWithLines"
             | "scatterWithLinesAndMarkers"
+            | "scatterWithSmoothLines"
+            | "scatterWithSmoothLinesAndMarkers"
             | "pie"
             | "doughnut"
     )
@@ -2181,20 +2183,15 @@ fn validate_scatter_series_ranges(
             series_index + 1
         ))
     })?;
-    let value_range = values
+    let value_count = values
         .split_once('!')
-        .and_then(|(_, range)| parse_a1_range(range));
-    let category_range = categories
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length);
+    let category_count = categories
         .split_once('!')
-        .and_then(|(_, range)| parse_a1_range(range));
-    let ranges_match = value_range.zip(category_range).is_some_and(
-        |((vr0, vc0, vr1, vc1), (cr0, cc0, cr1, cc1))| {
-            (vr0 == vr1 || vc0 == vc1)
-                && (cr0 == cr1 || cc0 == cc1)
-                && vr1 - vr0 == cr1 - cr0
-                && vc1 - vc0 == cc1 - cc0
-        },
-    );
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length);
+    let ranges_match = value_count.zip(category_count).is_some_and(|(x, y)| x == y);
     if !ranges_match {
         return Err(Error::Compile(format!(
             "scatter Chart Series {} requires categories and values to be one-dimensional ranges with equal point counts; use matching X/Y ranges such as A2:A5 and B2:B5",
@@ -2202,6 +2199,14 @@ fn validate_scatter_series_ranges(
         )));
     }
     Ok(())
+}
+
+fn one_dimensional_range_length(range: (u32, u16, u32, u16)) -> Option<u32> {
+    let (first_row, first_column, last_row, last_column) = range;
+    if first_row != last_row && first_column != last_column {
+        return None;
+    }
+    Some((last_row - first_row) + u32::from(last_column - first_column) + 1)
 }
 
 fn valid_chart_source_reference(formula: &str, require_range: bool) -> bool {

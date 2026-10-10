@@ -135,7 +135,9 @@ fn spec_exposes_chart_components_and_properties() {
         .assert()
         .success()
         .stdout(predicate::str::contains("scatterWithLines"))
-        .stdout(predicate::str::contains("scatterWithLinesAndMarkers"));
+        .stdout(predicate::str::contains("scatterWithLinesAndMarkers"))
+        .stdout(predicate::str::contains("scatterWithSmoothLines"))
+        .stdout(predicate::str::contains("scatterWithSmoothLinesAndMarkers"));
 }
 
 #[test]
@@ -481,6 +483,12 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
             "{source}"
         );
     }
+    for chart_type in ["scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] {
+        assert!(
+            source.contains(&format!("<Chart type=\"{chart_type}\"")),
+            "{source}"
+        );
+    }
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -605,6 +613,23 @@ fn validates_scatter_series_require_equal_x_and_y_ranges() {
 }
 
 #[test]
+fn validates_scatter_ranges_allow_matching_horizontal_and_vertical_vectors() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-vectors.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatterWithLines" cell="D2"><Series values="Data!B2:D2" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .success();
+}
+
+#[test]
 fn validates_scatter_series_require_an_x_value_range() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("scatter.tsx");
@@ -652,11 +677,82 @@ fn reverse_rejects_mixed_scatter_marker_overrides_with_guidance() {
         .args(["reverse"])
         .arg(workbook)
         .args(["-o"])
-        .arg(reversed)
+        .arg(&reversed)
         .assert()
         .failure()
         .stderr(predicate::str::contains("mixed scatter marker overrides"))
         .stderr(predicate::str::contains("same marker behavior"));
+}
+
+#[test]
+fn reverse_rejects_mixed_scatter_smoothing_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("scatter-smooth.tsx");
+    let workbook = directory.path().join("scatter-smooth.xlsx");
+    let reversed = directory.path().join("scatter-smooth-reverse.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatterWithSmoothLines" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" title="One" /><Series values="Data!C2:C4" categories="Data!A2:A4" title="Two" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(source)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
+        xml.replacen("<c:smooth val=\"1\"/>", "", 1)
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mixed per-series smoothing"))
+        .stderr(predicate::str::contains("same smoothing mode"));
+}
+
+#[test]
+fn reverse_treats_scatter_smooth_elements_without_values_as_true() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("scatter-smooth.tsx");
+    let workbook = directory.path().join("scatter-smooth.xlsx");
+    let reversed = directory.path().join("scatter-smooth-reverse.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatterWithSmoothLines" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" title="One" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(source)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
+        xml.replace("<c:smooth val=\"1\"/>", "<c:smooth/>")
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let reversed_source = std::fs::read_to_string(reversed).expect("reverse output exists");
+    assert!(
+        reversed_source.contains("<Chart type=\"scatterWithSmoothLines\""),
+        "{reversed_source}"
+    );
 }
 
 fn assert_area_chart_groupings(archive: &mut ZipArchive<std::fs::File>) {
@@ -746,6 +842,8 @@ fn assert_scatter_styles(archive: &mut ZipArchive<std::fs::File>) {
     for (part, marker_none) in [
         ("xl/charts/chart18.xml", true),
         ("xl/charts/chart19.xml", false),
+        ("xl/charts/chart20.xml", true),
+        ("xl/charts/chart21.xml", false),
     ] {
         let mut chart_xml = String::new();
         archive
@@ -753,8 +851,15 @@ fn assert_scatter_styles(archive: &mut ZipArchive<std::fs::File>) {
             .expect("scatter chart part exists")
             .read_to_string(&mut chart_xml)
             .expect("scatter chart XML is readable");
+        let smooth = matches!(part, "xl/charts/chart20.xml" | "xl/charts/chart21.xml");
+        let expected_style = if smooth { "smoothMarker" } else { "lineMarker" };
         assert!(
-            chart_xml.contains("<c:scatterStyle val=\"lineMarker\""),
+            chart_xml.contains(&format!("<c:scatterStyle val=\"{expected_style}\"")),
+            "{chart_xml}"
+        );
+        assert_eq!(
+            chart_xml.contains("<c:smooth val=\"1\"/>"),
+            smooth,
             "{chart_xml}"
         );
         assert_eq!(

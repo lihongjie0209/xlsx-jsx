@@ -58,7 +58,8 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `columnStacked`, `columnPercentStacked`, `bar`, `barStacked`,
   `barPercentStacked`, `line`, `lineStacked`, `linePercentStacked`, `radar`,
   `radarWithMarkers`, `radarFilled`, `scatterWithLines`,
-  `scatterWithLinesAndMarkers`, `pie`, or `doughnut`.
+  `scatterWithLinesAndMarkers`, `scatterWithSmoothLines`,
+  `scatterWithSmoothLinesAndMarkers`, `pie`, or `doughnut`.
   The `*Stacked` and `*PercentStacked` variants map to the matching OOXML chart
   grouping; plain `area`, `column`, `bar`, and `line` use the writer's standard
   grouping (clustered for bar/column). Reverse reconstructs the DSL type from
@@ -72,11 +73,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   Y-value range (the cell contents should be numeric). Both must be explicit,
   sheet-qualified one-dimensional cell ranges of equal
   length. `scatterWithLines` connects points without markers; and
-  `scatterWithLinesAndMarkers` connects points and displays markers. Reverse
-  recognizes only these exact line/marker combinations; plain scatter, smooth
-  lines, mixed per-series marker settings, axis titles, and category-axis
-  scatter charts fail with
-  repair guidance.
+  `scatterWithLinesAndMarkers` connects points and displays markers.
+  `scatterWithSmoothLines` and `scatterWithSmoothLinesAndMarkers` use smoothed
+  connections, with markers absent/present respectively. Reverse infers the
+  line smoothing and marker mode from the scatter style, per-series smoothing,
+  and marker overrides. Plain scatter, mixed per-series settings, axis titles,
+  and category-axis scatter charts fail with repair guidance.
 - Pie and doughnut charts require exactly one `Series` and have no X/Y axes.
   `Chart.holeSize?: number` is valid only for `doughnut`, uses integer
   percentages from 10 through 90, and defaults to the writer's 50% hole. The
