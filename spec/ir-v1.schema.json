@@ -503,6 +503,10 @@
             "yAxisMax": { "type": "number" },
             "yAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
+            "horizontalAxisMajorGridlines": { "type": "boolean" },
+            "horizontalAxisMinorGridlines": { "type": "boolean" },
+            "verticalAxisMajorGridlines": { "type": "boolean" },
+            "verticalAxisMinorGridlines": { "type": "boolean" },
             "showLegend": { "type": "boolean" },
             "legendPosition": { "enum": ["right", "left", "top", "bottom", "topRight"] },
             "holeSize": { "type": "integer", "minimum": 10, "maximum": 90 },
@@ -530,7 +534,11 @@
                     { "required": ["yAxisMin"] },
                     { "required": ["yAxisMax"] },
                     { "required": ["yAxisMajorUnit"] },
-                    { "required": ["yAxisMinorUnit"] }
+                    { "required": ["yAxisMinorUnit"] },
+                    { "required": ["horizontalAxisMajorGridlines"] },
+                    { "required": ["horizontalAxisMinorGridlines"] },
+                    { "required": ["verticalAxisMajorGridlines"] },
+                    { "required": ["verticalAxisMinorGridlines"] }
                   ]
                 }
               }

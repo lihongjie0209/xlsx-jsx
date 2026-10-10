@@ -132,6 +132,10 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisMax"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
         .stdout(predicate::str::contains("yAxisMinorUnit"))
+        .stdout(predicate::str::contains("horizontalAxisMajorGridlines"))
+        .stdout(predicate::str::contains("horizontalAxisMinorGridlines"))
+        .stdout(predicate::str::contains("verticalAxisMajorGridlines"))
+        .stdout(predicate::str::contains("verticalAxisMinorGridlines"))
         .stdout(predicate::str::contains("legendPosition"))
         .stdout(predicate::str::contains("showLegend"))
         .stdout(predicate::str::contains("areaPercentStacked"))
@@ -865,6 +869,148 @@ fn reverse_rejects_category_axis_units_instead_of_dropping_them() {
             "majorUnit on a category/date axis",
         ))
         .stderr(predicate::str::contains("remove that interval"));
+}
+
+#[test]
+fn reverses_external_chart_gridline_visibility_and_writer_defaults() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-gridlines.xlsx");
+    let output_path = directory.path().join("external-chart-gridlines.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut column = XlsxChart::new(ChartType::Column);
+    column
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    column
+        .x_axis()
+        .set_major_gridlines(true)
+        .set_minor_gridlines(true);
+    column
+        .y_axis()
+        .set_major_gridlines(false)
+        .set_minor_gridlines(true);
+    worksheet.insert_chart(0, 5, &column).unwrap();
+    let mut bar = XlsxChart::new(ChartType::Bar);
+    bar.add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    bar.x_axis().set_major_gridlines(false);
+    bar.y_axis().set_major_gridlines(true);
+    worksheet.insert_chart(20, 5, &bar).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(
+        source.contains("horizontalAxisMajorGridlines={true}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("verticalAxisMajorGridlines={false}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("horizontalAxisMinorGridlines={true}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("verticalAxisMinorGridlines={true}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("horizontalAxisMajorGridlines={false}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("verticalAxisMajorGridlines={true}"),
+        "{source}"
+    );
+    let rebuilt_path = directory.path().join("rebuilt-chart-gridlines.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let first_chart = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(first_chart.contains("<c:majorGridlines/>"));
+    assert!(first_chart.contains("<c:minorGridlines/>"));
+    let second_chart = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    assert!(second_chart.contains("<c:majorGridlines/>"));
+}
+
+#[test]
+fn rejects_gridline_properties_for_pie_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("pie-gridlines.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="pie" cell="D2" horizontalAxisMajorGridlines={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "pie and doughnut Charts have no axes",
+        ))
+        .stderr(predicate::str::contains(
+            "remove horizontalAxisMajorGridlines",
+        ));
+}
+
+#[test]
+fn reverse_rejects_custom_gridline_formatting_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("gridline-format.tsx");
+    let workbook = directory.path().join("gridline-format.xlsx");
+    let reversed = directory.path().join("gridline-format-reverse.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
+        xml.replacen(
+            "<c:majorGridlines/>",
+            "<c:majorGridlines><c:spPr/></c:majorGridlines>",
+            1,
+        )
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("custom gridline formatting"))
+        .stderr(predicate::str::contains(
+            "preserve only gridline visibility",
+        ));
 }
 
 #[test]

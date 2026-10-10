@@ -136,6 +136,17 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   automatic interval. These properties are not valid for scatter, pie, or
   doughnut charts. Reverse preserves `<valAx><majorUnit>/<minorUnit>` values and
   rejects intervals on category/date axes instead of dropping them.
+- `Chart.horizontalAxisMajorGridlines?: boolean`,
+  `Chart.horizontalAxisMinorGridlines?: boolean`,
+  `Chart.verticalAxisMajorGridlines?: boolean`, and
+  `Chart.verticalAxisMinorGridlines?: boolean` control primary axis gridline
+  visibility. Horizontal/vertical refer to OOXML axis position (`b`/`l`), so they
+  retain their meaning for bars and scatter charts. Major-gridline defaults are
+  chart-specific (horizontal for bar/radar, vertical for area/column/line/radar/
+  scatter/stock); minor gridlines default off. Reverse preserves visibility and
+  rejects custom gridline line formatting or secondary-axis gridlines because
+  those are not represented by these properties. Pie/doughnut charts have no
+  axes and reject all four properties.
 - `Chart.showLegend?: boolean` defaults to `true`; `Chart.legendPosition?:
   "right" | "left" | "top" | "bottom" | "topRight"` defaults to `"right"`.
   `legendPosition` cannot be combined with `showLegend={false}` because the

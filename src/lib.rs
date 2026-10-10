@@ -1896,6 +1896,10 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisMax",
             "yAxisMajorUnit",
             "yAxisMinorUnit",
+            "horizontalAxisMajorGridlines",
+            "horizontalAxisMinorGridlines",
+            "verticalAxisMajorGridlines",
+            "verticalAxisMinorGridlines",
             "showLegend",
             "legendPosition",
             "holeSize",
@@ -1992,6 +1996,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_number_formats(chart, chart_type)?;
     validate_chart_axis_bounds(chart, chart_type)?;
     validate_chart_axis_units(chart, chart_type)?;
+    validate_chart_gridlines(chart, chart_type)?;
     validate_chart_legend(chart)
 }
 
@@ -2110,6 +2115,36 @@ fn validate_chart_axis_units(chart: &Node, chart_type: &str) -> Result<()> {
         {
             return Err(Error::Compile(format!(
                 "Chart.{property} must be finite and greater than zero; provide a positive numeric interval or omit it for automatic intervals"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_gridlines(chart: &Node, chart_type: &str) -> Result<()> {
+    let properties = [
+        "horizontalAxisMajorGridlines",
+        "horizontalAxisMinorGridlines",
+        "verticalAxisMajorGridlines",
+        "verticalAxisMinorGridlines",
+    ];
+    if matches!(chart_type, "pie" | "doughnut")
+        && properties
+            .iter()
+            .any(|property| chart.props.contains_key(*property))
+    {
+        return Err(Error::Compile(
+            "pie and doughnut Charts have no axes; remove horizontalAxisMajorGridlines, horizontalAxisMinorGridlines, verticalAxisMajorGridlines, and verticalAxisMinorGridlines or use a chart type with axes".into(),
+        ));
+    }
+    for property in properties {
+        if chart
+            .props
+            .get(property)
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be a boolean; use true/false or omit it to keep the chart-type default"
             )));
         }
     }

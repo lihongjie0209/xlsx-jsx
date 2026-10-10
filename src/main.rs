@@ -739,6 +739,7 @@ fn compile_chart(
     configure_chart_axis_number_formats(&mut chart, component);
     configure_chart_axis_bounds(&mut chart, component);
     configure_chart_axis_units(&mut chart, component);
+    configure_chart_gridlines(&mut chart, component);
     if component.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
         chart.legend().set_hidden();
     }
@@ -853,6 +854,25 @@ fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
         .and_then(Value::as_f64)
     {
         value_axis.set_minor_unit(unit);
+    }
+}
+
+fn configure_chart_gridlines(chart: &mut Chart, component: &Node) {
+    for (property, axis, minor) in [
+        ("horizontalAxisMajorGridlines", true, false),
+        ("horizontalAxisMinorGridlines", true, true),
+        ("verticalAxisMajorGridlines", false, false),
+        ("verticalAxisMinorGridlines", false, true),
+    ] {
+        let Some(visible) = component.props.get(property).and_then(Value::as_bool) else {
+            continue;
+        };
+        let chart_axis = if axis { chart.x_axis() } else { chart.y_axis() };
+        if minor {
+            chart_axis.set_minor_gridlines(visible);
+        } else {
+            chart_axis.set_major_gridlines(visible);
+        }
     }
 }
 
@@ -3592,7 +3612,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -3608,42 +3628,7 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .as_ref()
             .map(|value| format!(" title={{{value:?}}}"))
             .unwrap_or_default(),
-        chart
-            .x_axis_title
-            .as_ref()
-            .map(|value| format!(" xAxisTitle={{{value:?}}}"))
-            .unwrap_or_default(),
-        chart
-            .y_axis_title
-            .as_ref()
-            .map(|value| format!(" yAxisTitle={{{value:?}}}"))
-            .unwrap_or_default(),
-        chart
-            .x_axis_number_format
-            .as_ref()
-            .map(|value| format!(" xAxisNumberFormat={{{value:?}}}"))
-            .unwrap_or_default(),
-        chart
-            .y_axis_number_format
-            .as_ref()
-            .map(|value| format!(" yAxisNumberFormat={{{value:?}}}"))
-            .unwrap_or_default(),
-        chart
-            .y_axis_min
-            .map(|value| format!(" yAxisMin={{{value}}}"))
-            .unwrap_or_default(),
-        chart
-            .y_axis_max
-            .map(|value| format!(" yAxisMax={{{value}}}"))
-            .unwrap_or_default(),
-        chart
-            .y_axis_major_unit
-            .map(|value| format!(" yAxisMajorUnit={{{value}}}"))
-            .unwrap_or_default(),
-        chart
-            .y_axis_minor_unit
-            .map(|value| format!(" yAxisMinorUnit={{{value}}}"))
-            .unwrap_or_default(),
+        render_chart_axis_properties(chart),
         if chart.show_legend {
             ""
         } else {
@@ -3677,6 +3662,85 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
+}
+
+fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
+    let mut properties = String::new();
+    for (name, value) in [
+        (
+            "xAxisTitle",
+            chart
+                .x_axis_title
+                .as_ref()
+                .map(|value| format!("{{{value:?}}}")),
+        ),
+        (
+            "yAxisTitle",
+            chart
+                .y_axis_title
+                .as_ref()
+                .map(|value| format!("{{{value:?}}}")),
+        ),
+        (
+            "xAxisNumberFormat",
+            chart
+                .x_axis_number_format
+                .as_ref()
+                .map(|value| format!("{{{value:?}}}")),
+        ),
+        (
+            "yAxisNumberFormat",
+            chart
+                .y_axis_number_format
+                .as_ref()
+                .map(|value| format!("{{{value:?}}}")),
+        ),
+        (
+            "yAxisMin",
+            chart.y_axis_min.map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "yAxisMax",
+            chart.y_axis_max.map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "yAxisMajorUnit",
+            chart.y_axis_major_unit.map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "yAxisMinorUnit",
+            chart.y_axis_minor_unit.map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "horizontalAxisMajorGridlines",
+            chart
+                .horizontal_axis_major_gridlines
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "horizontalAxisMinorGridlines",
+            chart
+                .horizontal_axis_minor_gridlines
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "verticalAxisMajorGridlines",
+            chart
+                .vertical_axis_major_gridlines
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "verticalAxisMinorGridlines",
+            chart
+                .vertical_axis_minor_gridlines
+                .map(|value| format!("{{{value}}}")),
+        ),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}={value}");
+        }
+    }
+    properties
 }
 
 fn render_image(output: &mut String, image: &WorksheetImage) {
@@ -6361,6 +6425,7 @@ fn parse_chart_xml(
         "majorTickMark",
         "valAx",
         "majorGridlines",
+        "minorGridlines",
         "numFmt",
         "legend",
         "legendPos",
@@ -6411,6 +6476,15 @@ fn parse_chart_xml(
     let mut y_axis_minor_unit = None;
     let mut y_axis_major_unit_seen = false;
     let mut y_axis_minor_unit_seen = false;
+    let mut current_axis_position: Option<&'static str> = None;
+    let mut horizontal_major_gridlines = false;
+    let mut vertical_major_gridlines = false;
+    let mut horizontal_minor_gridlines = false;
+    let mut vertical_minor_gridlines = false;
+    let mut horizontal_major_gridlines_seen = false;
+    let mut vertical_major_gridlines_seen = false;
+    let mut horizontal_minor_gridlines_seen = false;
+    let mut vertical_minor_gridlines_seen = false;
     let mut legend_seen = false;
     let mut legend_deleted = false;
     let mut legend_position: Option<&'static str> = None;
@@ -6434,6 +6508,14 @@ fn parse_chart_xml(
                     unreachable!()
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if stack.iter().any(|ancestor| {
+                    matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
+                }) {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has custom gridline formatting inside `<{}>`; remove line styling or preserve only gridline visibility",
+                        stack.last().map_or("gridlines", String::as_str)
+                    )));
+                }
                 if stack.iter().any(|ancestor| ancestor == "title")
                     && ![
                         "tx",
@@ -6462,6 +6544,68 @@ fn parse_chart_xml(
                 }
                 audit_chart_attributes(&event, &tag, part, reader.decoder(), chart_type)?;
                 match tag.as_str() {
+                    "catAx" | "dateAx" | "valAx" => current_axis_position = None,
+                    "axPos" => {
+                        current_axis_position = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(|value| match value.as_ref() {
+                                        "b" => "b",
+                                        "l" => "l",
+                                        _ => "unsupported",
+                                    })
+                            });
+                    }
+                    "majorGridlines" | "minorGridlines" => {
+                        if !stack.iter().any(|ancestor| {
+                            matches!(ancestor.as_str(), "catAx" | "dateAx" | "valAx")
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} outside a primary chart axis; repair the axis structure"
+                            )));
+                        }
+                        let Some(position @ ("b" | "l")) = current_axis_position else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} on an axis without a supported axPos; use bottom (b) or left (l) axis positions"
+                            )));
+                        };
+                        let is_major = tag == "majorGridlines";
+                        let (seen, visible) = match (position, is_major) {
+                            ("b", true) => (
+                                &mut horizontal_major_gridlines_seen,
+                                &mut horizontal_major_gridlines,
+                            ),
+                            ("b", false) => (
+                                &mut horizontal_minor_gridlines_seen,
+                                &mut horizontal_minor_gridlines,
+                            ),
+                            ("l", true) => (
+                                &mut vertical_major_gridlines_seen,
+                                &mut vertical_major_gridlines,
+                            ),
+                            ("l", false) => (
+                                &mut vertical_minor_gridlines_seen,
+                                &mut vertical_minor_gridlines,
+                            ),
+                            _ => unreachable!("axis position was validated"),
+                        };
+                        if *seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats {tag} for its {position} axis; keep only one gridline declaration per axis"
+                            )));
+                        }
+                        *seen = true;
+                        *visible = true;
+                    }
                     "legend" => {
                         if legend_seen {
                             return Err(Error::Reverse(format!(
@@ -7353,6 +7497,14 @@ fn parse_chart_xml(
         y_axis_max,
         y_axis_major_unit,
         y_axis_minor_unit,
+        horizontal_axis_major_gridlines: (horizontal_major_gridlines
+            != default_chart_major_gridlines(chart_type, true))
+        .then_some(horizontal_major_gridlines),
+        horizontal_axis_minor_gridlines: horizontal_minor_gridlines.then_some(true),
+        vertical_axis_major_gridlines: (vertical_major_gridlines
+            != default_chart_major_gridlines(chart_type, false))
+        .then_some(vertical_major_gridlines),
+        vertical_axis_minor_gridlines: vertical_minor_gridlines.then_some(true),
         show_legend,
         legend_position: legend_position.filter(|position| *position != "right"),
         hole_size: hole_size.filter(|size| *size != 50),
@@ -7360,6 +7512,42 @@ fn parse_chart_xml(
         alt_text: anchor.alt_text,
         series,
     })
+}
+
+fn default_chart_major_gridlines(chart_type: &str, horizontal_axis: bool) -> bool {
+    if horizontal_axis {
+        matches!(
+            chart_type,
+            "bar"
+                | "barStacked"
+                | "barPercentStacked"
+                | "radar"
+                | "radarWithMarkers"
+                | "radarFilled"
+        )
+    } else {
+        matches!(
+            chart_type,
+            "area"
+                | "areaStacked"
+                | "areaPercentStacked"
+                | "column"
+                | "columnStacked"
+                | "columnPercentStacked"
+                | "line"
+                | "lineStacked"
+                | "linePercentStacked"
+                | "radar"
+                | "radarWithMarkers"
+                | "radarFilled"
+                | "scatter"
+                | "scatterWithLines"
+                | "scatterWithLinesAndMarkers"
+                | "scatterWithSmoothLines"
+                | "scatterWithSmoothLinesAndMarkers"
+                | "stock"
+        )
+    }
 }
 
 fn parse_drawing_image(
@@ -10447,6 +10635,10 @@ struct WorksheetChart {
     y_axis_max: Option<f64>,
     y_axis_major_unit: Option<f64>,
     y_axis_minor_unit: Option<f64>,
+    horizontal_axis_major_gridlines: Option<bool>,
+    horizontal_axis_minor_gridlines: Option<bool>,
+    vertical_axis_major_gridlines: Option<bool>,
+    vertical_axis_minor_gridlines: Option<bool>,
     show_legend: bool,
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,
