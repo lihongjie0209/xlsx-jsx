@@ -1864,6 +1864,7 @@ fn is_supported_chart_type(chart_type: &str) -> bool {
             | "lineStacked"
             | "linePercentStacked"
             | "pie"
+            | "doughnut"
     )
 }
 
@@ -1882,6 +1883,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisTitle",
             "showLegend",
             "legendPosition",
+            "holeSize",
         ],
         "Chart",
     )?;
@@ -1891,24 +1893,25 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         .and_then(Value::as_str)
         .ok_or_else(|| {
             Error::Compile(format!(
-                "Chart at declaration {} requires a supported chart type such as area, areaStacked, column, bar, line, or pie",
+                "Chart at declaration {} requires a supported chart type such as area, column, bar, line, pie, or doughnut",
                 index + 1
             ))
         })?;
     if !is_supported_chart_type(chart_type) {
         return Err(Error::Compile(format!(
-            "Chart.type `{chart_type}` is unsupported; use area, areaStacked, areaPercentStacked, column, bar, line, or pie"
+            "Chart.type `{chart_type}` is unsupported; use area, column, bar, line, pie, or doughnut"
         )));
     }
-    if chart_type == "pie"
+    if matches!(chart_type, "pie" | "doughnut")
         && ["xAxisTitle", "yAxisTitle"]
             .iter()
             .any(|property| chart.props.contains_key(*property))
     {
         return Err(Error::Compile(
-            "pie Chart has no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
+            "pie and doughnut Charts have no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
         ));
     }
+    validate_doughnut_hole_size(chart, chart_type)?;
     validate_chart_legend(chart)?;
     let cell = chart
         .props
@@ -1959,10 +1962,29 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         }
     }
     validate_chart_series(chart)?;
-    if chart_type == "pie" && chart.children.len() != 1 {
+    if matches!(chart_type, "pie" | "doughnut") && chart.children.len() != 1 {
         return Err(Error::Compile(
-            "pie Chart accepts exactly one Series; split the data into separate charts or choose column, bar, or line".into(),
+            "pie and doughnut Charts accept exactly one Series; split the data into separate charts or choose area, column, bar, or line".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_doughnut_hole_size(chart: &Node, chart_type: &str) -> Result<()> {
+    if let Some(value) = chart.props.get("holeSize") {
+        if chart_type != "doughnut" {
+            return Err(Error::Compile(
+                "Chart.holeSize is only valid for a doughnut chart; set type=\"doughnut\" or remove holeSize".into(),
+            ));
+        }
+        if !value
+            .as_u64()
+            .is_some_and(|value| (10..=90).contains(&value))
+        {
+            return Err(Error::Compile(
+                "Chart.holeSize must be an integer from 10 through 90 percent; use a schema-valid hole size".into(),
+            ));
+        }
     }
     Ok(())
 }

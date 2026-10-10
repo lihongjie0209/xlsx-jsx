@@ -125,7 +125,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisTitle"))
         .stdout(predicate::str::contains("legendPosition"))
         .stdout(predicate::str::contains("showLegend"))
-        .stdout(predicate::str::contains("areaPercentStacked"));
+        .stdout(predicate::str::contains("areaPercentStacked"))
+        .stdout(predicate::str::contains("holeSize"));
 }
 
 #[test]
@@ -456,6 +457,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
             "{source}"
         );
     }
+    assert!(source.contains("<Chart type=\"doughnut\""), "{source}");
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -466,6 +468,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         "{source}"
     );
     assert_area_chart_groupings(&mut archive);
+    assert_doughnut_hole_size(&mut archive);
 
     let rebuilt = directory.path().join("charts-roundtrip.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -490,6 +493,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
             .any(|name| name == "xl/charts/chart4.xml")
     );
     assert_area_chart_groupings(&mut rebuilt_archive);
+    assert_doughnut_hole_size(&mut rebuilt_archive);
     drop(rebuilt_archive);
     let twice_reversed = directory.path().join("charts-roundtrip.tsx");
     Command::cargo_bin("xlsx-jsx")
@@ -532,6 +536,10 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         );
     }
     assert!(
+        second_source.contains("<Chart type=\"doughnut\""),
+        "{second_source}"
+    );
+    assert!(
         second_source.contains("values={\"Data!$C$2:$C$4\"}"),
         "{second_source}"
     );
@@ -566,6 +574,16 @@ fn assert_area_chart_groupings(archive: &mut ZipArchive<std::fs::File>) {
             assert!(chart_xml.contains("<c:overlap val=\"100\""), "{chart_xml}");
         }
     }
+}
+
+fn assert_doughnut_hole_size(archive: &mut ZipArchive<std::fs::File>) {
+    let mut chart_xml = String::new();
+    archive
+        .by_name("xl/charts/chart14.xml")
+        .expect("doughnut chart part exists")
+        .read_to_string(&mut chart_xml)
+        .expect("doughnut chart XML is readable");
+    assert!(chart_xml.contains("<c:holeSize val=\"65\""), "{chart_xml}");
 }
 
 fn assert_chart_title_round_trip(source: &str) {
@@ -615,7 +633,9 @@ fn rejects_axis_titles_on_pie_charts_with_repair_guidance() {
         .arg(input)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("pie Chart has no X/Y axes"))
+        .stderr(predicate::str::contains(
+            "pie and doughnut Charts have no X/Y axes",
+        ))
         .stderr(predicate::str::contains("remove xAxisTitle and yAxisTitle"));
 }
 
@@ -659,6 +679,55 @@ fn validates_chart_legend_position_with_supported_values() {
         .stderr(predicate::str::contains(
             "right, left, top, bottom, or topRight",
         ));
+}
+
+#[test]
+fn validates_doughnut_hole_size_bounds_and_chart_type() {
+    let directory = tempdir().expect("temporary directory is available");
+    let out_of_range = directory.path().join("doughnut-hole-out-of-range.tsx");
+    std::fs::write(
+        &out_of_range,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="doughnut" cell="D2" holeSize={91}><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid DSL writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&out_of_range)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("holeSize must be an integer"))
+        .stderr(predicate::str::contains("10 through 90 percent"));
+
+    let schema_invalid_zero = directory.path().join("doughnut-hole-zero.tsx");
+    std::fs::write(
+        &schema_invalid_zero,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="doughnut" cell="D2" holeSize={0}><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("schema-invalid setter value fixture writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&schema_invalid_zero)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("holeSize must be an integer"))
+        .stderr(predicate::str::contains("10 through 90 percent"));
+
+    let wrong_type = directory.path().join("hole-size-on-column.tsx");
+    std::fs::write(
+        &wrong_type,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" holeSize={50}><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("invalid DSL writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&wrong_type)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("only valid for a doughnut chart"))
+        .stderr(predicate::str::contains("type=\"doughnut\""));
 }
 
 #[test]
@@ -774,6 +843,53 @@ fn reverse_rejects_unknown_chart_grouping_with_repair_guidance() {
             "unsupported `grouping@val=sideways`",
         ))
         .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn reverse_preserves_the_ooxml_default_doughnut_hole_size() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("default-hole-doughnut.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart14.xml", |xml| {
+        xml.replace("<c:holeSize val=\"65\"/>", "")
+    });
+    let reversed = directory.path().join("default-hole-doughnut.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(
+        source.contains("<Chart type=\"doughnut\"") && source.contains("holeSize={10}"),
+        "{source}"
+    );
+    let rebuilt = directory.path().join("default-hole-doughnut-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let mut archive = ZipArchive::new(std::fs::File::open(rebuilt).expect("rebuilt exists"))
+        .expect("rebuilt XLSX is a ZIP package");
+    let mut chart_xml = String::new();
+    archive
+        .by_name("xl/charts/chart14.xml")
+        .expect("doughnut chart part exists")
+        .read_to_string(&mut chart_xml)
+        .expect("doughnut chart XML is readable");
+    assert!(chart_xml.contains("<c:holeSize val=\"10\""), "{chart_xml}");
 }
 
 #[test]

@@ -712,6 +712,7 @@ fn compile_chart(
         "lineStacked" => ChartType::LineStacked,
         "linePercentStacked" => ChartType::LinePercentStacked,
         "pie" => ChartType::Pie,
+        "doughnut" => ChartType::Doughnut,
         _ => unreachable!("validated Chart.type"),
     };
     let cell = component.props["cell"]
@@ -719,6 +720,9 @@ fn compile_chart(
         .expect("validated Chart.cell");
     let (row, column) = parse_a1_cell_reference(cell).expect("validated Chart.cell");
     let mut chart = Chart::new(chart_type);
+    if let Some(hole_size) = component.props.get("holeSize").and_then(Value::as_u64) {
+        chart.set_hole_size(u8::try_from(hole_size).expect("validated Chart.holeSize"));
+    }
     if let Some(name) = component.props.get("name").and_then(Value::as_str) {
         chart.set_name(name);
     }
@@ -3490,7 +3494,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -3524,6 +3528,10 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         chart
             .legend_position
             .map(|value| format!(" legendPosition=\"{value}\""))
+            .unwrap_or_default(),
+        chart
+            .hole_size
+            .map(|value| format!(" holeSize={{{value}}}"))
             .unwrap_or_default()
     );
     for series in &chart.series {
@@ -6217,6 +6225,7 @@ fn parse_chart_xml(
         "pageMargins",
         "pageSetup",
         "doughnutChart",
+        "holeSize",
         "plotVisOnly",
         "marker",
         "symbol",
@@ -6241,6 +6250,8 @@ fn parse_chart_xml(
     let mut legend_seen = false;
     let mut legend_deleted = false;
     let mut legend_position: Option<&'static str> = None;
+    let mut hole_size = None;
+    let mut hole_size_seen = false;
     let mut chart_title_text = String::new();
     let mut title_paragraphs = 0_usize;
     let mut title_runs = 0_usize;
@@ -6406,9 +6417,28 @@ fn parse_chart_xml(
                         }
                     }
                     "doughnutChart" => {
-                        return Err(Error::Reverse(format!(
-                            "chart part `{part}` uses doughnutChart, which is not represented by Chart.type; use pie or extend the DSL"
-                        )));
+                        chart_type = Some(set_chart_type(chart_type, "doughnut", part)?);
+                    }
+                    "holeSize" => {
+                        if hole_size_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats holeSize; retain one doughnut hole size"
+                            )));
+                        }
+                        hole_size_seen = true;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                hole_size = value.parse::<u8>().ok();
+                            }
+                        }
                     }
                     "ser" => series.push(WorksheetChartSeries {
                         values: String::new(),
@@ -6639,7 +6669,7 @@ fn parse_chart_xml(
     }
     let chart_type = chart_type.ok_or_else(|| {
         Error::Reverse(format!(
-            "chart part `{part}` has no supported chart type; use an area, column, bar, line, or pie chart"
+            "chart part `{part}` has no supported chart type; use an area, column, bar, line, pie, or doughnut chart"
         ))
     })?;
     if series.is_empty() {
@@ -6647,16 +6677,27 @@ fn parse_chart_xml(
             "chart part `{part}` contains no data series; add at least one series"
         )));
     }
-    if chart_type == "pie" && series.len() != 1 {
+    if matches!(chart_type, "pie" | "doughnut") && series.len() != 1 {
         return Err(Error::Reverse(format!(
-            "chart part `{part}` has {} series in a pie chart; use exactly one data series or split it into separate charts",
+            "chart part `{part}` has {} series in a pie or doughnut chart; use exactly one data series or split it into separate charts",
             series.len()
         )));
     }
-    if chart_type == "pie" && (x_axis_title.is_some() || y_axis_title.is_some()) {
+    if matches!(chart_type, "pie" | "doughnut")
+        && (x_axis_title.is_some() || y_axis_title.is_some())
+    {
         return Err(Error::Reverse(format!(
-            "chart part `{part}` is a pie chart with axis titles; remove the titles or use a chart type with X/Y axes"
+            "chart part `{part}` is a pie or doughnut chart with axis titles; remove the titles or use a chart type with X/Y axes"
         )));
+    }
+    if chart_type == "doughnut" && hole_size_seen && hole_size.is_none() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a doughnut holeSize without a valid value; set val to an integer from 10 through 90"
+        )));
+    }
+    if chart_type == "doughnut" && hole_size.is_none() {
+        // OOXML's absent holeSize default is 10; the pinned writer emits 50.
+        hole_size = Some(10);
     }
     let show_legend = legend_seen && !legend_deleted;
     if !show_legend && legend_position.is_some_and(|position| position != "right") {
@@ -6697,6 +6738,7 @@ fn parse_chart_xml(
         y_axis_title,
         show_legend,
         legend_position: legend_position.filter(|position| *position != "right"),
+        hole_size: hole_size.filter(|size| *size != 50),
         alt_text: anchor.alt_text,
         series,
     })
@@ -7102,6 +7144,12 @@ fn audit_chart_attributes(
                     || (chart_type.is_some_and(is_percent_stacked_chart_type) && value == "0%")
             }
             ("legendPos", "val") => matches!(value.as_str(), "r" | "l" | "t" | "b" | "tr"),
+            ("holeSize", "val") => {
+                chart_type == Some("doughnut")
+                    && value
+                        .parse::<u8>()
+                        .is_ok_and(|size| (10..=90).contains(&size))
+            }
             ("firstSliceAng", "val") | ("pPr", "rtl") => value == "0",
             ("pageMargins", "b" | "t") => value == "0.75",
             ("pageMargins", "l" | "r") => value == "0.7",
@@ -9604,6 +9652,7 @@ struct WorksheetChart {
     y_axis_title: Option<String>,
     show_legend: bool,
     legend_position: Option<&'static str>,
+    hole_size: Option<u8>,
     alt_text: Option<String>,
     series: Vec<WorksheetChartSeries>,
 }

@@ -56,12 +56,19 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 
 - `type` is one of `area`, `areaStacked`, `areaPercentStacked`, `column`,
   `columnStacked`, `columnPercentStacked`, `bar`, `barStacked`,
-  `barPercentStacked`, `line`, `lineStacked`, `linePercentStacked`, or `pie`.
+  `barPercentStacked`, `line`, `lineStacked`, `linePercentStacked`, `pie`, or
+  `doughnut`.
   The `*Stacked` and `*PercentStacked` variants map to the matching OOXML chart
   grouping; plain `area`, `column`, `bar`, and `line` use the writer's standard
   grouping (clustered for bar/column). Reverse reconstructs the DSL type from
   the chart element, bar direction, and grouping; unknown groupings fail with
   repair guidance.
+- Pie and doughnut charts require exactly one `Series` and have no X/Y axes.
+  `Chart.holeSize?: number` is valid only for `doughnut`, uses integer
+  percentages from 10 through 90, and defaults to the writer's 50% hole. The
+  upstream setter accepts 0 but would serialize a schema-invalid value, so the
+  DSL excludes it. If an external doughnut omits `holeSize`, reverse emits the
+  OOXML default of 10 explicitly; unsupported slice rotation is rejected.
 - `cell` is an A1 cell anchor. `width` and `height` are positive integer pixels
   (1–1790); omission uses the writer defaults of 480×288 pixels. `Series` has
   required `values` and optional `categories` and `name` sheet-qualified A1

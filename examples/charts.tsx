@@ -56,5 +56,8 @@ export default <Workbook>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Line share" />
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Line expense share" />
     </Chart>
+    <Chart type="doughnut" cell="K110" width={480} height={288} holeSize={65}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue mix" />
+    </Chart>
   </Worksheet>
 </Workbook>;
