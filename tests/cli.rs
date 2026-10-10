@@ -2,7 +2,8 @@ use assert_cmd::Command;
 use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
-    Chart as XlsxChart, ChartLine, ChartMarker, ChartType, Workbook as XlsxWorkbook,
+    Chart as XlsxChart, ChartAxisTickType, ChartLine, ChartMarker, ChartType,
+    Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -134,6 +135,10 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("valueAxisReversed"))
         .stdout(predicate::str::contains("categoryAxisLabelInterval"))
         .stdout(predicate::str::contains("categoryAxisTickInterval"))
+        .stdout(predicate::str::contains("horizontalAxisMajorTickType"))
+        .stdout(predicate::str::contains("horizontalAxisMinorTickType"))
+        .stdout(predicate::str::contains("verticalAxisMajorTickType"))
+        .stdout(predicate::str::contains("verticalAxisMinorTickType"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
         .stdout(predicate::str::contains("yAxisMinorUnit"))
         .stdout(predicate::str::contains("horizontalAxisMajorGridlines"))
@@ -1014,6 +1019,110 @@ fn reverses_external_category_axis_intervals_without_a_manifest() {
             "{chart_xml}"
         );
     }
+}
+
+#[test]
+fn reverses_external_chart_axis_tick_types_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-tick-types.xlsx");
+    let output_path = directory.path().join("external-axis-tick-types.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .x_axis()
+        .set_major_tick_type(ChartAxisTickType::None)
+        .set_minor_tick_type(ChartAxisTickType::Inside);
+    chart
+        .y_axis()
+        .set_major_tick_type(ChartAxisTickType::Outside)
+        .set_minor_tick_type(ChartAxisTickType::Cross);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    for property in [
+        "horizontalAxisMajorTickType=\"none\"",
+        "horizontalAxisMinorTickType=\"inside\"",
+        "verticalAxisMajorTickType=\"outside\"",
+        "verticalAxisMinorTickType=\"cross\"",
+    ] {
+        assert!(source.contains(property), "missing {property} in {source}");
+    }
+    let rebuilt_path = directory.path().join("rebuilt-axis-tick-types.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    for tick in [
+        "<c:majorTickMark val=\"none\"/>",
+        "<c:minorTickMark val=\"in\"/>",
+        "<c:majorTickMark val=\"out\"/>",
+        "<c:minorTickMark val=\"cross\"/>",
+    ] {
+        assert!(chart_xml.contains(tick), "missing {tick} in {chart_xml}");
+    }
+}
+
+#[test]
+fn rejects_unknown_chart_axis_tick_type_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-axis-tick-type.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" verticalAxisMajorTickType="diagonal"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "verticalAxisMajorTickType must be cross, inside, outside, or none",
+        ))
+        .stderr(predicate::str::contains(
+            "remove the property or choose one of",
+        ));
+}
+
+#[test]
+fn rejects_chart_axis_tick_types_for_pie_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("pie-axis-tick-type.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="pie" cell="D2" horizontalAxisMajorTickType="none"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "horizontalAxisMajorTickType is not supported for pie or doughnut charts",
+        ))
+        .stderr(predicate::str::contains("omit it or use a chart with axes"));
 }
 
 #[test]

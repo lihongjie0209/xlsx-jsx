@@ -11,7 +11,7 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use rust_xlsxwriter::{
-    Chart, ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color,
+    Chart, ChartAxisTickType, ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color,
     ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
     ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
     ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
@@ -740,7 +740,7 @@ fn compile_chart(
     configure_chart_axis_bounds(&mut chart, component);
     configure_chart_axis_log_base(&mut chart, component);
     configure_chart_value_axis_reversed(&mut chart, component);
-    configure_chart_category_axis_intervals(&mut chart, component);
+    configure_chart_category_axis_settings(&mut chart, component)?;
     configure_chart_axis_units(&mut chart, component);
     configure_chart_gridlines(&mut chart, component);
     if component.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
@@ -900,6 +900,49 @@ fn configure_chart_category_axis_intervals(chart: &mut Chart, component: &Node) 
         category_axis
             .set_tick_interval(u16::try_from(interval).expect("validated category tick interval"));
     }
+}
+
+fn configure_chart_axis_tick_types(chart: &mut Chart, component: &Node) -> xlsx_jsx::Result<()> {
+    for (property, horizontal, major) in [
+        ("horizontalAxisMajorTickType", true, true),
+        ("horizontalAxisMinorTickType", true, false),
+        ("verticalAxisMajorTickType", false, true),
+        ("verticalAxisMinorTickType", false, false),
+    ] {
+        let Some(value) = component.props.get(property).and_then(Value::as_str) else {
+            continue;
+        };
+        let tick_type = match value {
+            "cross" => ChartAxisTickType::Cross,
+            "inside" => ChartAxisTickType::Inside,
+            "outside" => ChartAxisTickType::Outside,
+            "none" => ChartAxisTickType::None,
+            _ => {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} must be cross, inside, outside, or none; choose one of these tick types"
+                )));
+            }
+        };
+        let axis = if horizontal {
+            chart.x_axis()
+        } else {
+            chart.y_axis()
+        };
+        if major {
+            axis.set_major_tick_type(tick_type);
+        } else {
+            axis.set_minor_tick_type(tick_type);
+        }
+    }
+    Ok(())
+}
+
+fn configure_chart_category_axis_settings(
+    chart: &mut Chart,
+    component: &Node,
+) -> xlsx_jsx::Result<()> {
+    configure_chart_category_axis_intervals(chart, component);
+    configure_chart_axis_tick_types(chart, component)
 }
 
 fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
@@ -3834,7 +3877,33 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
             let _ = write!(properties, " {name}={value}");
         }
     }
+    append_chart_axis_tick_properties(&mut properties, chart);
     properties
+}
+
+fn append_chart_axis_tick_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (name, value) in [
+        (
+            "horizontalAxisMajorTickType",
+            chart.horizontal_axis_major_tick_type,
+        ),
+        (
+            "horizontalAxisMinorTickType",
+            chart.horizontal_axis_minor_tick_type,
+        ),
+        (
+            "verticalAxisMajorTickType",
+            chart.vertical_axis_major_tick_type,
+        ),
+        (
+            "verticalAxisMinorTickType",
+            chart.vertical_axis_minor_tick_type,
+        ),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}={value:?}");
+        }
+    }
 }
 
 fn render_image(output: &mut String, image: &WorksheetImage) {
@@ -6520,6 +6589,7 @@ fn parse_chart_xml(
         "lblOffset",
         "crossBetween",
         "majorTickMark",
+        "minorTickMark",
         "valAx",
         "majorGridlines",
         "minorGridlines",
@@ -6548,6 +6618,7 @@ fn parse_chart_xml(
     let mut reader = XmlReader::from_str(xml);
     let mut stack = Vec::<String>::new();
     let mut chart_type: Option<&'static str> = None;
+    let mut chart_axis_count = 0_u8;
     let mut chart_grouping_seen = false;
     let mut stock_high_low_lines = false;
     let mut stock_up_down_bars = false;
@@ -6591,6 +6662,14 @@ fn parse_chart_xml(
     let mut vertical_major_gridlines_seen = false;
     let mut horizontal_minor_gridlines_seen = false;
     let mut vertical_minor_gridlines_seen = false;
+    let mut horizontal_axis_major_tick_type: Option<&'static str> = None;
+    let mut horizontal_axis_minor_tick_type: Option<&'static str> = None;
+    let mut vertical_axis_major_tick_type: Option<&'static str> = None;
+    let mut vertical_axis_minor_tick_type: Option<&'static str> = None;
+    let mut horizontal_axis_major_tick_type_seen = false;
+    let mut horizontal_axis_minor_tick_type_seen = false;
+    let mut vertical_axis_major_tick_type_seen = false;
+    let mut vertical_axis_minor_tick_type_seen = false;
     let mut legend_seen = false;
     let mut legend_deleted = false;
     let mut legend_position: Option<&'static str> = None;
@@ -6650,7 +6729,15 @@ fn parse_chart_xml(
                 }
                 audit_chart_attributes(&event, &tag, part, reader.decoder(), chart_type)?;
                 match tag.as_str() {
-                    "catAx" | "dateAx" | "valAx" => current_axis_position = None,
+                    "catAx" | "dateAx" | "valAx" => {
+                        chart_axis_count += 1;
+                        if chart_axis_count > 2 {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has secondary or duplicate axes that this DSL cannot preserve; keep only the two primary axes"
+                            )));
+                        }
+                        current_axis_position = None;
+                    }
                     "axPos" => {
                         current_axis_position = event
                             .attributes()
@@ -6719,6 +6806,74 @@ fn parse_chart_xml(
                         }
                         *seen = true;
                         *visible = true;
+                    }
+                    "majorTickMark" | "minorTickMark" => {
+                        if !stack.iter().any(|ancestor| {
+                            matches!(ancestor.as_str(), "catAx" | "dateAx" | "valAx")
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} outside a primary chart axis; repair the axis structure"
+                            )));
+                        }
+                        let Some(position @ ("b" | "t" | "l" | "r")) = current_axis_position else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} on an axis without a supported axPos; repair the axis position"
+                            )));
+                        };
+                        let horizontal = matches!(position, "b" | "t");
+                        let is_major = tag == "majorTickMark";
+                        let raw_tick_type = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            });
+                        let Some(tick_type) =
+                            raw_tick_type.and_then(|value| match value.as_str() {
+                                "cross" => Some("cross"),
+                                "in" => Some("inside"),
+                                "out" => Some("outside"),
+                                "none" => Some("none"),
+                                _ => None,
+                            })
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an unsupported {tag}; use cross, in, out, or none"
+                            )));
+                        };
+                        let (seen, target) = match (horizontal, is_major) {
+                            (true, true) => (
+                                &mut horizontal_axis_major_tick_type_seen,
+                                &mut horizontal_axis_major_tick_type,
+                            ),
+                            (true, false) => (
+                                &mut horizontal_axis_minor_tick_type_seen,
+                                &mut horizontal_axis_minor_tick_type,
+                            ),
+                            (false, true) => (
+                                &mut vertical_axis_major_tick_type_seen,
+                                &mut vertical_axis_major_tick_type,
+                            ),
+                            (false, false) => (
+                                &mut vertical_axis_minor_tick_type_seen,
+                                &mut vertical_axis_minor_tick_type,
+                            ),
+                        };
+                        if *seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats {tag} for the same axis position; remove secondary-axis ticks or keep one declaration"
+                            )));
+                        }
+                        *seen = true;
+                        *target = Some(tick_type);
                     }
                     "legend" => {
                         if legend_seen {
@@ -7778,6 +7933,10 @@ fn parse_chart_xml(
         category_axis_label_interval: category_axis_label_interval
             .filter(|interval| *interval != 1),
         category_axis_tick_interval: category_axis_tick_interval.filter(|interval| *interval != 1),
+        horizontal_axis_major_tick_type,
+        horizontal_axis_minor_tick_type,
+        vertical_axis_major_tick_type,
+        vertical_axis_minor_tick_type,
         y_axis_major_unit,
         y_axis_minor_unit,
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
@@ -8392,7 +8551,9 @@ fn is_supported_chart_attribute(
         }
         ("axPos", "val") => matches!(value, "b" | "l" | "t" | "r"),
         ("tickLblPos", "val") => value == "nextTo",
-        ("majorTickMark", "val") => value == "cross",
+        ("majorTickMark" | "minorTickMark", "val") => {
+            matches!(value, "cross" | "in" | "out" | "none")
+        }
         ("crosses", "val") => value == "autoZero",
         ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
         ("numFmt", "sourceLinked") => {
@@ -10932,6 +11093,10 @@ struct WorksheetChart {
     horizontal_axis_minor_gridlines: Option<bool>,
     vertical_axis_major_gridlines: Option<bool>,
     vertical_axis_minor_gridlines: Option<bool>,
+    horizontal_axis_major_tick_type: Option<&'static str>,
+    horizontal_axis_minor_tick_type: Option<&'static str>,
+    vertical_axis_major_tick_type: Option<&'static str>,
+    vertical_axis_minor_tick_type: Option<&'static str>,
     show_legend: bool,
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,

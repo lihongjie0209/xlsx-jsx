@@ -158,6 +158,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   absent. Reverse preserves `tickLblSkip` and `tickMarkSkip` only on a primary
   category/date axis, omits the semantically default value `1`, and rejects
   invalid values or skips on value axes.
+- `Chart.horizontalAxisMajorTickType?: "cross" | "inside" | "outside" | "none"`,
+  `Chart.horizontalAxisMinorTickType?: "cross" | "inside" | "outside" | "none"`,
+  `Chart.verticalAxisMajorTickType?: "cross" | "inside" | "outside" | "none"`,
+  and `Chart.verticalAxisMinorTickType?: "cross" | "inside" | "outside" | "none"`
+  configure the tick marks on the primary horizontal/vertical axes. Omission
+  retains the writer default. The names follow OOXML axis position, so they
+  retain their meaning for bars, reversed axes, and scatter charts. Pie/doughnut charts
+  reject these properties because they have no axes. Reverse preserves the
+  four OOXML `majorTickMark` / `minorTickMark` values and rejects secondary-axis
+  ticks or unsupported tick semantics.
 - `Chart.horizontalAxisMajorGridlines?: boolean`,
   `Chart.horizontalAxisMinorGridlines?: boolean`,
   `Chart.verticalAxisMajorGridlines?: boolean`, and
