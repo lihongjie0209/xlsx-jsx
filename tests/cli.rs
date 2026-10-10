@@ -111,6 +111,236 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
 }
 
 #[test]
+fn spec_exposes_chart_components_and_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"const\": \"Chart\""))
+        .stdout(predicate::str::contains("chartSeries"))
+        .stdout(predicate::str::contains("categories"));
+}
+
+#[test]
+fn validates_chart_series_ranges_and_actionable_errors() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    ).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("sheet-qualified A1 range"))
+        .stderr(predicate::str::contains("Data!$B$2:$B$5"));
+}
+
+#[test]
+fn validate_rejects_chart_geometry_crossing_custom_column_widths() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-custom-width.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Column, Row, Cell, Chart, Series } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!$B$2:$B$3" /></Chart><Column min={8} max={8} widthPixels={120} /><Row><Cell>Label</Cell><Cell>Value</Cell></Row><Row><Cell>A</Cell><Cell value={2} /></Row><Row><Cell>B</Cell><Cell value={3} /></Row></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("standard 64×20-pixel cells"))
+        .stderr(predicate::str::contains(
+            "remove the intersecting custom widths/heights",
+        ));
+}
+
+#[test]
+fn validate_reports_chart_references_to_missing_worksheets() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-missing-sheet.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Missing!$B$2:$B$4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "refers to missing worksheet `Missing`",
+        ))
+        .stderr(predicate::str::contains(
+            "add that sheet or correct the reference",
+        ));
+}
+
+#[test]
+fn builds_reverses_and_rebuilds_basic_chart_parts() {
+    let directory = tempdir().expect("temporary directory is available");
+    let output = directory.path().join("charts.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let archive = ZipArchive::new(std::fs::File::open(&output).expect("output exists"))
+        .expect("xlsx is a ZIP package");
+    assert!(
+        archive
+            .file_names()
+            .any(|name| name == "xl/charts/chart1.xml")
+    );
+    assert!(
+        archive
+            .file_names()
+            .any(|name| name == "xl/drawings/drawing1.xml")
+    );
+    assert!(
+        archive
+            .file_names()
+            .any(|name| name == "xl/charts/chart4.xml")
+    );
+
+    let reversed = directory.path().join("charts.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(
+        source.contains("<Chart type=\"column\" cell={\"D2\"}"),
+        "{source}"
+    );
+    assert!(source.contains("values={\"Data!$B$2:$B$4\"}"), "{source}");
+    assert!(source.contains("values={\"Data!$C$2:$C$4\"}"), "{source}");
+    assert!(source.contains("<Chart type=\"line\""), "{source}");
+    assert!(source.contains("<Chart type=\"bar\""), "{source}");
+    assert!(source.contains("<Chart type=\"pie\""), "{source}");
+    assert!(
+        source.contains("name={\"Revenue and expenses\"}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("altText={\"Monthly revenue compared with expenses\"}"),
+        "{source}"
+    );
+
+    let rebuilt = directory.path().join("charts-roundtrip.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_archive = ZipArchive::new(std::fs::File::open(&rebuilt).expect("rebuilt exists"))
+        .expect("rebuilt XLSX is a ZIP package");
+    assert!(
+        rebuilt_archive
+            .file_names()
+            .any(|name| name == "xl/charts/chart1.xml")
+    );
+    assert!(
+        rebuilt_archive
+            .file_names()
+            .any(|name| name == "xl/charts/chart4.xml")
+    );
+    drop(rebuilt_archive);
+    let twice_reversed = directory.path().join("charts-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&twice_reversed)
+        .assert()
+        .success();
+    let second_source =
+        std::fs::read_to_string(twice_reversed).expect("second reverse output exists");
+    assert!(
+        second_source.contains("<Chart type=\"pie\""),
+        "{second_source}"
+    );
+    assert!(
+        second_source.contains("values={\"Data!$C$2:$C$4\"}"),
+        "{second_source}"
+    );
+}
+
+#[test]
+fn reverse_rejects_chart_titles_without_a_lossless_dsl_property() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("external-chart.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart1.xml", |xml| {
+        xml.replace("<c:plotArea>", "<c:title/><c:plotArea>")
+    });
+    let output = directory.path().join("external-chart.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .args(["-o"])
+        .arg(output)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported `<title>`"))
+        .stderr(predicate::str::contains(
+            "Chart properties and reverse support",
+        ));
+}
+
+#[test]
+fn reverse_rejects_literal_chart_series_titles_instead_of_dropping_them() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("literal-chart-title.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart1.xml", |xml| {
+        xml.replace("<c:f>Data!$B$1</c:f>", "")
+    });
+    let output = directory.path().join("literal-chart-title.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .args(["-o"])
+        .arg(output)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("literal series title"))
+        .stderr(predicate::str::contains("use a cell reference"));
+}
+
+#[test]
 fn external_global_and_local_defined_names_reverse_and_rebuild() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("external-names.xlsx");

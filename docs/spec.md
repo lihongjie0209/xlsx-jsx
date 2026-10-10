@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.58
+Version: 1.59
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -20,6 +20,30 @@ result into a JSON-compatible workbook IR, writes `.xlsx` files with
   </Worksheet>
 </Workbook>
 ```
+
+### Chart
+
+`Chart` models column, bar, line, and pie charts with series source formulas
+and a worksheet anchor. Chart components must appear before worksheet rows.
+
+- `type` is one of `column`, `bar`, `line`, or `pie`.
+- `cell` is an A1 cell anchor. `width` and `height` are positive integer pixels
+  (1–1790); omission uses the writer defaults of 480×288 pixels. `Series` has
+  required `values` and optional `categories` and `name` sheet-qualified A1
+  references. `values` and `categories` must be ranges; `name` may be a cell or
+  range. Formula text omits a leading `=` and optional `$` markers are retained.
+- `Chart.name?: string` preserves the workbook chart object name and
+  `Chart.altText?: string` preserves its accessibility description. Both are
+  limited to 255 valid XML characters. Reverse emits an explicit name because
+  the writer otherwise assigns one automatically.
+- Pie charts require exactly one `Series`; other chart types support one or more
+  series. Series order, chart type, anchor, pixel size, and formulas survive
+  reverse/recompile.
+- Reverse supports two-cell chart anchors with zero start offsets, whole-pixel
+  sizes, standard 64×20-pixel worksheet geometry across the chart footprint,
+  and writer-default chart/axis presentation. Titles, custom formatting,
+  non-default axis settings, other drawing shapes, custom dimensions in the
+  anchor footprint, and other chart kinds fail with repair guidance.
 
 ### Workbook
 
@@ -75,8 +99,8 @@ result into a JSON-compatible workbook IR, writes `.xlsx` files with
 - `tabColor?: string` sets the worksheet tab's opaque RGB color using exactly
   `#RRGGBB`; reverse preserves explicit RGB values in uppercase. Theme, indexed,
   automatic, and alpha-bearing colors are rejected rather than approximated.
-- Children: `Column`, `DataValidation`, `ConditionalFormat`, `IgnoreError`, and
-  `Table`
+- Children: `Column`, `DataValidation`, `ConditionalFormat`, `IgnoreError`,
+  `Table`, `Note`, and `Chart`
   components followed by zero or more `Row` components. Metadata must appear
   before rows;
   reverse canonicalizes it before row data.

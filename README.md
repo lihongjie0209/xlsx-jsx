@@ -73,6 +73,7 @@ xlsx-jsx spec --format json
 | Ignored Excel errors | yes | yes | Worksheet-level `<IgnoreError range="A1:B2" errorType="numberStoredAsText" />` preserves Excel's error-checking exceptions; overlapping annotations are rejected |
 | Hyperlinks | yes | yes | External URL/URI and internal `internal:Sheet!A1` links on text cells preserve target, display text, and `hyperlinkTooltip` screen tips |
 | Legacy cell notes | yes | yes (supported subset) | `<Note cell="B3" text="Review this value" />` preserves author/prefix, integer-pixel dimensions, visibility, solid RGB fill, font name/size/family, and alt text; unsupported VML shapes, rich text, or positions that cannot be regenerated from sheet geometry are rejected |
+| Basic charts | yes | yes (supported subset) | `<Chart type="column" cell="D2"><Series values="Sales!$B$2:$B$4" categories="Sales!$A$2:$A$4" /></Chart>` writes and reverses column/bar/line/pie charts, series formulas, object name, alt text, pixel size, and two-cell anchor; custom chart/axis styling, non-default geometry, and other drawing shapes are rejected |
 | Conditional formatting | yes | partial | Color scales, cell comparisons, formula/text, top/bottom, average, date, blank/error/duplicate rules, data bars, classic and x14 icon sets including custom icon assignments; dxf styles include font decoration, number formats, four edge borders, solid and patterned RGB fills; `greaterThan: true` is rejected for x14-only icon rules because upstream omits it from XML |
 | Number formats | yes | yes | `numberFormat` preserves custom codes and common built-in formats |
 | Blank cells and special text | yes | yes | quoted, multiline, Unicode, and interior blank cells round-trip |
@@ -82,7 +83,7 @@ xlsx-jsx spec --format json
 | Workbook and worksheet-scoped defined names | yes | yes | `<DefinedName name="TaxRate" formula="0.05" />` at workbook scope or inside a worksheet; names and formula text round-trip, while hidden/comment metadata is rejected |
 | Phonetics, custom package parts | no | rejected | unsupported semantics are not silently flattened or discarded |
 | Shared/data-table formulas, other custom view state, unsupported authored metadata | no | rejected with diagnostics | ordinary/legacy array formulas, screen gridline visibility, and default workbook view remain supported |
-| Other font/border metadata, charts, images | no | rejected when present | font family/charset and diagonal borders are supported; start/end/outline border metadata and unrepresented package features are rejected |
+| Other font/border metadata, images | no | rejected when present | font family/charset and diagonal borders are supported; start/end/outline border metadata and unrepresented package features are rejected |
 
 See [DSL specification](docs/spec.md) and [writer coverage audit](docs/xlsxwriter-coverage.md).
 

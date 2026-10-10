@@ -79,7 +79,8 @@ Audited against the pinned crate family declared in `Cargo.toml`.
 | Date-group auto-filter criteria | No matching public writer API; reverse rejects | The pinned `FilterCondition` API does not expose date grouping |
 | Legacy cell notes | Supported writer subset; `Note::set_object_movement()` not exposed | `Worksheet::insert_note()` and `Note` setters are wrapped for text, author prefix, visibility, integer-pixel dimensions, RGB background, note font, and alt text. Reverse follows comments/VML relationships and verifies anchor/offset geometry by regenerating it from recovered row/column layout; unsupported rich-text runs, non-note shapes, or non-reproducible movement geometry are rejected |
 | Threaded comments | Not exposed; reverse rejects package parts | `rust_xlsxwriter` 0.99.1 does not provide threaded-comment authoring |
-| Charts, images, pivots, macros | Not exposed; reverse rejects package parts | add only with external reverse support |
+| Charts | Partially covered | `Chart` / `Series` write and reverse column, bar, line, and pie charts, source formulas, chart object names, alt text, integer-pixel dimensions, and default-grid two-cell anchors. Titles, custom chart/axis formatting, non-default row/column geometry through the anchor, other drawing shapes, and other chart types are rejected rather than dropped. |
+| Images, pivots, macros | Not exposed; reverse rejects package parts | add only with external reverse support |
 
 This is a staged audit, not a claim that all public `rust_xlsxwriter` writer APIs
 are wrapped. Each subsequent feature batch must classify writer support and

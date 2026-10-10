@@ -20,6 +20,8 @@ cargo build --locked
 "${DOTNET}" restore "${VALIDATOR_PROJECT}" --configfile "${NUGET_CONFIG}" --locked-mode
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/basic.tsx" -o "${TEMP_DIR}/basic.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/basic.xlsx"
+"${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/charts.tsx" -o "${TEMP_DIR}/charts.xlsx"
+"${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/charts.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/document-properties.tsx" -o "${TEMP_DIR}/document-properties.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/document-properties.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/row-column-formats.tsx" -o "${TEMP_DIR}/row-column-formats.xlsx"

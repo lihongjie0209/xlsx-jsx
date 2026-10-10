@@ -451,6 +451,7 @@ impl IrEnvelope {
                 "Workbook must contain at least one Worksheet; add a worksheet alongside any DefinedName declarations".into(),
             ));
         }
+        validate_chart_sheet_references(&self.workbook.children, &names)?;
         Ok(())
     }
 }
@@ -1558,6 +1559,9 @@ fn validate_worksheet_children(
     let mut ignored_error_ranges = Vec::new();
     let mut table_ranges = Vec::new();
     let mut note_cells = std::collections::HashSet::new();
+    let mut chart_nodes = Vec::new();
+    let mut chart_custom_width_ranges = Vec::new();
+    let mut chart_custom_height_rows = std::collections::HashSet::new();
     let mut saw_row = false;
     let mut row_index = 0;
     for (child_index, child_value) in sheet.children.iter().enumerate() {
@@ -1588,6 +1592,17 @@ fn validate_worksheet_children(
                 )));
             }
             validate_note(&child, child_index, &mut note_cells)?;
+            continue;
+        }
+        if child.r#type == "Chart" {
+            if saw_row {
+                return Err(Error::Compile(format!(
+                    "Worksheet `{sheet_name}` Chart at child {} appears after a Row; move charts before rows",
+                    child_index + 1
+                )));
+            }
+            validate_chart(&child, child_index)?;
+            chart_nodes.push(child);
             continue;
         }
         if child.r#type == "Column" {
@@ -1629,6 +1644,15 @@ fn validate_worksheet_children(
                 )));
             }
             column_ranges.push((min, max));
+            if child
+                .props
+                .get("widthPixels")
+                .and_then(Value::as_u64)
+                .is_some_and(|width| width != 64)
+                || child.props.get("hidden").and_then(Value::as_bool) == Some(true)
+            {
+                chart_custom_width_ranges.push((min, max));
+            }
             continue;
         }
         if child.r#type == "DataValidation" {
@@ -1728,6 +1752,15 @@ fn validate_worksheet_children(
             )));
         }
         validate_row_properties(&child, current_row_index)?;
+        if child
+            .props
+            .get("height")
+            .and_then(Value::as_f64)
+            .is_some_and(|height| (height - 15.0).abs() > f64::EPSILON)
+            || child.props.get("hidden").and_then(Value::as_bool) == Some(true)
+        {
+            chart_custom_height_rows.insert(current_row_index);
+        }
         let coordinate = u32::try_from(current_row_index)
             .map_err(|error| Error::Compile(format!("invalid row outline coordinate: {error}")))?;
         row_outline.insert(
@@ -1748,6 +1781,17 @@ fn validate_worksheet_children(
     }
     collapsed_outline_ranges(&row_outline, "row").map_err(Error::Compile)?;
     collapsed_outline_ranges(&column_outline, "column").map_err(Error::Compile)?;
+    validate_chart_layouts(
+        &chart_nodes,
+        &chart_custom_width_ranges,
+        &chart_custom_height_rows,
+        sheet
+            .props
+            .get("defaultRowHeightPixels")
+            .and_then(Value::as_u64)
+            .is_some_and(|height| height != 20),
+        sheet_name,
+    )?;
     for range in table_ranges {
         if range.2 as usize >= row_index {
             return Err(Error::Compile(format!(
@@ -1773,6 +1817,253 @@ fn validate_worksheet_children(
             return Err(Error::Compile(format!(
                 "Table range `{}` intersects merged cells; remove the merge or move the table",
                 format_a1_range(range)
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart(chart: &Node, index: usize) -> Result<()> {
+    reject_unknown_props(
+        chart,
+        &["type", "cell", "width", "height", "name", "altText"],
+        "Chart",
+    )?;
+    let chart_type = chart
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile(format!(
+                "Chart at declaration {} requires type: column, bar, line, or pie",
+                index + 1
+            ))
+        })?;
+    if !["column", "bar", "line", "pie"].contains(&chart_type) {
+        return Err(Error::Compile(format!(
+            "Chart.type `{chart_type}` is unsupported; use column, bar, line, or pie"
+        )));
+    }
+    let cell = chart
+        .props
+        .get("cell")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile("Chart.cell is required; use an A1 anchor such as D2".into())
+        })?;
+    if parse_a1_cell_reference(cell).is_none() {
+        return Err(Error::Compile(format!(
+            "Chart.cell `{cell}` is not a valid A1 anchor; use a cell such as D2"
+        )));
+    }
+    for dimension in ["width", "height"] {
+        if let Some(value) = chart.props.get(dimension)
+            && !value
+                .as_u64()
+                .is_some_and(|value| (1..=1790).contains(&value))
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{dimension} must be an integer from 1 to 1790 pixels; use a positive pixel size"
+            )));
+        }
+    }
+    for property in ["name", "altText"] {
+        if let Some(value) = chart.props.get(property) {
+            let Some(value) = value.as_str() else {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} must be a string; use quoted text or remove the property"
+                )));
+            };
+            let maximum = 255;
+            if value.is_empty()
+                || value.chars().count() > maximum
+                || !value.chars().all(is_valid_xml_character)
+            {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} must contain 1–{maximum} valid XML characters; shorten it or remove control characters"
+                )));
+            }
+        }
+    }
+    validate_chart_series(chart)?;
+    if chart_type == "pie" && chart.children.len() != 1 {
+        return Err(Error::Compile(
+            "pie Chart accepts exactly one Series; split the data into separate charts or choose column, bar, or line".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_chart_series(chart: &Node) -> Result<()> {
+    if chart.children.is_empty() {
+        return Err(Error::Compile(
+            "Chart requires at least one Series child".into(),
+        ));
+    }
+    for (series_index, value) in chart.children.iter().enumerate() {
+        let series: Node = serde_json::from_value(value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if series.r#type != "Series" || !series.children.is_empty() {
+            return Err(Error::Compile(format!(
+                "Chart child {} must be an empty Series component",
+                series_index + 1
+            )));
+        }
+        reject_unknown_props(&series, &["values", "categories", "name"], "Series")?;
+        let values = series
+            .props
+            .get("values")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                Error::Compile(format!(
+                    "Chart Series {} requires values as an A1 range formula",
+                    series_index + 1
+                ))
+            })?;
+        if !valid_chart_source_reference(values, true) {
+            return Err(Error::Compile(format!(
+                "Series.values `{values}` must be a sheet-qualified A1 range without a leading `=`; for example `Data!$B$2:$B$5`"
+            )));
+        }
+        for key in ["categories", "name"] {
+            if let Some(formula) = series.props.get(key).and_then(Value::as_str)
+                && !valid_chart_source_reference(formula, key == "categories")
+            {
+                return Err(Error::Compile(format!(
+                    "Series.{key} `{formula}` must be a sheet-qualified A1 reference without a leading `=`; use a cell/range such as `Data!$A$1` or `Data!$A$1:$A$5`"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn valid_chart_source_reference(formula: &str, require_range: bool) -> bool {
+    if formula.starts_with('=') || formula.matches('!').count() != 1 {
+        return false;
+    }
+    let Some((_, reference)) = formula.split_once('!') else {
+        return false;
+    };
+    if chart_source_sheet_name(formula).is_none() || reference.is_empty() {
+        return false;
+    }
+    match reference.split_once(':') {
+        Some((first, last)) => {
+            parse_a1_cell_reference(first).is_some()
+                && parse_a1_cell_reference(last).is_some()
+                && parse_a1_range(reference).is_some()
+        }
+        None => !require_range && parse_a1_cell_reference(reference).is_some(),
+    }
+}
+
+fn chart_source_sheet_name(formula: &str) -> Option<String> {
+    let (sheet, _) = formula.split_once('!')?;
+    if let Some(quoted) = sheet
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+    {
+        if quoted.is_empty()
+            || quoted.replace("''", "").contains('\'')
+            || quoted.contains('[')
+            || quoted.contains(']')
+        {
+            return None;
+        }
+        Some(quoted.replace("''", "'"))
+    } else {
+        (!sheet.is_empty()
+            && sheet.chars().all(|character| {
+                character.is_ascii_alphanumeric() || matches!(character, '_' | '.')
+            }))
+        .then(|| sheet.to_owned())
+    }
+}
+
+fn validate_chart_sheet_references(
+    workbook_children: &[Value],
+    worksheet_names: &std::collections::HashSet<String>,
+) -> Result<()> {
+    for (sheet_index, sheet_value) in workbook_children.iter().enumerate() {
+        let sheet: Node = serde_json::from_value(sheet_value.clone()).map_err(|error| {
+            Error::Compile(format!("Workbook child {sheet_index} is invalid: {error}"))
+        })?;
+        if sheet.r#type != "Worksheet" {
+            continue;
+        }
+        for child_value in &sheet.children {
+            let chart: Node = serde_json::from_value(child_value.clone())
+                .map_err(|error| Error::Compile(error.to_string()))?;
+            if chart.r#type != "Chart" {
+                continue;
+            }
+            for series_value in &chart.children {
+                let series: Node = serde_json::from_value(series_value.clone())
+                    .map_err(|error| Error::Compile(error.to_string()))?;
+                for property in ["values", "categories", "name"] {
+                    let Some(formula) = series.props.get(property).and_then(Value::as_str) else {
+                        continue;
+                    };
+                    let Some(referenced_sheet) = chart_source_sheet_name(formula) else {
+                        continue;
+                    };
+                    if !worksheet_names.contains(&referenced_sheet.to_lowercase()) {
+                        return Err(Error::Compile(format!(
+                            "Chart Series.{property} `{formula}` on Worksheet `{}` refers to missing worksheet `{referenced_sheet}`; add that sheet or correct the reference",
+                            sheet
+                                .props
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .unwrap_or("?")
+                        )));
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_layouts(
+    charts: &[Node],
+    custom_width_ranges: &[(u64, u64)],
+    custom_height_rows: &std::collections::HashSet<usize>,
+    has_custom_default_height: bool,
+    sheet_name: &str,
+) -> Result<()> {
+    for chart in charts {
+        let cell = chart.props["cell"].as_str().expect("validated Chart.cell");
+        let (first_row, first_column) =
+            parse_a1_cell_reference(cell).expect("validated Chart.cell");
+        let width = chart
+            .props
+            .get("width")
+            .and_then(Value::as_u64)
+            .unwrap_or(480);
+        let height = chart
+            .props
+            .get("height")
+            .and_then(Value::as_u64)
+            .unwrap_or(288);
+        let last_column = u64::from(first_column) + (width - 1) / 64;
+        let last_row = usize::try_from(first_row).unwrap_or_default()
+            + usize::try_from((height - 1) / 20).unwrap_or_default();
+        if last_column >= 16_384 || last_row >= 1_048_576 {
+            return Err(Error::Compile(format!(
+                "Chart at {cell} on Worksheet `{sheet_name}` extends beyond Excel's worksheet grid; move it up/left or reduce its pixel dimensions"
+            )));
+        }
+        let crosses_custom_width = custom_width_ranges
+            .iter()
+            .any(|(first, last)| *first <= last_column + 1 && *last > u64::from(first_column));
+        let crosses_custom_height = custom_height_rows
+            .iter()
+            .any(|row| *row >= first_row as usize && *row <= last_row);
+        if crosses_custom_width || crosses_custom_height || has_custom_default_height {
+            return Err(Error::Compile(format!(
+                "Chart at {cell} on Worksheet `{sheet_name}` crosses custom row/column dimensions; external chart reverse requires standard 64×20-pixel cells in the chart footprint. Move the chart or remove the intersecting custom widths/heights"
             )));
         }
     }
