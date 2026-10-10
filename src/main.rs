@@ -11,19 +11,19 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use rust_xlsxwriter::{
-    Chart, ChartLegendPosition, ChartType, Color, ConditionalFormat2ColorScale,
-    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
-    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
-    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
-    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
-    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
-    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
-    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
-    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
-    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
-    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
-    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
-    Workbook,
+    Chart, ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color,
+    ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
+    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
+    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
+    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
+    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
+    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
+    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
+    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
+    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
+    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
+    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
+    TableColumn, TableStyle, Url, Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -705,6 +705,12 @@ fn compile_chart(
         .expect("validated Chart.cell");
     let (row, column) = parse_a1_cell_reference(cell).expect("validated Chart.cell");
     let mut chart = Chart::new(chart_type);
+    if component.props.get("type").and_then(Value::as_str) == Some("stock") {
+        chart.set_high_low_lines(true);
+        if component.children.len() == 4 {
+            chart.set_up_down_bars(true);
+        }
+    }
     if let Some(hole_size) = component.props.get("holeSize").and_then(Value::as_u64) {
         chart.set_hole_size(u8::try_from(hole_size).expect("validated Chart.holeSize"));
     }
@@ -772,6 +778,11 @@ fn compile_chart(
         if let Some(title) = series.props.get("title").and_then(Value::as_str) {
             chart_series.set_name(title);
         }
+        if component.props.get("type").and_then(Value::as_str) == Some("stock") {
+            chart_series
+                .set_format(ChartLine::new().set_hidden(true))
+                .set_marker(ChartMarker::new().set_none());
+        }
     }
     worksheet
         .insert_chart(row, column, &chart)
@@ -801,6 +812,7 @@ fn chart_type_from_name(chart_type: &str) -> ChartType {
         "scatterWithLinesAndMarkers" => ChartType::ScatterStraightWithMarkers,
         "scatterWithSmoothLines" => ChartType::ScatterSmooth,
         "scatterWithSmoothLinesAndMarkers" => ChartType::ScatterSmoothWithMarkers,
+        "stock" => ChartType::Stock,
         "pie" => ChartType::Pie,
         "doughnut" => ChartType::Doughnut,
         _ => unreachable!("validated Chart.type"),
@@ -6210,6 +6222,7 @@ fn parse_chart_xml(
         "grouping",
         "overlap",
         "lineChart",
+        "stockChart",
         "radarChart",
         "radarStyle",
         "scatterChart",
@@ -6238,6 +6251,7 @@ fn parse_chart_xml(
         "val",
         "axId",
         "catAx",
+        "dateAx",
         "scaling",
         "orientation",
         "axPos",
@@ -6260,6 +6274,11 @@ fn parse_chart_xml(
         "pageMargins",
         "pageSetup",
         "doughnutChart",
+        "hiLowLines",
+        "upDownBars",
+        "gapWidth",
+        "upBars",
+        "downBars",
         "holeSize",
         "plotVisOnly",
         "marker",
@@ -6272,6 +6291,8 @@ fn parse_chart_xml(
     let mut stack = Vec::<String>::new();
     let mut chart_type: Option<&'static str> = None;
     let mut chart_grouping_seen = false;
+    let mut stock_high_low_lines = false;
+    let mut stock_up_down_bars = false;
     let mut series = Vec::<WorksheetChartSeries>::new();
     let mut formula_target: Option<&'static str> = None;
     let mut title_source_open = false;
@@ -6390,7 +6411,10 @@ fn parse_chart_xml(
                             "chart part `{part}` has a title on a scatter value axis; axis titles are not represented for scatter charts, so remove them or add explicit X/Y value-axis title support"
                         )));
                     }
-                    let target = if stack.iter().any(|ancestor| ancestor == "catAx") {
+                    let target = if stack
+                        .iter()
+                        .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"))
+                    {
                         "xAxisTitle"
                     } else if stack.iter().any(|ancestor| ancestor == "valAx") {
                         "yAxisTitle"
@@ -6436,6 +6460,9 @@ fn parse_chart_xml(
                     "areaChart" => chart_type = Some(set_chart_type(chart_type, "area", part)?),
                     "barChart" => chart_type = Some(set_chart_type(chart_type, "bar", part)?),
                     "lineChart" => chart_type = Some(set_chart_type(chart_type, "line", part)?),
+                    "stockChart" => chart_type = Some(set_chart_type(chart_type, "stock", part)?),
+                    "hiLowLines" => stock_high_low_lines = true,
+                    "upDownBars" => stock_up_down_bars = true,
                     "radarChart" => chart_type = Some(set_chart_type(chart_type, "radar", part)?),
                     "scatterChart" => {
                         chart_type = Some(set_chart_type(chart_type, "scatter", part)?);
@@ -6635,7 +6662,7 @@ fn parse_chart_xml(
                                 );
                             }
                         }
-                        if line_width.as_deref() != Some("28575") {
+                        if chart_type != Some("stock") && line_width.as_deref() != Some("28575") {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has a scatter series line outside the writer's default 2.25 pt width; remove custom line width or extend Chart series line formatting"
                             )));
@@ -6894,6 +6921,34 @@ fn parse_chart_xml(
         return Err(Error::Reverse(format!(
             "chart part `{part}` contains no data series; add at least one series"
         )));
+    }
+    if chart_type == "stock" {
+        if !matches!(series.len(), 3 | 4)
+            || !stock_high_low_lines
+            || stock_up_down_bars != (series.len() == 4)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has unsupported stock-chart structure; preserve 3-series High/Low/Close with high-low lines, or 4-series Open/High/Low/Close with high-low and up/down bars"
+            )));
+        }
+        if series
+            .iter()
+            .any(|item| item.marker != Some(false) || item.line_hidden != Some(true))
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has stock series without the writer's hidden-line/no-marker defaults; remove per-series formatting or extend stock formatting support"
+            )));
+        }
+        let first_categories = series[0].categories.as_deref();
+        if first_categories.is_none()
+            || series
+                .iter()
+                .any(|item| item.categories.as_deref() != first_categories)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has inconsistent stock category ranges; use one shared date/category range for every series"
+            )));
+        }
     }
     if matches!(chart_type, "pie" | "doughnut") && series.len() != 1 {
         return Err(Error::Reverse(format!(
@@ -7547,12 +7602,15 @@ fn audit_chart_attributes(
                     || (chart_type.is_some_and(is_percent_stacked_chart_type) && value == "0%")
             }
             ("legendPos", "val") => matches!(value.as_str(), "r" | "l" | "t" | "b" | "tr"),
+            ("bodyPr", "rot") => chart_type == Some("stock") && value == "-5400000",
+            ("bodyPr", "vert") => chart_type == Some("stock") && value == "horz",
             ("holeSize", "val") => {
                 chart_type == Some("doughnut")
                     && value
                         .parse::<u8>()
                         .is_ok_and(|size| (10..=90).contains(&size))
             }
+            ("gapWidth", "val") => chart_type == Some("stock") && value == "150",
             ("firstSliceAng", "val") => {
                 matches!(chart_type, Some("pie" | "doughnut"))
                     && value.parse::<u16>().is_ok_and(|angle| angle <= 360)

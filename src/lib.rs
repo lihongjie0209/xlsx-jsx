@@ -1871,6 +1871,7 @@ fn is_supported_chart_type(chart_type: &str) -> bool {
             | "scatterWithLinesAndMarkers"
             | "scatterWithSmoothLines"
             | "scatterWithSmoothLinesAndMarkers"
+            | "stock"
             | "pie"
             | "doughnut"
     )
@@ -1965,6 +1966,9 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     }
     validate_chart_series(chart)?;
     validate_scatter_chart(chart, chart_type)?;
+    if chart_type == "stock" {
+        validate_stock_chart(chart)?;
+    }
     if matches!(chart_type, "pie" | "doughnut") && chart.children.len() != 1 {
         return Err(Error::Compile(
             "pie and doughnut Charts accept exactly one Series; split the data into separate charts or choose area, column, bar, or line".into(),
@@ -2165,6 +2169,36 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 )));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_stock_chart(chart: &Node) -> Result<()> {
+    if !matches!(chart.children.len(), 3 | 4) {
+        return Err(Error::Compile(
+            "stock Charts require exactly 3 Series (High, Low, Close) or 4 Series (Open, High, Low, Close); add/remove Series and preserve that order".into(),
+        ));
+    }
+    let mut categories: Option<String> = None;
+    for (series_index, value) in chart.children.iter().enumerate() {
+        let series: Node = serde_json::from_value(value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        let current = series
+            .props
+            .get("categories")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if current.is_none()
+            || categories
+                .as_ref()
+                .is_some_and(|expected| Some(expected) != current.as_ref())
+        {
+            return Err(Error::Compile(format!(
+                "stock Series {} must use the same explicit categories range as every other stock Series; add one shared date/category range",
+                series_index + 1
+            )));
+        }
+        categories = current;
     }
     Ok(())
 }

@@ -1,6 +1,9 @@
 use assert_cmd::Command;
 use calamine::Reader;
 use predicates::prelude::*;
+use rust_xlsxwriter::{
+    Chart as XlsxChart, ChartLine, ChartMarker, ChartType, Workbook as XlsxWorkbook,
+};
 use std::io::{Read, Write};
 use tempfile::tempdir;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
@@ -491,6 +494,8 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         );
     }
     assert!(source.contains("<Chart type=\"scatter\""), "{source}");
+    assert!(source.contains("<Chart type=\"stock\""), "{source}");
+    assert!(source.contains("title={\"Open\"}"), "{source}");
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -596,6 +601,43 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
 }
 
 #[test]
+fn reverses_external_stock_chart_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-stock.xlsx");
+    let output_path = directory.path().join("external-stock.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Stock);
+    for range in ["B2:B4", "C2:C4", "D2:D4"] {
+        chart
+            .add_series()
+            .set_categories("Data!A2:A4")
+            .set_values(match range {
+                "B2:B4" => "Data!B2:B4",
+                "C2:C4" => "Data!C2:C4",
+                _ => "Data!D2:D4",
+            })
+            .set_format(ChartLine::new().set_hidden(true))
+            .set_marker(ChartMarker::new().set_none());
+    }
+    chart.set_high_low_lines(true);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(output_path).expect("reversed JSX exists");
+    assert!(source.contains("<Chart type=\"stock\""), "{source}");
+    assert_eq!(source.matches("<Series ").count(), 3, "{source}");
+}
+
+#[test]
 fn validates_scatter_series_require_equal_x_and_y_ranges() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("scatter.tsx");
@@ -650,6 +692,44 @@ fn validates_scatter_series_require_an_x_value_range() {
             "requires categories as its X-value range",
         ))
         .stderr(predicate::str::contains("Data!$A$2:$A$5"));
+}
+
+#[test]
+fn validates_stock_charts_require_three_or_four_ordered_series() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("stock.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="stock" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /><Series values="Data!C2:C4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("exactly 3 Series"))
+        .stderr(predicate::str::contains("High, Low, Close"));
+}
+
+#[test]
+fn validates_stock_series_share_one_category_range() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("stock-categories.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="stock" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /><Series values="Data!C2:C4" categories="Data!A3:A5" /><Series values="Data!D2:D4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("same explicit categories range"))
+        .stderr(predicate::str::contains("shared date/category range"));
 }
 
 #[test]

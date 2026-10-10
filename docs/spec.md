@@ -59,7 +59,7 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `barPercentStacked`, `line`, `lineStacked`, `linePercentStacked`, `radar`,
   `radarWithMarkers`, `radarFilled`, `scatter`, `scatterWithLines`,
   `scatterWithLinesAndMarkers`, `scatterWithSmoothLines`,
-  `scatterWithSmoothLinesAndMarkers`, `pie`, or `doughnut`.
+  `scatterWithSmoothLinesAndMarkers`, `stock`, `pie`, or `doughnut`.
   The `*Stacked` and `*PercentStacked` variants map to the matching OOXML chart
   grouping; plain `area`, `column`, `bar`, and `line` use the writer's standard
   grouping (clustered for bar/column). Reverse reconstructs the DSL type from
@@ -80,6 +80,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   line visibility, smoothing, and marker mode from scatter style, per-series
   line properties, smoothing, and marker overrides. Mixed per-series settings, axis titles,
   and category-axis scatter charts fail with repair guidance.
+- Stock charts support the standard high-low-close (3 series) and
+  open-high-low-close (4 series) forms. `Series` order is significant and must
+  be High/Low/Close or Open/High/Low/Close respectively; every series must have
+  the same explicit category range. The compiler emits the stock chart's
+  required high-low lines, and emits up/down bars only for the 4-series form.
+  Series line/marker defaults are normalized to the writer's canonical stock
+  representation. Reverse detects these OOXML structures without relying on
+  the embedded manifest; charts with missing stock bars, inconsistent
+  categories, or unsupported per-series formatting fail with repair guidance.
 - Pie and doughnut charts require exactly one `Series` and have no X/Y axes.
   `Chart.holeSize?: number` is valid only for `doughnut`, uses integer
   percentages from 10 through 90, and defaults to the writer's 50% hole. The
