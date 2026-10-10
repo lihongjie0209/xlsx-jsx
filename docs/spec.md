@@ -51,10 +51,13 @@ relationships and drawing anchors without relying on a private manifest.
 
 ### Chart
 
-`Chart` models column, bar, line, and pie charts with series source formulas
+`Chart` models area, column, bar, line, and pie charts with series source formulas
 and a worksheet anchor. Chart components must appear before worksheet rows.
 
-- `type` is one of `column`, `bar`, `line`, or `pie`.
+- `type` is one of `area`, `column`, `bar`, `line`, or `pie`.
+  `area` means the standard, unstacked OOXML `areaChart`; stacked and
+  percent-stacked area charts are rejected by reverse because the v1 DSL does
+  not model their grouping.
 - `cell` is an A1 cell anchor. `width` and `height` are positive integer pixels
   (1–1790); omission uses the writer defaults of 480×288 pixels. `Series` has
   required `values` and optional `categories` and `name` sheet-qualified A1

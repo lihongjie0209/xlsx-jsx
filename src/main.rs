@@ -699,6 +699,7 @@ fn compile_chart(
         .as_str()
         .expect("validated Chart.type")
     {
+        "area" => ChartType::Area,
         "column" => ChartType::Column,
         "bar" => ChartType::Bar,
         "line" => ChartType::Line,
@@ -6163,6 +6164,7 @@ fn parse_chart_xml(
         "endParaRPr",
         "plotArea",
         "layout",
+        "areaChart",
         "barChart",
         "barDir",
         "grouping",
@@ -6362,6 +6364,7 @@ fn parse_chart_xml(
                     }
                 }
                 match tag.as_str() {
+                    "areaChart" => chart_type = Some(set_chart_type(chart_type, "area", part)?),
                     "barChart" => chart_type = Some(set_chart_type(chart_type, "bar", part)?),
                     "lineChart" => chart_type = Some(set_chart_type(chart_type, "line", part)?),
                     "pieChart" => chart_type = Some(set_chart_type(chart_type, "pie", part)?),
@@ -6599,7 +6602,7 @@ fn parse_chart_xml(
     }
     let chart_type = chart_type.ok_or_else(|| {
         Error::Reverse(format!(
-            "chart part `{part}` has no supported chart type; use a column, bar, line, or pie chart"
+            "chart part `{part}` has no supported chart type; use an area, column, bar, line, or pie chart"
         ))
     })?;
     if series.is_empty() {
@@ -6990,7 +6993,7 @@ fn audit_chart_attributes(
             ("lang", "val") | ("endParaRPr" | "rPr", "lang") => value == "en-US",
             ("barDir", "val") => matches!(value.as_str(), "col" | "bar"),
             ("grouping", "val") => match chart_type {
-                Some("line") => value == "standard",
+                Some("line" | "area") => value == "standard",
                 Some("bar" | "column") => value == "clustered",
                 _ => false,
             },
@@ -7006,7 +7009,10 @@ fn audit_chart_attributes(
             ("symbol", "val") => value == "none",
             ("lblAlgn", "val") => value == "ctr",
             ("lblOffset", "val") => value == "100",
-            ("crossBetween", "val") => value == "between",
+            ("crossBetween", "val") => match chart_type {
+                Some("area") => value == "midCat",
+                _ => value == "between",
+            },
             ("numFmt", "formatCode") => value == "General",
             ("legendPos", "val") => matches!(value.as_str(), "r" | "l" | "t" | "b" | "tr"),
             ("firstSliceAng", "val") | ("pPr", "rtl") => value == "0",

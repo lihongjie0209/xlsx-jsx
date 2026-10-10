@@ -1872,13 +1872,13 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         .and_then(Value::as_str)
         .ok_or_else(|| {
             Error::Compile(format!(
-                "Chart at declaration {} requires type: column, bar, line, or pie",
+                "Chart at declaration {} requires type: area, column, bar, line, or pie",
                 index + 1
             ))
         })?;
-    if !["column", "bar", "line", "pie"].contains(&chart_type) {
+    if !["area", "column", "bar", "line", "pie"].contains(&chart_type) {
         return Err(Error::Compile(format!(
-            "Chart.type `{chart_type}` is unsupported; use column, bar, line, or pie"
+            "Chart.type `{chart_type}` is unsupported; use area, column, bar, line, or pie"
         )));
     }
     if chart_type == "pie"

@@ -432,6 +432,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     assert!(source.contains("<Chart type=\"line\""), "{source}");
     assert!(source.contains("<Chart type=\"bar\""), "{source}");
     assert!(source.contains("<Chart type=\"pie\""), "{source}");
+    assert!(source.contains("<Chart type=\"area\""), "{source}");
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -477,6 +478,10 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         std::fs::read_to_string(twice_reversed).expect("second reverse output exists");
     assert!(
         second_source.contains("<Chart type=\"pie\""),
+        "{second_source}"
+    );
+    assert!(
+        second_source.contains("<Chart type=\"area\""),
         "{second_source}"
     );
     assert!(

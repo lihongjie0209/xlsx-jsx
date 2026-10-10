@@ -21,5 +21,8 @@ export default <Workbook>
     <Chart type="pie" cell="K20" width={480} height={288}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
     </Chart>
+    <Chart type="area" cell="D38" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue area" />
+    </Chart>
   </Worksheet>
 </Workbook>;
