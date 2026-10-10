@@ -56,6 +56,18 @@ result into a JSON-compatible workbook IR, writes `.xlsx` files with
   worksheet may set it to `true`; the active worksheet must be visible. When
   omitted, the writer's default active worksheet is used. Reverse emits the
   property only when the active worksheet is not the first worksheet.
+- `selected?: boolean` controls whether this worksheet tab is highlighted and
+  participates in grouped-sheet operations; it is independent of `active`.
+  Multiple worksheets may be selected, but selected sheets must be visible.
+  Omission defaults to false except that explicitly setting `active={true}` in
+  the compiler also selects that worksheet in the writer. Therefore
+  `active={true}` and `selected={false}` are invalid together; when no
+  worksheet explicitly sets `active={true}`, the first worksheet is the
+  writer's active sheet and likewise cannot set `selected={false}`. Reverse preserves
+  `sheetView@tabSelected` independently from `activeTab`, omits values already
+  implied by the writer's active-sheet behavior, and rejects an external
+  active worksheet that is explicitly unselected because the pinned writer
+  always selects the active worksheet during serialization.
 - `firstTab?: boolean` selects this worksheet as the leftmost visible tab. At
   most one worksheet may set it to `true`, and it must be visible. When omitted,
   the first worksheet is the leftmost visible tab. Reverse preserves a

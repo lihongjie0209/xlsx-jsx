@@ -3434,6 +3434,10 @@ fn public_active_worksheet_example_builds_and_reverses() {
         .arg(&reversed);
     command.assert().success();
     let source = std::fs::read_to_string(reversed).expect("reverse output exists");
+    assert!(
+        source.contains("name={\"Overview\"} selected={true}"),
+        "{source}"
+    );
     assert!(source.contains("<Worksheet name={\"Details\"} active={true}"));
 }
 
@@ -3646,6 +3650,108 @@ fn external_non_first_active_worksheet_round_trips_without_loss() {
         std::fs::read_to_string(second_reverse).expect("second reverse output exists"),
         source
     );
+}
+
+#[test]
+fn external_selected_worksheet_tabs_round_trip_independently_from_active() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("selected-worksheets.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .add_worksheet()
+        .set_name("First")
+        .expect("first sheet names")
+        .set_selected(true);
+    workbook
+        .add_worksheet()
+        .set_name("Active but unselected")
+        .expect("active sheet names")
+        .set_active(true);
+    workbook
+        .add_worksheet()
+        .set_name("Grouped")
+        .expect("grouped sheet names")
+        .set_selected(true);
+    workbook.save(&input).expect("workbook writes");
+
+    let reversed = directory.path().join("selected-worksheets.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(
+        source.contains("name={\"Active but unselected\"} active={true}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("name={\"First\"} selected={true}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("name={\"Grouped\"} selected={true}"),
+        "{source}"
+    );
+
+    let regenerated = directory.path().join("selected-worksheets-roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&regenerated);
+    command.assert().success();
+    assert!(
+        read_zip_part_for_test(&regenerated, "xl/workbook.xml").contains("activeTab=\"1\""),
+        "{}",
+        read_zip_part_for_test(&regenerated, "xl/workbook.xml")
+    );
+    let second_reverse = directory.path().join("selected-worksheets-second.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&regenerated)
+        .args(["-o"])
+        .arg(&second_reverse);
+    command.assert().success();
+    assert_eq!(
+        std::fs::read_to_string(second_reverse).expect("second reverse output exists"),
+        source
+    );
+}
+
+#[test]
+fn reverse_rejects_active_but_unselected_non_first_worksheet() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("active-unselected.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .add_worksheet()
+        .set_name("First")
+        .expect("first sheet names");
+    workbook
+        .add_worksheet()
+        .set_name("Active")
+        .expect("second sheet names")
+        .set_active(true);
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/worksheets/sheet2.xml", |xml| {
+        xml.replace("tabSelected=\"1\"", "tabSelected=\"0\"")
+    });
+
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["reverse"]).arg(input);
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "active but `sheetView@tabSelected` is false",
+        ))
+        .stderr(predicate::str::contains("cannot be recompiled losslessly"))
+        .stderr(predicate::str::contains("suggestion:"));
 }
 
 #[test]
@@ -6711,7 +6817,10 @@ fn external_autofilter_range_survives_recompile() {
         .arg(&reversed);
     command.assert().success();
     let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
-    assert!(source.contains("Worksheet name={\"Sheet1\"} autoFilter={\"A1:B2\"}"));
+    assert!(
+        source.contains("Worksheet name={\"Sheet1\"} autoFilter={\"A1:B2\"}"),
+        "{source}"
+    );
 
     let regenerated = directory.path().join("autofilter-roundtrip.xlsx");
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");

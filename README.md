@@ -50,6 +50,7 @@ xlsx-jsx spec --format json
 | Worksheet protection and cell lock/formula visibility | yes | yes | `protection={{formatCells: true}}`, `locked={false}`, and `formulaHidden={true}`; password hashes and protected ranges are rejected |
 | Print gridlines | yes | yes | `printGridlines={true}` enables gridlines on printed pages |
 | Worksheet zoom | yes | yes | `zoom={125}` preserves screen zoom percentage (10–400; default 100) |
+| Selected worksheet tabs | yes | yes | `selected={true}` preserves grouped/highlighted worksheet tabs independently of `active={true}` |
 | Worksheet reading direction | yes | yes | `rightToLeft={true}` enables right-to-left sheet layout |
 | Outline summary direction | yes | yes | `summaryBelow={false}` / `summaryRight={false}` place row/column summary markers above/left; defaults are true |
 | Excel tables | yes | yes | Rectangular named tables with built-in styles, filter/banding flags, totals rows, totals functions/labels, calculated-column formulas, supported differential formats, and `altText` / `altTextTitle` accessibility metadata |

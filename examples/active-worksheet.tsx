@@ -1,7 +1,7 @@
 import { Workbook, Worksheet, Row, Cell } from "xlsx-jsx";
 
 export default <Workbook>
-  <Worksheet name="Overview">
+  <Worksheet name="Overview" selected={true}>
     <Row><Cell>Summary</Cell></Row>
   </Worksheet>
   <Worksheet name="Details" active={true} firstTab={true}>

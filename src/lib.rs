@@ -378,6 +378,7 @@ impl IrEnvelope {
         let mut global_defined_names = std::collections::HashSet::new();
         let mut worksheet_index = 0;
         validate_active_worksheet_uniqueness(&self.workbook.children)?;
+        validate_default_active_selection(&self.workbook.children)?;
         validate_first_tab_uniqueness(&self.workbook.children)?;
         for (child_index, sheet_value) in self.workbook.children.iter().enumerate() {
             let sheet: Node = serde_json::from_value(sheet_value.clone()).map_err(|error| {
@@ -534,6 +535,38 @@ fn validate_active_worksheet_uniqueness(sheets: &[Value]) -> Result<()> {
             }
             active_name = Some(name);
         }
+    }
+    Ok(())
+}
+
+fn validate_default_active_selection(sheets: &[Value]) -> Result<()> {
+    let active = sheets
+        .iter()
+        .find(|sheet| {
+            sheet.get("type").and_then(Value::as_str) == Some("Worksheet")
+                && sheet
+                    .get("props")
+                    .and_then(|props| props.get("active"))
+                    .and_then(Value::as_bool)
+                    == Some(true)
+        })
+        .or_else(|| {
+            sheets
+                .iter()
+                .find(|sheet| sheet.get("type").and_then(Value::as_str) == Some("Worksheet"))
+        });
+    let Some(active) = active else {
+        return Ok(());
+    };
+    if active.get("props").and_then(|props| props.get("selected")) == Some(&Value::Bool(false)) {
+        let name = active
+            .get("props")
+            .and_then(|props| props.get("name"))
+            .and_then(Value::as_str)
+            .unwrap_or("<unnamed>");
+        return Err(Error::Compile(format!(
+            "Worksheet `{name}` is the active worksheet but selected=false; rust_xlsxwriter always selects the active worksheet, so remove selected={{false}} or make another worksheet active"
+        )));
     }
     Ok(())
 }
@@ -814,6 +847,7 @@ fn validate_worksheet_properties(sheet: &Node) -> Result<()> {
         &[
             "name",
             "active",
+            "selected",
             "firstTab",
             "tabColor",
             "visibility",
@@ -1050,7 +1084,31 @@ fn validate_worksheet_reading_and_outline(sheet: &Node, name: &str) -> Result<()
 
 fn validate_worksheet_visibility_and_active(sheet: &Node, index: usize, name: &str) -> Result<()> {
     validate_worksheet_visibility(sheet, index, name)?;
-    validate_active_worksheet(sheet, name).map(|_| ())
+    let active = validate_active_worksheet(sheet, name)?;
+    if let Some(value) = sheet.props.get("selected") {
+        let Some(selected) = value.as_bool() else {
+            return Err(Error::Compile(format!(
+                "Worksheet.selected on `{name}` must be a boolean; use selected={{true}} or selected={{false}}"
+            )));
+        };
+        if selected
+            && sheet
+                .props
+                .get("visibility")
+                .and_then(Value::as_str)
+                .is_some_and(|visibility| visibility != "visible")
+        {
+            return Err(Error::Compile(format!(
+                "selected Worksheet `{name}` must be visible; set visibility=\"visible\" or remove selected={{true}}"
+            )));
+        }
+        if active && !selected {
+            return Err(Error::Compile(format!(
+                "Worksheet `{name}` cannot combine active={{true}} with selected={{false}} because rust_xlsxwriter selects activated worksheets; remove selected={{false}} or omit active={{true}}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_worksheet_print_scale_and_fit(sheet: &Node, name: &str) -> Result<()> {
@@ -5358,6 +5416,53 @@ mod tests {
         ]);
 
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_selected_hidden_worksheets_and_non_boolean_selection() {
+        let hidden = workbook(vec![
+            serde_json::json!({"type":"Worksheet","props":{"name":"Visible"},"children":[]}),
+            serde_json::json!({"type":"Worksheet","props":{"name":"Hidden","visibility":"hidden","selected":true},"children":[]}),
+        ]);
+        let error = hidden
+            .validate()
+            .expect_err("selected hidden worksheets are not representable");
+        assert!(
+            error
+                .to_string()
+                .contains("selected Worksheet `Hidden` must be visible")
+        );
+
+        let invalid = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Invalid","selected":"yes"},"children":[]
+        })]);
+        let error = invalid.validate().expect_err("selected must be boolean");
+        assert!(error.to_string().contains("Worksheet.selected"));
+        assert!(error.to_string().contains("must be a boolean"));
+
+        let contradictory = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Active","active":true,"selected":false},"children":[]
+        })]);
+        let error = contradictory
+            .validate()
+            .expect_err("writer cannot activate an unselected worksheet");
+        assert!(
+            error
+                .to_string()
+                .contains("is the active worksheet but selected=false")
+        );
+
+        let default_active = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"First","selected":false},"children":[]
+        })]);
+        let error = default_active
+            .validate()
+            .expect_err("default first active worksheet cannot be unselected");
+        assert!(
+            error
+                .to_string()
+                .contains("is the active worksheet but selected=false")
+        );
     }
 
     #[test]

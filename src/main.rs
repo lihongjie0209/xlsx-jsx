@@ -290,6 +290,9 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         if sheet.props.get("active").and_then(Value::as_bool) == Some(true) {
             worksheet.set_active(true);
         }
+        if let Some(selected) = sheet.props.get("selected").and_then(Value::as_bool) {
+            worksheet.set_selected(selected);
+        }
         if sheet.props.get("firstTab").and_then(Value::as_bool) == Some(true) {
             worksheet.set_first_tab(true);
         }
@@ -2833,6 +2836,9 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         if sheet_metadata.is_some_and(|metadata| metadata.active_worksheet.is_some()) {
             output.push_str(" active={true}");
         }
+        if let Some(selected) = sheet_metadata.and_then(|metadata| metadata.selected) {
+            let _ = write!(output, " selected={{{selected}}}");
+        }
         if sheet_metadata.is_some_and(|metadata| metadata.first_tab.is_some()) {
             output.push_str(" firstTab={true}");
         }
@@ -4817,6 +4823,7 @@ fn audit_reverse_subset(
     {
         metadata.active_worksheet = Some(());
     }
+    apply_selected_worksheet_state(&mut styles_by_sheet, &visibility_by_sheet, active_sheet)?;
     let first_tab = sheet_order.get(first_tab_index).ok_or_else(|| {
         Error::Reverse(format!(
             "workbook firstSheet {} references a missing worksheet; repair workbook.xml",
@@ -4839,6 +4846,31 @@ fn audit_reverse_subset(
         }
     }
     Ok((styles_by_sheet, workbook_properties, formats))
+}
+
+fn apply_selected_worksheet_state(
+    styles_by_sheet: &mut HashMap<String, WorksheetMetadata>,
+    visibility_by_sheet: &HashMap<String, WorksheetVisibility>,
+    active_sheet: &str,
+) -> xlsx_jsx::Result<()> {
+    for (name, metadata) in styles_by_sheet {
+        let selected = metadata.tab_selected.unwrap_or(false);
+        if selected && visibility_by_sheet.get(name) != Some(&WorksheetVisibility::Visible) {
+            return Err(Error::Reverse(format!(
+                "worksheet `{name}` is selected but hidden; make it visible or clear sheetView@tabSelected"
+            )));
+        }
+        let is_active = name == active_sheet;
+        if is_active && !selected {
+            return Err(Error::Reverse(format!(
+                "worksheet `{name}` is active but `sheetView@tabSelected` is false; rust_xlsxwriter always selects the active worksheet, so this state cannot be recompiled losslessly. Set `tabSelected=true` or remove the contradictory active/unselected state"
+            )));
+        }
+        if selected != is_active {
+            metadata.selected = Some(selected);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
@@ -7445,6 +7477,8 @@ impl VerticalAlignment {
 #[derive(Default)]
 struct WorksheetMetadata {
     active_worksheet: Option<()>,
+    selected: Option<bool>,
+    tab_selected: Option<bool>,
     first_tab: Option<()>,
     visibility: WorksheetVisibility,
     tab_color: Option<String>,
@@ -11662,7 +11696,16 @@ fn audit_sheet_view(
             .map_err(|error| Error::Reverse(error.to_string()))?;
         let allowed = match key.as_ref() {
             b"workbookViewId" => Some("0"),
-            b"tabSelected" => Some("1"),
+            b"tabSelected" => {
+                if metadata.tab_selected.is_some() {
+                    return Err(Error::Reverse(format!(
+                        "worksheet `{part}` sheetView repeats `tabSelected`; remove the duplicate attribute"
+                    )));
+                }
+                metadata.tab_selected =
+                    Some(parse_xml_bool(&value, part, "sheetView.tabSelected")?);
+                None
+            }
             b"showGridLines" => {
                 if gridlines_seen {
                     return Err(Error::Reverse(format!(
@@ -11732,6 +11775,7 @@ fn audit_sheet_view(
         if matches!(
             key.as_ref(),
             b"view"
+                | b"tabSelected"
                 | b"topLeftCell"
                 | b"zoomScale"
                 | b"zoomScaleNormal"
@@ -11748,6 +11792,7 @@ fn audit_sheet_view(
             key.as_ref(),
             b"showGridLines"
                 | b"rightToLeft"
+                | b"tabSelected"
                 | b"topLeftCell"
                 | b"view"
                 | b"zoomScale"
