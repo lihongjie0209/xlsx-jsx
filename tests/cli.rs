@@ -129,6 +129,13 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("holeSize"))
         .stdout(predicate::str::contains("firstSliceAngle"))
         .stdout(predicate::str::contains("radarFilled"));
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["spec", "--format", "json"]);
+    command
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("scatterWithLines"))
+        .stdout(predicate::str::contains("scatterWithLinesAndMarkers"));
 }
 
 #[test]
@@ -468,6 +475,12 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
             "{source}"
         );
     }
+    for chart_type in ["scatterWithLines", "scatterWithLinesAndMarkers"] {
+        assert!(
+            source.contains(&format!("<Chart type=\"{chart_type}\"")),
+            "{source}"
+        );
+    }
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -481,6 +494,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     assert_doughnut_hole_size(&mut archive);
     assert_first_slice_angles(&mut archive);
     assert_radar_styles(&mut archive);
+    assert_scatter_styles(&mut archive);
 
     let rebuilt = directory.path().join("charts-roundtrip.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -571,6 +585,80 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     assert_chart_title_round_trip(&second_source);
 }
 
+#[test]
+fn validates_scatter_series_require_equal_x_and_y_ranges() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatterWithLines" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A3" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("equal point counts"))
+        .stderr(predicate::str::contains("matching X/Y ranges"));
+}
+
+#[test]
+fn validates_scatter_series_require_an_x_value_range() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatterWithLines" cell="D2"><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "requires categories as its X-value range",
+        ))
+        .stderr(predicate::str::contains("Data!$A$2:$A$5"));
+}
+
+#[test]
+fn reverse_rejects_mixed_scatter_marker_overrides_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("scatter.tsx");
+    let workbook = directory.path().join("scatter.xlsx");
+    let reversed = directory.path().join("scatter-reverse.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatterWithLines" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" title="One" /><Series values="Data!C2:C4" categories="Data!A2:A4" title="Two" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(source)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
+        xml.replacen("<c:marker><c:symbol val=\"none\"/></c:marker>", "", 1)
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook)
+        .args(["-o"])
+        .arg(reversed)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mixed scatter marker overrides"))
+        .stderr(predicate::str::contains("same marker behavior"));
+}
+
 fn assert_area_chart_groupings(archive: &mut ZipArchive<std::fs::File>) {
     for (part, grouping, percent_axis, stacked_overlap) in [
         ("xl/charts/chart6.xml", "stacked", false, false),
@@ -651,6 +739,31 @@ fn assert_radar_styles(archive: &mut ZipArchive<std::fs::File>) {
         } else {
             assert!(!chart_xml.contains("<c:marker>"), "{chart_xml}");
         }
+    }
+}
+
+fn assert_scatter_styles(archive: &mut ZipArchive<std::fs::File>) {
+    for (part, marker_none) in [
+        ("xl/charts/chart18.xml", true),
+        ("xl/charts/chart19.xml", false),
+    ] {
+        let mut chart_xml = String::new();
+        archive
+            .by_name(part)
+            .expect("scatter chart part exists")
+            .read_to_string(&mut chart_xml)
+            .expect("scatter chart XML is readable");
+        assert!(
+            chart_xml.contains("<c:scatterStyle val=\"lineMarker\""),
+            "{chart_xml}"
+        );
+        assert_eq!(
+            chart_xml.contains("<c:symbol val=\"none\"/>"),
+            marker_none,
+            "{chart_xml}"
+        );
+        assert!(chart_xml.contains("<c:xVal>"), "{chart_xml}");
+        assert!(chart_xml.contains("<c:yVal>"), "{chart_xml}");
     }
 }
 

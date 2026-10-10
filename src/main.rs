@@ -695,29 +695,11 @@ fn compile_chart(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     component: &Node,
 ) -> xlsx_jsx::Result<()> {
-    let chart_type = match component.props["type"]
-        .as_str()
-        .expect("validated Chart.type")
-    {
-        "area" => ChartType::Area,
-        "areaStacked" => ChartType::AreaStacked,
-        "areaPercentStacked" => ChartType::AreaPercentStacked,
-        "column" => ChartType::Column,
-        "columnStacked" => ChartType::ColumnStacked,
-        "columnPercentStacked" => ChartType::ColumnPercentStacked,
-        "bar" => ChartType::Bar,
-        "barStacked" => ChartType::BarStacked,
-        "barPercentStacked" => ChartType::BarPercentStacked,
-        "line" => ChartType::Line,
-        "lineStacked" => ChartType::LineStacked,
-        "linePercentStacked" => ChartType::LinePercentStacked,
-        "radar" => ChartType::Radar,
-        "radarWithMarkers" => ChartType::RadarWithMarkers,
-        "radarFilled" => ChartType::RadarFilled,
-        "pie" => ChartType::Pie,
-        "doughnut" => ChartType::Doughnut,
-        _ => unreachable!("validated Chart.type"),
-    };
+    let chart_type = chart_type_from_name(
+        component.props["type"]
+            .as_str()
+            .expect("validated Chart.type"),
+    );
     let cell = component.props["cell"]
         .as_str()
         .expect("validated Chart.cell");
@@ -795,6 +777,32 @@ fn compile_chart(
         .insert_chart(row, column, &chart)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+}
+
+fn chart_type_from_name(chart_type: &str) -> ChartType {
+    match chart_type {
+        "area" => ChartType::Area,
+        "areaStacked" => ChartType::AreaStacked,
+        "areaPercentStacked" => ChartType::AreaPercentStacked,
+        "column" => ChartType::Column,
+        "columnStacked" => ChartType::ColumnStacked,
+        "columnPercentStacked" => ChartType::ColumnPercentStacked,
+        "bar" => ChartType::Bar,
+        "barStacked" => ChartType::BarStacked,
+        "barPercentStacked" => ChartType::BarPercentStacked,
+        "line" => ChartType::Line,
+        "lineStacked" => ChartType::LineStacked,
+        "linePercentStacked" => ChartType::LinePercentStacked,
+        "radar" => ChartType::Radar,
+        "radarWithMarkers" => ChartType::RadarWithMarkers,
+        "radarFilled" => ChartType::RadarFilled,
+        "scatter" => ChartType::Scatter,
+        "scatterWithLines" => ChartType::ScatterStraight,
+        "scatterWithLinesAndMarkers" => ChartType::ScatterStraightWithMarkers,
+        "pie" => ChartType::Pie,
+        "doughnut" => ChartType::Doughnut,
+        _ => unreachable!("validated Chart.type"),
+    }
 }
 
 fn compile_image(
@@ -6202,6 +6210,8 @@ fn parse_chart_xml(
         "lineChart",
         "radarChart",
         "radarStyle",
+        "scatterChart",
+        "scatterStyle",
         "pieChart",
         "ser",
         "idx",
@@ -6214,6 +6224,8 @@ fn parse_chart_xml(
         "pt",
         "v",
         "cat",
+        "xVal",
+        "yVal",
         "numRef",
         "numCache",
         "formatCode",
@@ -6273,6 +6285,8 @@ fn parse_chart_xml(
     let mut first_slice_angle_seen = false;
     let mut radar_style = None;
     let mut radar_style_seen = false;
+    let mut scatter_style = None;
+    let mut scatter_style_seen = false;
     let mut chart_title_text = String::new();
     let mut title_paragraphs = 0_usize;
     let mut title_runs = 0_usize;
@@ -6363,6 +6377,13 @@ fn parse_chart_xml(
                     _ => {}
                 }
                 if tag == "title" {
+                    if chart_type == Some("scatter")
+                        && stack.iter().any(|ancestor| ancestor == "valAx")
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a title on a scatter value axis; axis titles are not represented for scatter charts, so remove them or add explicit X/Y value-axis title support"
+                        )));
+                    }
                     let target = if stack.iter().any(|ancestor| ancestor == "catAx") {
                         "xAxisTitle"
                     } else if stack.iter().any(|ancestor| ancestor == "valAx") {
@@ -6410,6 +6431,34 @@ fn parse_chart_xml(
                     "barChart" => chart_type = Some(set_chart_type(chart_type, "bar", part)?),
                     "lineChart" => chart_type = Some(set_chart_type(chart_type, "line", part)?),
                     "radarChart" => chart_type = Some(set_chart_type(chart_type, "radar", part)?),
+                    "scatterChart" => {
+                        chart_type = Some(set_chart_type(chart_type, "scatter", part)?);
+                    }
+                    "scatterStyle" => {
+                        if scatter_style_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats scatterStyle; retain one scatter style"
+                            )));
+                        }
+                        scatter_style_seen = true;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                scatter_style = Some(if value.as_ref() == "lineMarker" {
+                                    "lineMarker"
+                                } else {
+                                    "unsupported"
+                                });
+                            }
+                        }
+                    }
                     "pieChart" => chart_type = Some(set_chart_type(chart_type, "pie", part)?),
                     "radarStyle" => {
                         if radar_style_seen {
@@ -6543,13 +6592,19 @@ fn parse_chart_xml(
                         current.title = Some(String::new());
                         series_literal_title_open = !is_empty;
                     }
-                    "cat" if !series.is_empty() => category_source_open = true,
+                    "cat" | "xVal" if !series.is_empty() => category_source_open = true,
                     "f" if !series.is_empty() => {
                         formula_target = if stack.iter().any(|ancestor| ancestor == "tx") {
                             Some("name")
-                        } else if stack.iter().any(|ancestor| ancestor == "cat") {
+                        } else if stack
+                            .iter()
+                            .any(|ancestor| matches!(ancestor.as_str(), "cat" | "xVal"))
+                        {
                             Some("categories")
-                        } else if stack.iter().any(|ancestor| ancestor == "val") {
+                        } else if stack
+                            .iter()
+                            .any(|ancestor| matches!(ancestor.as_str(), "yVal" | "val"))
+                        {
                             Some("values")
                         } else {
                             None
@@ -6727,7 +6782,7 @@ fn parse_chart_xml(
                         }
                     }
                 }
-                if tag == "cat"
+                if matches!(tag.as_str(), "cat" | "xVal")
                     && std::mem::take(&mut category_source_open)
                     && series.last().is_some_and(|item| item.categories.is_none())
                 {
@@ -6757,6 +6812,7 @@ fn parse_chart_xml(
         ))
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
+    let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
     if series.is_empty() {
         return Err(Error::Reverse(format!(
             "chart part `{part}` contains no data series; add at least one series"
@@ -6813,6 +6869,30 @@ fn parse_chart_xml(
             if !worksheet_names.contains(&sheet_name.to_lowercase()) {
                 return Err(Error::Reverse(format!(
                     "chart part `{part}` Series.{property} references missing worksheet `{sheet_name}`; add the referenced worksheet or repair the chart formula"
+                )));
+            }
+        }
+        if chart_type.starts_with("scatter") {
+            let category_range = item
+                .categories
+                .as_deref()
+                .and_then(|formula| formula.split_once('!'))
+                .and_then(|(_, range)| parse_a1_range(range));
+            let value_range = item
+                .values
+                .split_once('!')
+                .and_then(|(_, range)| parse_a1_range(range));
+            let ranges_match = value_range.zip(category_range).is_some_and(
+                |((vr0, vc0, vr1, vc1), (cr0, cc0, cr1, cc1))| {
+                    (vr0 == vr1 || vc0 == vc1)
+                        && (cr0 == cr1 || cc0 == cc1)
+                        && vr1 - vr0 == cr1 - cr0
+                        && vc1 - vc0 == cc1 - cc0
+                },
+            );
+            if !ranges_match {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` scatter series must use one-dimensional X/Y ranges with equal point counts; repair categories/values or use another chart type"
                 )));
             }
         }
@@ -7215,6 +7295,41 @@ fn resolve_radar_chart_type(
     }
 }
 
+fn resolve_scatter_chart_type(
+    chart_type: &'static str,
+    scatter_style: Option<&'static str>,
+    series: &[WorksheetChartSeries],
+    part: &str,
+) -> xlsx_jsx::Result<&'static str> {
+    if chart_type != "scatter" {
+        return Ok(chart_type);
+    }
+    if scatter_style != Some("lineMarker") {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has unsupported scatter style; use straight lines, or add matching scatter style support"
+        )));
+    }
+    let marker_overrides = series.iter().filter(|item| item.marker_seen).count();
+    if marker_overrides != 0 && marker_overrides != series.len() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has mixed scatter marker overrides; use the same marker behavior for every series"
+        )));
+    }
+    if series
+        .iter()
+        .any(|item| item.marker_seen && !item.marker_none)
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has unsupported visible scatter marker overrides; remove per-series markers or add marker style support"
+        )));
+    }
+    if marker_overrides == series.len() {
+        Ok("scatterWithLines")
+    } else {
+        Ok("scatterWithLinesAndMarkers")
+    }
+}
+
 fn audit_chart_attributes(
     event: &BytesStart<'_>,
     tag: &str,
@@ -7239,6 +7354,7 @@ fn audit_chart_attributes(
                 chart_type == Some("radar")
                     && matches!(value.as_str(), "standard" | "marker" | "filled")
             }
+            ("scatterStyle", "val") => chart_type == Some("scatter") && value == "lineMarker",
             ("grouping", "val") => match chart_type {
                 Some("area") => {
                     matches!(value.as_str(), "standard" | "stacked" | "percentStacked")
@@ -7276,7 +7392,9 @@ fn audit_chart_attributes(
             ("lblAlgn", "val") => value == "ctr",
             ("lblOffset", "val") => value == "100",
             ("crossBetween", "val") => match chart_type {
-                Some("area" | "areaStacked" | "areaPercentStacked") => value == "midCat",
+                Some("area" | "areaStacked" | "areaPercentStacked" | "scatter") => {
+                    value == "midCat"
+                }
                 _ => value == "between",
             },
             ("numFmt", "formatCode") => {

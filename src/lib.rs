@@ -1866,6 +1866,8 @@ fn is_supported_chart_type(chart_type: &str) -> bool {
             | "radar"
             | "radarWithMarkers"
             | "radarFilled"
+            | "scatterWithLines"
+            | "scatterWithLinesAndMarkers"
             | "pie"
             | "doughnut"
     )
@@ -1903,7 +1905,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         })?;
     if !is_supported_chart_type(chart_type) {
         return Err(Error::Compile(format!(
-            "Chart.type `{chart_type}` is unsupported; use area, column, bar, line, pie, or doughnut"
+            "Chart.type `{chart_type}` is unsupported; use area, column, bar, line, radar, scatter, pie, or doughnut"
         )));
     }
     validate_chart_axis_titles(chart, chart_type)?;
@@ -1959,6 +1961,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         }
     }
     validate_chart_series(chart)?;
+    validate_scatter_chart(chart, chart_type)?;
     if matches!(chart_type, "pie" | "doughnut") && chart.children.len() != 1 {
         return Err(Error::Compile(
             "pie and doughnut Charts accept exactly one Series; split the data into separate charts or choose area, column, bar, or line".into(),
@@ -1968,6 +1971,15 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
 }
 
 fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
+    if chart_type.starts_with("scatter")
+        && ["xAxisTitle", "yAxisTitle"]
+            .iter()
+            .any(|property| chart.props.contains_key(*property))
+    {
+        return Err(Error::Compile(
+            "scatter chart axis titles are not reversible because both axes are value axes; remove xAxisTitle/yAxisTitle or use a supported category-axis chart".into(),
+        ));
+    }
     if matches!(chart_type, "pie" | "doughnut")
         && ["xAxisTitle", "yAxisTitle"]
             .iter()
@@ -1976,6 +1988,23 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
         return Err(Error::Compile(
             "pie and doughnut Charts have no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_scatter_chart(chart: &Node, chart_type: &str) -> Result<()> {
+    if !chart_type.starts_with("scatter") {
+        return Ok(());
+    }
+    for (series_index, value) in chart.children.iter().enumerate() {
+        let series: Node = serde_json::from_value(value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if !series.props.contains_key("categories") {
+            return Err(Error::Compile(format!(
+                "scatter Chart Series {} requires categories as its X-value range; add a sheet-qualified range such as categories=\"Data!$A$2:$A$5\"",
+                series_index + 1
+            )));
+        }
     }
     Ok(())
 }
@@ -2085,6 +2114,16 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "Series.values `{values}` must be a sheet-qualified A1 range without a leading `=`; for example `Data!$B$2:$B$5`"
             )));
         }
+        validate_scatter_series_ranges(
+            chart
+                .props
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+            series_index,
+            values,
+            series.props.get("categories").and_then(Value::as_str),
+        )?;
         for key in ["categories", "name"] {
             if let Some(formula) = series.props.get(key).and_then(Value::as_str)
                 && !valid_chart_source_reference(formula, key == "categories")
@@ -2123,6 +2162,44 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 )));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_scatter_series_ranges(
+    chart_type: &str,
+    series_index: usize,
+    values: &str,
+    categories: Option<&str>,
+) -> Result<()> {
+    if !chart_type.starts_with("scatter") {
+        return Ok(());
+    }
+    let categories = categories.ok_or_else(|| {
+        Error::Compile(format!(
+            "scatter Chart Series {} requires categories as its X-value range; add a sheet-qualified range such as categories=\"Data!$A$2:$A$5\"",
+            series_index + 1
+        ))
+    })?;
+    let value_range = values
+        .split_once('!')
+        .and_then(|(_, range)| parse_a1_range(range));
+    let category_range = categories
+        .split_once('!')
+        .and_then(|(_, range)| parse_a1_range(range));
+    let ranges_match = value_range.zip(category_range).is_some_and(
+        |((vr0, vc0, vr1, vc1), (cr0, cc0, cr1, cc1))| {
+            (vr0 == vr1 || vc0 == vc1)
+                && (cr0 == cr1 || cc0 == cc1)
+                && vr1 - vr0 == cr1 - cr0
+                && vc1 - vc0 == cc1 - cc0
+        },
+    );
+    if !ranges_match {
+        return Err(Error::Compile(format!(
+            "scatter Chart Series {} requires categories and values to be one-dimensional ranges with equal point counts; use matching X/Y ranges such as A2:A5 and B2:B5",
+            series_index + 1
+        )));
     }
     Ok(())
 }
