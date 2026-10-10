@@ -1848,6 +1848,13 @@ fn validate_worksheet_children(
     Ok(())
 }
 
+fn is_supported_chart_type(chart_type: &str) -> bool {
+    matches!(
+        chart_type,
+        "area" | "areaStacked" | "areaPercentStacked" | "column" | "bar" | "line" | "pie"
+    )
+}
+
 fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     reject_unknown_props(
         chart,
@@ -1872,13 +1879,13 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         .and_then(Value::as_str)
         .ok_or_else(|| {
             Error::Compile(format!(
-                "Chart at declaration {} requires type: area, column, bar, line, or pie",
+                "Chart at declaration {} requires a supported chart type such as area, areaStacked, column, bar, line, or pie",
                 index + 1
             ))
         })?;
-    if !["area", "column", "bar", "line", "pie"].contains(&chart_type) {
+    if !is_supported_chart_type(chart_type) {
         return Err(Error::Compile(format!(
-            "Chart.type `{chart_type}` is unsupported; use area, column, bar, line, or pie"
+            "Chart.type `{chart_type}` is unsupported; use area, areaStacked, areaPercentStacked, column, bar, line, or pie"
         )));
     }
     if chart_type == "pie"

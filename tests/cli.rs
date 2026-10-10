@@ -124,7 +124,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("xAxisTitle"))
         .stdout(predicate::str::contains("yAxisTitle"))
         .stdout(predicate::str::contains("legendPosition"))
-        .stdout(predicate::str::contains("showLegend"));
+        .stdout(predicate::str::contains("showLegend"))
+        .stdout(predicate::str::contains("areaPercentStacked"));
 }
 
 #[test]
@@ -386,6 +387,10 @@ export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "One integration workflow verifies chart types through build, reverse, and rebuild."
+)]
 fn builds_reverses_and_rebuilds_basic_chart_parts() {
     let directory = tempdir().expect("temporary directory is available");
     let output = directory.path().join("charts.xlsx");
@@ -395,7 +400,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         .arg(&output)
         .assert()
         .success();
-    let archive = ZipArchive::new(std::fs::File::open(&output).expect("output exists"))
+    let mut archive = ZipArchive::new(std::fs::File::open(&output).expect("output exists"))
         .expect("xlsx is a ZIP package");
     assert!(
         archive
@@ -433,6 +438,11 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
     assert!(source.contains("<Chart type=\"bar\""), "{source}");
     assert!(source.contains("<Chart type=\"pie\""), "{source}");
     assert!(source.contains("<Chart type=\"area\""), "{source}");
+    assert!(source.contains("<Chart type=\"areaStacked\""), "{source}");
+    assert!(
+        source.contains("<Chart type=\"areaPercentStacked\""),
+        "{source}"
+    );
     assert!(
         source.contains("name={\"Revenue and expenses\"}"),
         "{source}"
@@ -442,6 +452,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         source.contains("altText={\"Monthly revenue compared with expenses\"}"),
         "{source}"
     );
+    assert_area_chart_groupings(&mut archive);
 
     let rebuilt = directory.path().join("charts-roundtrip.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -452,8 +463,9 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         .arg(&rebuilt)
         .assert()
         .success();
-    let rebuilt_archive = ZipArchive::new(std::fs::File::open(&rebuilt).expect("rebuilt exists"))
-        .expect("rebuilt XLSX is a ZIP package");
+    let mut rebuilt_archive =
+        ZipArchive::new(std::fs::File::open(&rebuilt).expect("rebuilt exists"))
+            .expect("rebuilt XLSX is a ZIP package");
     assert!(
         rebuilt_archive
             .file_names()
@@ -464,6 +476,7 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
             .file_names()
             .any(|name| name == "xl/charts/chart4.xml")
     );
+    assert_area_chart_groupings(&mut rebuilt_archive);
     drop(rebuilt_archive);
     let twice_reversed = directory.path().join("charts-roundtrip.tsx");
     Command::cargo_bin("xlsx-jsx")
@@ -485,10 +498,36 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         "{second_source}"
     );
     assert!(
+        second_source.contains("<Chart type=\"areaStacked\""),
+        "{second_source}"
+    );
+    assert!(
+        second_source.contains("<Chart type=\"areaPercentStacked\""),
+        "{second_source}"
+    );
+    assert!(
         second_source.contains("values={\"Data!$C$2:$C$4\"}"),
         "{second_source}"
     );
     assert_chart_title_round_trip(&second_source);
+}
+
+fn assert_area_chart_groupings(archive: &mut ZipArchive<std::fs::File>) {
+    for (part, grouping) in [
+        ("xl/charts/chart6.xml", "stacked"),
+        ("xl/charts/chart7.xml", "percentStacked"),
+    ] {
+        let mut chart_xml = String::new();
+        archive
+            .by_name(part)
+            .expect("area chart part exists")
+            .read_to_string(&mut chart_xml)
+            .expect("area chart XML is readable");
+        assert!(
+            chart_xml.contains(&format!("<c:grouping val=\"{grouping}\"")),
+            "{chart_xml}"
+        );
+    }
 }
 
 fn assert_chart_title_round_trip(source: &str) {

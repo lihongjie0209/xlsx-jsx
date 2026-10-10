@@ -24,5 +24,13 @@ export default <Workbook>
     <Chart type="area" cell="D38" width={480} height={288}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue area" />
     </Chart>
+    <Chart type="areaStacked" cell="K38" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Stacked revenue" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Stacked expenses" />
+    </Chart>
+    <Chart type="areaPercentStacked" cell="D56" width={480} height={288}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue share" />
+      <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expense share" />
+    </Chart>
   </Worksheet>
 </Workbook>;

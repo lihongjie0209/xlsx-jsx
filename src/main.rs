@@ -700,6 +700,8 @@ fn compile_chart(
         .expect("validated Chart.type")
     {
         "area" => ChartType::Area,
+        "areaStacked" => ChartType::AreaStacked,
+        "areaPercentStacked" => ChartType::AreaPercentStacked,
         "column" => ChartType::Column,
         "bar" => ChartType::Bar,
         "line" => ChartType::Line,
@@ -6218,6 +6220,7 @@ fn parse_chart_xml(
     let mut reader = XmlReader::from_str(xml);
     let mut stack = Vec::<String>::new();
     let mut chart_type: Option<&'static str> = None;
+    let mut area_grouping_seen = false;
     let mut series = Vec::<WorksheetChartSeries>::new();
     let mut formula_target: Option<&'static str> = None;
     let mut title_source_open = false;
@@ -6368,6 +6371,32 @@ fn parse_chart_xml(
                     "barChart" => chart_type = Some(set_chart_type(chart_type, "bar", part)?),
                     "lineChart" => chart_type = Some(set_chart_type(chart_type, "line", part)?),
                     "pieChart" => chart_type = Some(set_chart_type(chart_type, "pie", part)?),
+                    "grouping" if chart_type == Some("area") => {
+                        if area_grouping_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats area grouping; retain one area chart group"
+                            )));
+                        }
+                        area_grouping_seen = true;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                chart_type = Some(match value.as_ref() {
+                                    "standard" => "area",
+                                    "stacked" => "areaStacked",
+                                    "percentStacked" => "areaPercentStacked",
+                                    _ => unreachable!("grouping validated above"),
+                                });
+                            }
+                        }
+                    }
                     "doughnutChart" => {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` uses doughnutChart, which is not represented by Chart.type; use pie or extend the DSL"
@@ -6993,7 +7022,10 @@ fn audit_chart_attributes(
             ("lang", "val") | ("endParaRPr" | "rPr", "lang") => value == "en-US",
             ("barDir", "val") => matches!(value.as_str(), "col" | "bar"),
             ("grouping", "val") => match chart_type {
-                Some("line" | "area") => value == "standard",
+                Some("area") => {
+                    matches!(value.as_str(), "standard" | "stacked" | "percentStacked")
+                }
+                Some("line") => value == "standard",
                 Some("bar" | "column") => value == "clustered",
                 _ => false,
             },
@@ -7010,10 +7042,12 @@ fn audit_chart_attributes(
             ("lblAlgn", "val") => value == "ctr",
             ("lblOffset", "val") => value == "100",
             ("crossBetween", "val") => match chart_type {
-                Some("area") => value == "midCat",
+                Some("area" | "areaStacked" | "areaPercentStacked") => value == "midCat",
                 _ => value == "between",
             },
-            ("numFmt", "formatCode") => value == "General",
+            ("numFmt", "formatCode") => {
+                value == "General" || (chart_type == Some("areaPercentStacked") && value == "0%")
+            }
             ("legendPos", "val") => matches!(value.as_str(), "r" | "l" | "t" | "b" | "tr"),
             ("firstSliceAng", "val") | ("pPr", "rtl") => value == "0",
             ("pageMargins", "b" | "t") => value == "0.75",
