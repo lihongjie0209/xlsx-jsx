@@ -5397,6 +5397,126 @@ fn reverses_and_rebuilds_external_scatter_axis_crossings_without_a_manifest() {
 }
 
 #[test]
+fn reverses_numeric_crosses_at_for_category_and_scatter_axes() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-numeric-crossings.xlsx");
+    let output_path = directory.path().join("external-numeric-crossings.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut category = XlsxChart::new(ChartType::Column);
+    category
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    category
+        .x_axis()
+        .set_crossing(ChartAxisCrossing::CategoryNumber(2));
+    category
+        .y_axis()
+        .set_crossing(ChartAxisCrossing::AxisValue(15.0));
+    worksheet.insert_chart(0, 5, &category).unwrap();
+    let mut scatter = XlsxChart::new(ChartType::Scatter);
+    scatter
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    scatter
+        .x_axis()
+        .set_crossing(ChartAxisCrossing::AxisValue(2.5));
+    scatter
+        .y_axis()
+        .set_crossing(ChartAxisCrossing::AxisValue(15.0));
+    worksheet.insert_chart(18, 5, &scatter).unwrap();
+    let mut bar = XlsxChart::new(ChartType::Bar);
+    bar.add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    bar.y_axis()
+        .set_crossing(ChartAxisCrossing::AxisValue(25.0));
+    worksheet.insert_chart(36, 5, &bar).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX reads");
+    assert!(source.contains("xAxisCrossing={2}"), "{source}");
+    assert!(source.contains("yAxisCrossing={15}"), "{source}");
+    assert!(source.contains("xAxisCrossing={2.5}"), "{source}");
+    assert!(source.contains("yAxisCrossing={25}"), "{source}");
+
+    let rebuilt = directory.path().join("numeric-crossings-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let category_xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
+    let scatter_xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart2.xml");
+    let bar_xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart3.xml");
+    assert!(
+        category_xml.contains("<c:crossesAt val=\"2\"/>"),
+        "{category_xml}"
+    );
+    assert!(
+        category_xml.contains("<c:crossesAt val=\"15\"/>"),
+        "{category_xml}"
+    );
+    assert!(
+        scatter_xml.contains("<c:crossesAt val=\"2.5\"/>"),
+        "{scatter_xml}"
+    );
+    assert!(bar_xml.contains("<c:crossesAt val=\"25\"/>"), "{bar_xml}");
+}
+
+#[test]
+fn rejects_fractional_category_axis_crossing_number() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("fractional-category-crossing.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" xAxisCrossing={2.5}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "xAxisCrossing must be a positive integer category number",
+        ));
+}
+
+#[test]
+fn rejects_numeric_category_crossing_on_bar_chart() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("bar-category-crossing.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="bar" cell="D2" xAxisCrossing={2}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("pinned rust_xlsxwriter writer"))
+        .stderr(predicate::str::contains("use `automatic`, `min`, or `max`"));
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");

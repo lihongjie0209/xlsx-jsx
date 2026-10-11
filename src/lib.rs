@@ -2268,6 +2268,7 @@ fn validate_chart_title_layouts(chart: &Node) -> Result<()> {
 }
 
 fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
+    let date_axis = chart.props.get("categoryAxisType").and_then(Value::as_str) == Some("date");
     for property in ["xAxisCrossing", "yAxisCrossing"] {
         let Some(value) = chart.props.get(property) else {
             continue;
@@ -2292,13 +2293,36 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
                 "Chart.{property} is supported only for area, column, bar, line, and scatter charts; omit it or choose one of those chart types"
             )));
         }
-        if !value
+        if value
             .as_str()
             .is_some_and(|crossing| matches!(crossing, "automatic" | "min" | "max"))
         {
+            continue;
+        }
+        if !value.as_f64().is_some_and(f64::is_finite) {
             return Err(Error::Compile(format!(
-                "Chart.{property} must be automatic, min, or max; numeric crossing values are not represented yet"
+                "Chart.{property} must be `automatic`, `min`, `max`, or a finite number; use a supported crossing position or numeric axis value"
             )));
+        }
+        if date_axis {
+            return Err(Error::Compile(format!(
+                "Chart.{property} numeric crossing is unsupported with categoryAxisType=\"date\"; use automatic/min/max or remove the numeric crossing"
+            )));
+        }
+        if property == "xAxisCrossing" && !chart_type.starts_with("scatter") {
+            if chart_type.starts_with("bar") {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} numeric category crossing is not supported for bar charts by the pinned rust_xlsxwriter writer; use `automatic`, `min`, or `max`"
+                )));
+            }
+            if value
+                .as_u64()
+                .is_none_or(|index| index == 0 || index > 1_048_576)
+            {
+                return Err(Error::Compile(
+                    "Chart.xAxisCrossing must be a positive integer category number from 1 through 1048576 for category charts; use an integer category index".into(),
+                ));
+            }
         }
     }
     Ok(())

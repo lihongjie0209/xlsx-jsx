@@ -2172,14 +2172,37 @@ fn configure_chart_visual_properties(chart: &mut Chart, component: &Node) {
 
 fn configure_chart_axis_crossings(chart: &mut Chart, component: &Node) {
     for (property, horizontal_handle) in [("xAxisCrossing", true), ("yAxisCrossing", false)] {
-        let Some(value) = component.props.get(property).and_then(Value::as_str) else {
+        let Some(value) = component.props.get(property) else {
             continue;
         };
-        let crossing = match value {
-            "automatic" => ChartAxisCrossing::Automatic,
-            "min" => ChartAxisCrossing::Min,
-            "max" => ChartAxisCrossing::Max,
-            _ => unreachable!("Chart axis crossings were validated"),
+        let crossing = if let Some(value) = value.as_str() {
+            match value {
+                "automatic" => ChartAxisCrossing::Automatic,
+                "min" => ChartAxisCrossing::Min,
+                "max" => ChartAxisCrossing::Max,
+                _ => unreachable!("Chart axis crossings were validated"),
+            }
+        } else if let Some(value) = value.as_f64() {
+            if horizontal_handle
+                && !component
+                    .props
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|chart_type| chart_type.starts_with("scatter"))
+            {
+                ChartAxisCrossing::CategoryNumber(
+                    u32::try_from(
+                        component.props[property]
+                            .as_u64()
+                            .expect("validated integer category crossing index"),
+                    )
+                    .expect("validated category crossing index"),
+                )
+            } else {
+                ChartAxisCrossing::AxisValue(value)
+            }
+        } else {
+            unreachable!("Chart axis crossings were validated")
         };
         let axis = if horizontal_handle {
             chart.x_axis()
@@ -5642,14 +5665,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if let Some(style) = chart.style {
         let _ = write!(properties, " style={{{style}}}");
     }
-    for (name, value) in [
-        ("xAxisCrossing", chart.x_axis_crossing),
-        ("yAxisCrossing", chart.y_axis_crossing),
-    ] {
-        if let Some(value) = value {
-            let _ = write!(properties, " {name}=\"{value}\"");
-        }
-    }
+    append_chart_axis_crossing_properties(&mut properties, chart);
     append_chart_axis_value_properties(&mut properties, chart);
     append_chart_axis_reversal_properties(&mut properties, chart);
     append_chart_scatter_axis_display_unit_properties(&mut properties, chart);
@@ -5738,6 +5754,25 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
         properties.push_str(" verticalAxisHidden={true}");
     }
     properties
+}
+
+fn append_chart_axis_crossing_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (name, value) in [
+        ("xAxisCrossing", chart.x_axis_crossing),
+        ("yAxisCrossing", chart.y_axis_crossing),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}=\"{value}\"");
+        }
+    }
+    for (name, value) in [
+        ("xAxisCrossing", chart.x_axis_crossing_value),
+        ("yAxisCrossing", chart.y_axis_crossing_value),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}={{{value}}}");
+        }
+    }
 }
 
 fn append_chart_title_font_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -9039,6 +9074,7 @@ fn parse_chart_xml(
         "tickLblPos",
         "crossAx",
         "crosses",
+        "crossesAt",
         "auto",
         "lblAlgn",
         "lblOffset",
@@ -9339,6 +9375,8 @@ fn parse_chart_xml(
     let mut plot_area_fill_seen = false;
     let mut x_axis_crossing = None;
     let mut y_axis_crossing = None;
+    let mut x_axis_crossing_value = None;
+    let mut y_axis_crossing_value = None;
     let mut x_axis_crossing_seen = false;
     let mut y_axis_crossing_seen = false;
     let mut radar_style = None;
@@ -11147,6 +11185,91 @@ fn parse_chart_xml(
                         if alignment != "center" {
                             category_axis_label_alignment = Some(alignment);
                         }
+                    }
+                    "crossesAt" => {
+                        let Some(chart_type) = chart_type else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has crossesAt before its chart type; retain a supported chart family"
+                            )));
+                        };
+                        let Some(axis_tag) = stack.iter().rev().find(|ancestor| {
+                            matches!(ancestor.as_str(), "catAx" | "dateAx" | "valAx")
+                        }) else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has crossesAt outside a primary chart axis; repair the axis structure"
+                            )));
+                        };
+                        if axis_tag == "dateAx" {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` uses numeric crossesAt on a date axis; restore automatic/min/max or use a non-date category axis"
+                            )));
+                        }
+                        let raw_value = chart_xml_attribute(&event, "val", reader.decoder())?
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has crossesAt without a numeric val; restore a supported chart crossing"
+                            )))?;
+                        let value = raw_value.parse::<f64>().ok().filter(|value| value.is_finite())
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has invalid numeric crossesAt `{raw_value}`; use a finite axis value"
+                            )))?;
+                        let supported_family = matches!(
+                            chart_type,
+                            "area"
+                                | "areaStacked"
+                                | "areaPercentStacked"
+                                | "column"
+                                | "columnStacked"
+                                | "columnPercentStacked"
+                                | "bar"
+                                | "barStacked"
+                                | "barPercentStacked"
+                                | "line"
+                                | "lineStacked"
+                                | "linePercentStacked"
+                        ) || chart_type.starts_with("scatter");
+                        if !supported_family {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has crossesAt on an unsupported chart family; use an area, column, bar, line, or scatter chart"
+                            )));
+                        }
+                        let horizontal_handle = if chart_type.starts_with("scatter") {
+                            match current_axis_position {
+                                Some("l" | "r") => true,
+                                Some("b" | "t") => false,
+                                _ => {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has a scatter crossesAt without a horizontal or vertical axis position; restore bottom/top or left/right axPos"
+                                    )));
+                                }
+                            }
+                        } else {
+                            let is_bar = chart_type.starts_with("bar");
+                            match axis_tag.as_str() {
+                                "valAx" => !is_bar,
+                                "catAx" => is_bar,
+                                _ => unreachable!("date axes were rejected above"),
+                            }
+                        };
+                        if horizontal_handle
+                            && !chart_type.starts_with("scatter")
+                            && (value.fract() != 0.0 || !(1.0..=1_048_576.0).contains(&value))
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has category crossesAt `{raw_value}` outside the supported 1-based integer category range; repair it to an integer from 1 through 1048576"
+                            )));
+                        }
+                        let (seen, target) = if horizontal_handle {
+                            (&mut x_axis_crossing_seen, &mut x_axis_crossing_value)
+                        } else {
+                            (&mut y_axis_crossing_seen, &mut y_axis_crossing_value)
+                        };
+                        if *seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats the same axis crossing; retain one primary crossing declaration"
+                            )));
+                        }
+                        *seen = true;
+                        *target = Some(value);
                     }
                     "crosses" => {
                         let Some(chart_type) = chart_type else {
@@ -15383,6 +15506,8 @@ fn parse_chart_xml(
         category_axis_on_tick_marks: category_axis_on_tick_marks.then_some(true),
         x_axis_crossing,
         y_axis_crossing,
+        x_axis_crossing_value,
+        y_axis_crossing_value,
         horizontal_axis_hidden: horizontal_axis_hidden.then_some(true),
         vertical_axis_hidden: vertical_axis_hidden.then_some(true),
         y_axis_major_unit,
@@ -16893,14 +17018,13 @@ fn is_supported_chart_attribute(
         ("order" | "period" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
             value.parse::<u32>().is_ok()
         }
-        ("forward" | "backward" | "intercept", "val") => {
+        ("forward" | "backward" | "intercept" | "min" | "max" | "val" | "crossesAt", "val") => {
             value.parse::<f64>().is_ok_and(f64::is_finite)
         }
         ("orientation", "val") => matches!(value, "minMax" | "maxMin"),
         ("logBase", "val") => value
             .parse::<u16>()
             .is_ok_and(|base| (2..=1000).contains(&base)),
-        ("min" | "max" | "val", "val") => value.parse::<f64>().is_ok_and(f64::is_finite),
         ("majorUnit" | "minorUnit", "val") => value
             .parse::<f64>()
             .is_ok_and(|unit| unit.is_finite() && unit > 0.0),
@@ -19782,6 +19906,8 @@ struct WorksheetChart {
     category_axis_on_tick_marks: Option<bool>,
     x_axis_crossing: Option<&'static str>,
     y_axis_crossing: Option<&'static str>,
+    x_axis_crossing_value: Option<f64>,
+    y_axis_crossing_value: Option<f64>,
     horizontal_axis_hidden: Option<bool>,
     vertical_axis_hidden: Option<bool>,
     show_legend: bool,

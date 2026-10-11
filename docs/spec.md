@@ -504,16 +504,22 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   style IDs. This is a preset selector, not a guarantee of identical rendering
   across spreadsheet applications; custom series/area/plot styling remains a
   separate unsupported surface.
-- `Chart.xAxisCrossing?: "automatic" | "min" | "max"` and
-  `Chart.yAxisCrossing?: "automatic" | "min" | "max"` set where the opposite
-  axis crosses each `ChartAxis` handle. They map to OOXML `crosses` values
-  `autoZero`, `min`, and `max`; omission and `automatic` use the default and
-  are folded on reverse. The names follow rust_xlsxwriter's x/y axis handles,
-  including its bar-chart axis swap. Scatter charts support both properties:
-  reverse maps the crossing on the left/right value axis to `xAxisCrossing` and
-  the crossing on the bottom/top value axis to `yAxisCrossing`. Numeric
-  `crossesAt` values and crossing metadata on secondary, date, or ambiguous
-  axes are rejected with repair guidance.
+- `Chart.xAxisCrossing?: "automatic" | "min" | "max" | number` and
+  `Chart.yAxisCrossing?: "automatic" | "min" | "max" | number` set where the
+  opposite axis crosses each `ChartAxis` handle. The string values map to
+  OOXML `crosses` values `autoZero`, `min`, and `max`; omission and
+  `automatic` use the default and are folded on reverse. A numeric value maps
+  to `crossesAt`: `xAxisCrossing` is a 1-based integer category number on
+  column/area/line charts, and a finite numeric value on scatter charts;
+  numeric category crossing is rejected for bar charts because the pinned writer
+  silently ignores `CategoryNumber` on that axis. `yAxisCrossing`
+  is a finite numeric value on Cartesian/scatter value axes. Values must be
+  finite, and category numbers must be positive. The names follow
+  rust_xlsxwriter's x/y axis handles, including its bar-chart axis swap.
+  Scatter reverse maps crossings by bottom/top versus left/right axis
+  orientation. Crossings on date, secondary, or ambiguous axes remain rejected
+  with repair guidance because their date-serial or axis identity semantics
+  cannot be reproduced by this DSL.
 - `Series.showValue?: boolean`, `Series.showCategoryName?: boolean`,
   `Series.showSeriesName?: boolean`, and
   `Series.showPercentage?: boolean` configure per-series data-label contents
