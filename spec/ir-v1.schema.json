@@ -548,6 +548,9 @@
             "autoTitleDeleted": { "type": "boolean" },
             "titleOverlay": { "type": "boolean" },
             "titleFontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
+            "titleFontBold": { "type": "boolean" },
+            "titleFontItalic": { "type": "boolean" },
+            "titleFontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "titleLayout": {
               "type": "object",
               "required": ["x", "y"],
@@ -592,7 +595,13 @@
             "width": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "height": { "type": "integer", "minimum": 1, "maximum": 1790 }
           },
-          "dependentRequired": { "titleLayout": ["title"], "titleFontSize": ["title"] },
+          "dependentRequired": {
+            "titleLayout": ["title"],
+            "titleFontSize": ["title"],
+            "titleFontBold": ["title"],
+            "titleFontItalic": ["title"],
+            "titleFontColor": ["title"]
+          },
           "additionalProperties": false
         },
         "children": {

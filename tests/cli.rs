@@ -182,7 +182,6 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisCrossing"))
         .stdout(predicate::str::contains("chartAreaFillColor"))
         .stdout(predicate::str::contains("titleLayout"))
-        .stdout(predicate::str::contains("titleFontSize"))
         .stdout(predicate::str::contains("plotAreaFillColor"))
         .stdout(predicate::str::contains("plotAreaLayout"))
         .stdout(predicate::str::contains("legendLayout"))
@@ -227,6 +226,19 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("scatterWithLinesAndMarkers"))
         .stdout(predicate::str::contains("scatterWithSmoothLines"))
         .stdout(predicate::str::contains("scatterWithSmoothLinesAndMarkers"));
+}
+
+#[test]
+fn spec_exposes_chart_title_font_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("titleFontSize"))
+        .stdout(predicate::str::contains("titleFontBold"))
+        .stdout(predicate::str::contains("titleFontItalic"))
+        .stdout(predicate::str::contains("titleFontColor"));
 }
 
 #[test]
@@ -987,12 +999,12 @@ fn rejects_title_layout_without_a_static_title() {
 }
 
 #[test]
-fn chart_title_font_size_round_trips_without_a_manifest() {
+fn chart_title_font_styling_round_trips_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("chart-title-font-size.tsx");
     std::fs::write(
         &input,
-        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontSize={16}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontSize={16} titleFontBold={false} titleFontItalic={true} titleFontColor="#336699"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
     )
     .expect("source writes");
     let external = directory.path().join("chart-title-font-size.xlsx");
@@ -1015,6 +1027,9 @@ fn chart_title_font_size_round_trips_without_a_manifest() {
         .success();
     let source = std::fs::read_to_string(&reversed).expect("reverse output reads");
     assert!(source.contains("titleFontSize={16}"), "{source}");
+    assert!(source.contains("titleFontBold={false}"), "{source}");
+    assert!(source.contains("titleFontItalic={true}"), "{source}");
+    assert!(source.contains("titleFontColor=\"#336699\""), "{source}");
     let rebuilt = directory.path().join("chart-title-font-size-rebuilt.xlsx");
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -1053,6 +1068,27 @@ fn rejects_chart_title_font_size_without_a_title() {
         .failure()
         .stderr(predicate::str::contains(
             "Chart.titleFontSize requires Chart.title",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn rejects_chart_title_font_color_without_opaque_rgb_value() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-title-font-color.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontColor="#GGGGGG"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.titleFontColor must be an opaque RGB color",
         ))
         .stderr(predicate::str::contains("suggestion:"));
 }

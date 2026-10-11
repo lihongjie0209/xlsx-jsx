@@ -777,9 +777,43 @@ fn compile_chart(
     if let Some(title) = component.props.get("title").and_then(Value::as_str) {
         chart.title().set_name(title);
     }
-    if let Some(size) = component.props.get("titleFontSize").and_then(Value::as_f64) {
+    if component.props.contains_key("titleFontSize")
+        || component.props.contains_key("titleFontBold")
+        || component.props.contains_key("titleFontItalic")
+        || component.props.contains_key("titleFontColor")
+    {
         let mut font = rust_xlsxwriter::ChartFont::new();
-        font.set_size(size);
+        if let Some(size) = component.props.get("titleFontSize").and_then(Value::as_f64) {
+            font.set_size(size);
+        }
+        match component
+            .props
+            .get("titleFontBold")
+            .and_then(Value::as_bool)
+        {
+            Some(true) => {
+                font.set_bold();
+            }
+            Some(false) => {
+                font.unset_bold();
+            }
+            None => {}
+        }
+        if component
+            .props
+            .get("titleFontItalic")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            font.set_italic();
+        }
+        if let Some(color) = component
+            .props
+            .get("titleFontColor")
+            .and_then(Value::as_str)
+        {
+            font.set_color(color);
+        }
         chart.title().set_font(&font);
     }
     if let Some(layout) = component.props.get("titleLayout") {
@@ -5036,6 +5070,15 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if let Some(size) = chart.title_font_size {
         let _ = write!(properties, " titleFontSize={{{size}}}");
     }
+    if let Some(bold) = chart.title_font_bold {
+        let _ = write!(properties, " titleFontBold={{{bold}}}");
+    }
+    if let Some(italic) = chart.title_font_italic {
+        let _ = write!(properties, " titleFontItalic={{{italic}}}");
+    }
+    if let Some(color) = &chart.title_font_color {
+        let _ = write!(properties, " titleFontColor={color:?}");
+    }
     if !chart.legend_deleted_entries.is_empty() {
         let entries = chart
             .legend_deleted_entries
@@ -8117,6 +8160,9 @@ fn parse_chart_xml(
     let mut chart_title: Option<String> = None;
     let mut title_font_size: Option<f64> = None;
     let mut title_font_size_seen = false;
+    let mut title_font_bold: Option<bool> = None;
+    let mut title_font_italic: Option<bool> = None;
+    let mut title_font_color: Option<String> = None;
     let mut title_overlay = false;
     let mut title_overlay_seen = false;
     let mut x_axis_title: Option<String> = None;
@@ -8285,6 +8331,28 @@ fn parse_chart_xml(
                 if matches!(tag.as_str(), "rPr" | "defRPr")
                     && stack.iter().any(|ancestor| ancestor == "title")
                 {
+                    if chart_title_target != Some("title") {
+                        for key in ["b", "i"] {
+                            if chart_xml_attribute(&event, key, reader.decoder())?.is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported `{tag}@{key}` formatting on an axis or series title; only Chart title font properties are modeled"
+                                )));
+                            }
+                        }
+                    }
+                    for (key, target) in
+                        [("b", &mut title_font_bold), ("i", &mut title_font_italic)]
+                    {
+                        if let Some(value) = chart_xml_attribute(&event, key, reader.decoder())? {
+                            let parsed = parse_xml_bool(&value, part, &format!("{tag}@{key}"))?;
+                            if target.is_some_and(|previous| previous != parsed) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has inconsistent default/run title font `{key}` values; make them identical"
+                                )));
+                            }
+                            *target = Some(parsed);
+                        }
+                    }
                     let size = event
                         .attributes()
                         .with_checks(false)
@@ -8380,6 +8448,8 @@ fn parse_chart_xml(
                         "rPr",
                         "t",
                         "endParaRPr",
+                        "solidFill",
+                        "srgbClr",
                         "layout",
                         "manualLayout",
                         "layoutTarget",
@@ -8491,6 +8561,7 @@ fn parse_chart_xml(
                     chart_type,
                     &stack,
                     current_axis_position,
+                    chart_title_target,
                 )?;
                 if stack.iter().any(|ancestor| ancestor == "dTable")
                     && !matches!(
@@ -11212,6 +11283,33 @@ fn parse_chart_xml(
                             )));
                         }
                     }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|ancestor| ancestor == "title") =>
+                    {
+                        if chart_title_target != Some("title") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has custom axis or series title font color; only Chart.titleFontColor is modeled"
+                            )));
+                        }
+                        let color =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "srgbClr")?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB chart-title font color; use one opaque six-digit RGB color"
+                            )));
+                        }
+                        let color = format!("#{}", color.to_ascii_uppercase());
+                        if title_font_color
+                            .as_ref()
+                            .is_some_and(|previous| previous != &color)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent default/run title font colors; make them identical"
+                            )));
+                        }
+                        title_font_color = Some(color);
+                    }
                     "spPr" => {
                         let has_supported_parent =
                             stack.last().is_some_and(|ancestor| ancestor == "ser")
@@ -12404,6 +12502,9 @@ fn parse_chart_xml(
         name: anchor.name,
         title: chart_title,
         title_font_size,
+        title_font_bold,
+        title_font_italic,
+        title_font_color,
         title_overlay,
         chart_area_fill_color,
         plot_area_fill_color,
@@ -13035,6 +13136,10 @@ fn resolve_scatter_chart_type(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Attribute acceptance depends on the chart XML stack and active title target."
+)]
 fn audit_chart_attributes(
     event: &BytesStart<'_>,
     tag: &str,
@@ -13043,6 +13148,7 @@ fn audit_chart_attributes(
     chart_type: Option<&'static str>,
     stack: &[String],
     current_axis_position: Option<&'static str>,
+    chart_title_target: Option<&'static str>,
 ) -> xlsx_jsx::Result<()> {
     for attribute in event.attributes().with_checks(false) {
         let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
@@ -13063,8 +13169,19 @@ fn audit_chart_attributes(
             && stack.iter().any(|ancestor| ancestor == "title")
             && stack.iter().any(|ancestor| ancestor == "valAx")
             && matches!(current_axis_position, Some("l" | "r"));
+        let is_supported_chart_title_font_attribute = chart_title_target == Some("title")
+            && stack.iter().any(|ancestor| ancestor == "title")
+            && matches!(tag, "rPr" | "defRPr")
+            && match (key.as_str(), value.as_str()) {
+                ("sz", value) => value
+                    .parse::<u32>()
+                    .is_ok_and(|size| (100..=400_000).contains(&size)),
+                ("b" | "i", "0" | "1" | "true" | "false") | ("baseline", "0") => true,
+                _ => false,
+            };
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
+            && !is_supported_chart_title_font_attribute
         {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` has unsupported `{tag}@{key}={value}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
@@ -13096,6 +13213,25 @@ fn chart_element_val_attribute(
                 "chart part `{part}` has {tag} without val; add the explicit OOXML value"
             ))
         })
+}
+
+fn chart_xml_attribute(
+    event: &BytesStart<'_>,
+    key: &str,
+    decoder: quick_xml::encoding::Decoder,
+) -> xlsx_jsx::Result<Option<String>> {
+    event
+        .attributes()
+        .with_checks(false)
+        .filter_map(Result::ok)
+        .find(|attribute| attribute.key.local_name().as_ref() == key.as_bytes())
+        .map(|attribute| {
+            attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+                .map(std::borrow::Cow::into_owned)
+                .map_err(|error| Error::Reverse(error.to_string()))
+        })
+        .transpose()
 }
 
 fn normalize_chart_legend_deletions(
@@ -13336,9 +13472,6 @@ fn is_supported_chart_attribute(
 ) -> bool {
     match (tag, key) {
         ("lang", "val") | ("endParaRPr" | "rPr", "lang") => value == "en-US",
-        ("rPr" | "defRPr", "sz") => value
-            .parse::<u32>()
-            .is_ok_and(|size| (100..=400_000).contains(&size)),
         ("barDir", "val") => matches!(value, "col" | "bar"),
         ("radarStyle", "val") => {
             chart_type == Some("radar") && matches!(value, "standard" | "marker" | "filled")
@@ -16142,6 +16275,9 @@ struct WorksheetChart {
     name: String,
     title: Option<String>,
     title_font_size: Option<f64>,
+    title_font_bold: Option<bool>,
+    title_font_italic: Option<bool>,
+    title_font_color: Option<String>,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     plot_area_fill_color: Option<String>,

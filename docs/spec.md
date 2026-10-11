@@ -163,8 +163,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   External titles are reversible only when they are one unformatted rich-text
   run; formulas and multiple runs fail with guidance. `titleFontSize?: number`
   sets that run's font size in points (1–4000) and reverses the explicit
-  DrawingML hundredths-of-a-point size. Other custom title formatting remains
-  rejected unless it has an explicit DSL property.
+  DrawingML hundredths-of-a-point size. `titleFontBold?: boolean`,
+  `titleFontItalic?: boolean`, and `titleFontColor?: "#RRGGBB"` model explicit
+  bold (including `false`, which disables Excel's default bold title), italic,
+  and opaque RGB run color. All title font properties require `title`; theme,
+  indexed, automatic, and translucent colors plus other font properties remain
+  rejected unless they have an explicit DSL property.
 - `Chart.titleLayout?: { x, y }` manually positions a static chart title using
   finite relative fractions in `[0, 1]` of the chart width and height. The
   writer uses outer/default layout target and edge positioning. It requires

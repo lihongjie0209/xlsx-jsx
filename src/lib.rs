@@ -1945,6 +1945,9 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleOverlay",
             "titleLayout",
             "titleFontSize",
+            "titleFontBold",
+            "titleFontItalic",
+            "titleFontColor",
             "chartAreaFillColor",
             "plotAreaFillColor",
             "plotAreaLayout",
@@ -2162,24 +2165,7 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 }
 
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
-    if let Some(value) = chart.props.get("titleFontSize") {
-        let Some(size) = value.as_f64() else {
-            return Err(Error::Compile(
-                "Chart.titleFontSize must be a number in points; use a numeric value from 1 to 4000".into(),
-            ));
-        };
-        if !size.is_finite() || !(1.0..=4000.0).contains(&size) {
-            return Err(Error::Compile(
-                "Chart.titleFontSize must be between 1 and 4000 points; choose a value in that range".into(),
-            ));
-        }
-    }
-    if chart.props.contains_key("titleFontSize") && !chart.props.contains_key("title") {
-        return Err(Error::Compile(
-            "Chart.titleFontSize requires Chart.title; add a static title or remove titleFontSize"
-                .into(),
-        ));
-    }
+    validate_chart_title_font_properties(chart)?;
     if chart.props.contains_key("titleLayout") && !chart.props.contains_key("title") {
         return Err(Error::Compile(
             "Chart.titleLayout requires Chart.title; add a static title or remove titleLayout"
@@ -2237,6 +2223,62 @@ fn validate_chart_text_properties(chart: &Node) -> Result<()> {
                     "Chart.{property} `{value}` looks like a sheet-qualified A1 reference, which rust_xlsxwriter interprets as a formula; rephrase it as literal text"
                 )));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_title_font_properties(chart: &Node) -> Result<()> {
+    if let Some(value) = chart.props.get("titleFontSize") {
+        let Some(size) = value.as_f64() else {
+            return Err(Error::Compile(
+                "Chart.titleFontSize must be a number in points; use a numeric value from 1 to 4000".into(),
+            ));
+        };
+        if !size.is_finite() || !(1.0..=4000.0).contains(&size) {
+            return Err(Error::Compile(
+                "Chart.titleFontSize must be between 1 and 4000 points; choose a value in that range".into(),
+            ));
+        }
+    }
+    if chart.props.contains_key("titleFontSize") && !chart.props.contains_key("title") {
+        return Err(Error::Compile(
+            "Chart.titleFontSize requires Chart.title; add a static title or remove titleFontSize"
+                .into(),
+        ));
+    }
+    for property in ["titleFontBold", "titleFontItalic"] {
+        if let Some(value) = chart.props.get(property)
+            && !value.is_boolean()
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be a boolean; use true or false"
+            )));
+        }
+        if chart.props.contains_key(property) && !chart.props.contains_key("title") {
+            return Err(Error::Compile(format!(
+                "Chart.{property} requires Chart.title; add a static title or remove {property}"
+            )));
+        }
+    }
+    if let Some(value) = chart.props.get("titleFontColor") {
+        let Some(color) = value.as_str() else {
+            return Err(Error::Compile(
+                "Chart.titleFontColor must be an opaque RGB color like #336699; use a quoted six-digit hex color".into(),
+            ));
+        };
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Compile(
+                "Chart.titleFontColor must be an opaque RGB color like #336699; use exactly six hexadecimal digits after #".into(),
+            ));
+        }
+        if !chart.props.contains_key("title") {
+            return Err(Error::Compile(
+                "Chart.titleFontColor requires Chart.title; add a static title or remove titleFontColor".into(),
+            ));
         }
     }
     Ok(())

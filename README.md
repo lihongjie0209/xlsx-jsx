@@ -83,7 +83,7 @@ xlsx-jsx spec --format json
 | Automatic chart title | yes | yes | `autoTitleDeleted={true}` suppresses Excel's generated single-series title; it cannot be combined with an explicit `title` |
 | Chart title overlay | yes | yes (supported subset) | `titleOverlay={true}` draws an explicit chart title over the plot area; it requires `title` |
 | Chart title layout | yes | yes (supported subset) | `titleLayout={{x: 0.25, y: 0.15}}` manually positions a static chart title with reversible fractional offsets (0–1, including 0); it requires `title` |
-| Chart title font size | yes | yes | `titleFontSize={16}` sets and reverses a static title's font size in points; it requires `title` |
+| Chart title font styling | yes | yes (supported subset) | `titleFontSize={16}`, `titleFontBold={false}`, `titleFontItalic={true}`, and `titleFontColor="#336699"` preserve explicit static-title run styling; all require `title` |
 | Chart and plot area fills/layout | yes | yes (supported subset) | `chartAreaFillColor="#FFFFFF"`, `plotAreaFillColor="#F2F2F2"`, and `plotAreaLayout={{x: 0.2, y: 0.3, width: 0.7, height: 0.5}}` round-trip opaque RGB fills and exact inner/edge manual geometry; patterns, gradients, transparency, custom borders, and other layout modes are rejected |
 | Date category axes | yes | yes (supported subset) | `categoryAxisType="date"` supports day/month/year time units and ISO `categoryAxisMinDate` / `categoryAxisMaxDate` bounds; scatter, pie, and doughnut have no category axis |
 | Scatter axis bounds | yes | yes | `xAxisMin` / `xAxisMax` and `yAxisMin` / `yAxisMax` preserve the horizontal and vertical value-axis scales independently |
