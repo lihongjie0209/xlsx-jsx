@@ -762,6 +762,8 @@
             "style": { "type": "integer", "minimum": 1, "maximum": 48 },
             "xAxisCrossing": { "oneOf": [{ "enum": ["automatic", "min", "max"] }, { "type": "number" }] },
             "yAxisCrossing": { "oneOf": [{ "enum": ["automatic", "min", "max"] }, { "type": "number" }] },
+            "x2AxisCrossing": { "oneOf": [{ "enum": ["automatic", "min", "max"] }, { "type": "number" }] },
+            "y2AxisCrossing": { "oneOf": [{ "enum": ["automatic", "min", "max"] }, { "type": "number" }] },
             "width": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "height": { "type": "integer", "minimum": 1, "maximum": 1790 }
           },
@@ -1134,7 +1136,9 @@
                     { "required": ["x2AxisMajorGridlines"] },
                     { "required": ["x2AxisMinorGridlines"] },
                     { "required": ["y2AxisMajorGridlines"] },
-                    { "required": ["y2AxisMinorGridlines"] }
+                    { "required": ["y2AxisMinorGridlines"] },
+                    { "required": ["x2AxisCrossing"] },
+                    { "required": ["y2AxisCrossing"] }
                   ]
                 }
               }

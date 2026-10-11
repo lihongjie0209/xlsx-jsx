@@ -2894,7 +2894,12 @@ fn configure_chart_axis_crossings(chart: &mut Chart, component: &Node) {
         .get("type")
         .and_then(Value::as_str)
         .is_some_and(|chart_type| chart_type.starts_with("bar"));
-    for (property, horizontal_handle) in [("xAxisCrossing", true), ("yAxisCrossing", false)] {
+    for (property, horizontal_handle, secondary) in [
+        ("xAxisCrossing", true, false),
+        ("yAxisCrossing", false, false),
+        ("x2AxisCrossing", true, true),
+        ("y2AxisCrossing", false, true),
+    ] {
         let Some(value) = component.props.get(property) else {
             continue;
         };
@@ -2931,10 +2936,11 @@ fn configure_chart_axis_crossings(chart: &mut Chart, component: &Node) {
         } else {
             unreachable!("Chart axis crossings were validated")
         };
-        let axis = if horizontal_handle {
-            chart.x_axis()
-        } else {
-            chart.y_axis()
+        let axis = match (secondary, horizontal_handle) {
+            (false, true) => chart.x_axis(),
+            (false, false) => chart.y_axis(),
+            (true, true) => chart.x2_axis(),
+            (true, false) => chart.y2_axis(),
         };
         axis.set_crossing(crossing);
     }
@@ -6871,6 +6877,22 @@ fn append_chart_axis_crossing_properties(properties: &mut String, chart: &Worksh
             let _ = write!(properties, " {name}={{{value}}}");
         }
     }
+    for (name, value) in [
+        ("x2AxisCrossing", chart.x2_axis_crossing),
+        ("y2AxisCrossing", chart.y2_axis_crossing),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}=\"{value}\"");
+        }
+    }
+    for (name, value) in [
+        ("x2AxisCrossing", chart.x2_axis_crossing_value),
+        ("y2AxisCrossing", chart.y2_axis_crossing_value),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}={{{value}}}");
+        }
+    }
 }
 
 fn append_chart_title_font_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -10250,6 +10272,10 @@ struct ParsedSecondaryChartGroups {
     secondary_value_axis_minor_unit: Option<f64>,
     secondary_value_axis_log_base: Option<u16>,
     secondary_value_axis_reversed: Option<bool>,
+    x2_axis_crossing: Option<&'static str>,
+    y2_axis_crossing: Option<&'static str>,
+    x2_axis_crossing_value: Option<f64>,
+    y2_axis_crossing_value: Option<f64>,
 }
 
 #[derive(Default)]
@@ -10467,6 +10493,8 @@ fn parse_secondary_chart_groups(
     let mut reader = XmlReader::from_str(xml);
     let mut stack = Vec::<String>::new();
     let mut groups = Vec::<Vec<u32>>::new();
+    let mut group_types = Vec::<String>::new();
+    let mut group_is_bar = Vec::<bool>::new();
     let mut series_groups = Vec::<usize>::new();
     let mut axes = Vec::<ParsedChartAxisInfo>::new();
     let mut current_group = None;
@@ -10506,6 +10534,8 @@ fn parse_secondary_chart_groups(
                 }
                 if group_tags.contains(&tag.as_str()) && parent == Some("plotArea") {
                     groups.push(Vec::new());
+                    group_types.push(tag.clone());
+                    group_is_bar.push(false);
                     current_group = Some(groups.len() - 1);
                 } else if axis_tags.contains(&tag.as_str()) && parent == Some("plotArea") {
                     axes.push(ParsedChartAxisInfo {
@@ -10577,6 +10607,25 @@ fn parse_secondary_chart_groups(
                             .is_some_and(|value| matches!(value.as_str(), "1" | "true"));
                     }
                     axes[index].tags.push((tag.clone(), attributes));
+                }
+                if tag == "barDir"
+                    && let Some(index) = current_group
+                {
+                    let direction = event
+                        .attributes()
+                        .with_checks(false)
+                        .filter_map(Result::ok)
+                        .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                        .and_then(|attribute| {
+                            attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    reader.decoder(),
+                                )
+                                .ok()
+                                .map(std::borrow::Cow::into_owned)
+                        });
+                    group_is_bar[index] = direction.as_deref() == Some("bar");
                 }
                 // Empty elements do not affect the traversal stack.
                 if !empty {
@@ -10677,6 +10726,8 @@ fn parse_secondary_chart_groups(
         )));
     }
     let secondary_group_index = secondary_group_matches[0];
+    let secondary_is_bar = group_is_bar[secondary_group_index];
+    let secondary_is_scatter = group_types[secondary_group_index] == "scatterChart";
     let secondary_axis_indices = group_axis_indices[secondary_group_index].clone();
     if groups.len() == 2 {
         let primary_group_index = 1 - secondary_group_index;
@@ -10710,6 +10761,10 @@ fn parse_secondary_chart_groups(
     let mut secondary_value_axis_minor_unit = None;
     let mut secondary_value_axis_log_base = None;
     let mut secondary_value_axis_reversed = None;
+    let mut x2_axis_crossing = None;
+    let mut y2_axis_crossing = None;
+    let mut x2_axis_crossing_value = None;
+    let mut y2_axis_crossing_value = None;
     for index in &secondary_axis_indices {
         let parsed_axis = &axes[*index];
         let position = parsed_axis
@@ -10723,6 +10778,107 @@ fn parse_secondary_chart_groups(
             Some("l" | "r") => Some(2),
             _ => None,
         };
+        let has_crossing = parsed_axis
+            .tags
+            .iter()
+            .any(|(tag, _)| matches!(tag.as_str(), "crosses" | "crossesAt"));
+        let horizontal_handle = if secondary_is_scatter {
+            match position {
+                Some("l" | "r") => Some(true),
+                Some("b" | "t") => Some(false),
+                _ => None,
+            }
+        } else {
+            match parsed_axis.kind.as_deref() {
+                Some("valAx") => Some(!secondary_is_bar),
+                Some("catAx" | "dateAx") => Some(secondary_is_bar),
+                _ => None,
+            }
+        };
+        let horizontal_handle = match horizontal_handle {
+            Some(horizontal_handle) => horizontal_handle,
+            None if has_crossing => {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has a secondary crossing on an axis without a mappable axis kind/position; restore a supported secondary axis pair"
+                )));
+            }
+            None => false,
+        };
+        let (crossing_target, crossing_value_target) = if horizontal_handle {
+            (&mut x2_axis_crossing, &mut x2_axis_crossing_value)
+        } else {
+            (&mut y2_axis_crossing, &mut y2_axis_crossing_value)
+        };
+        let crossing_at = parsed_axis.tags.iter().find(|(tag, _)| tag == "crossesAt");
+        let crossing_kind = parsed_axis.tags.iter().find(|(tag, _)| tag == "crosses");
+        if secondary_is_bar
+            && horizontal_handle
+            && (crossing_at.is_some()
+                || crossing_kind.is_some_and(|(_, attributes)| {
+                    attributes
+                        .get("val")
+                        .is_some_and(|value| value != "autoZero")
+                }))
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has a non-default secondary category-axis crossing on a horizontal bar chart that rust_xlsxwriter cannot reproduce; remove the crossing or use a column, line, area, or scatter chart"
+            )));
+        }
+        if crossing_at.is_some() && crossing_kind.is_some() {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` secondary axis contains both crosses and crossesAt; keep only one crossing mode"
+            )));
+        }
+        if let Some((_, attributes)) = crossing_at {
+            if parsed_axis.kind.as_deref() == Some("dateAx") {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` uses numeric crossesAt on a secondary date axis; use automatic/min/max or a non-date axis"
+                )));
+            }
+            let raw = attributes.get("val").ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` has secondary crossesAt without a numeric val; restore a supported crossing"
+            )))?;
+            let value = raw.parse::<f64>().ok().filter(|value| value.is_finite()).ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` has invalid secondary crossesAt `{raw}`; use a finite numeric value"
+            )))?;
+            let category_handle = if secondary_is_bar {
+                !horizontal_handle
+            } else {
+                horizontal_handle
+            };
+            if category_handle
+                && !secondary_is_scatter
+                && (value.fract() != 0.0 || !(1.0..=1_048_576.0).contains(&value))
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has secondary category crossesAt `{raw}` outside the supported 1-based integer range; use an integer from 1 through 1048576"
+                )));
+            }
+            if crossing_value_target.replace(value).is_some() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats a secondary-axis numeric crossing; retain one per axis"
+                )));
+            }
+        }
+        if let Some((_, attributes)) = crossing_kind {
+            let raw = attributes.get("val").map(String::as_str);
+            let crossing = match raw {
+                Some("autoZero") => None,
+                Some("min") => Some("min"),
+                Some("max") => Some("max"),
+                _ => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported secondary crosses; use autoZero, min, or max"
+                    )));
+                }
+            };
+            if crossing.is_some() && crossing_target.is_some() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats a secondary-axis crossing; retain one per axis"
+                )));
+            }
+            *crossing_target = crossing;
+        }
         for (local_index, gridline) in parsed_axis.gridlines.iter().enumerate() {
             if gridline.presence == ParsedGridlinePresence::Absent {
                 continue;
@@ -10974,6 +11130,10 @@ fn parse_secondary_chart_groups(
         secondary_value_axis_minor_unit,
         secondary_value_axis_log_base,
         secondary_value_axis_reversed,
+        x2_axis_crossing,
+        y2_axis_crossing,
+        x2_axis_crossing_value,
+        y2_axis_crossing_value,
     })
 }
 
@@ -10997,6 +11157,7 @@ fn validate_secondary_axis_defaults(
         "tickLblPos",
         "crossAx",
         "crosses",
+        "crossesAt",
         "auto",
         "lblAlgn",
         "lblOffset",
@@ -11047,7 +11208,7 @@ fn validate_secondary_axis_defaults(
         let allowed_attributes: &[&str] = match tag.as_str() {
             "axId" | "crossAx" | "orientation" | "delete" | "axPos" | "tickLblPos" | "crosses"
             | "auto" | "lblAlgn" | "lblOffset" | "crossBetween" | "min" | "max" | "majorUnit"
-            | "minorUnit" | "logBase" | "srgbClr" | "alpha" | "prstDash" => &["val"],
+            | "minorUnit" | "logBase" | "crossesAt" | "srgbClr" | "alpha" | "prstDash" => &["val"],
             "numFmt" => &["formatCode", "sourceLinked"],
             "bodyPr" => &["rot", "vert"],
             "rPr" => &["lang"],
@@ -11085,6 +11246,10 @@ fn validate_secondary_axis_defaults(
             "tickLblPos" => attributes
                 .get("val")
                 .is_some_and(|value| matches!(value.as_str(), "none" | "nextTo")),
+            "crossesAt" => attributes
+                .get("val")
+                .and_then(|value| value.parse::<f64>().ok())
+                .is_some_and(f64::is_finite),
             "crosses" => attributes
                 .get("val")
                 .is_some_and(|value| matches!(value.as_str(), "autoZero" | "max")),
@@ -19531,6 +19696,10 @@ fn parse_chart_xml(
         secondary_value_axis_minor_unit: secondary_chart_groups.secondary_value_axis_minor_unit,
         secondary_value_axis_log_base: secondary_chart_groups.secondary_value_axis_log_base,
         secondary_value_axis_reversed: secondary_chart_groups.secondary_value_axis_reversed,
+        x2_axis_crossing: secondary_chart_groups.x2_axis_crossing,
+        y2_axis_crossing: secondary_chart_groups.y2_axis_crossing,
+        x2_axis_crossing_value: secondary_chart_groups.x2_axis_crossing_value,
+        y2_axis_crossing_value: secondary_chart_groups.y2_axis_crossing_value,
         x_axis_min,
         x_axis_max,
         x_axis_log_base,
@@ -24035,6 +24204,10 @@ struct WorksheetChart {
     y_axis_crossing: Option<&'static str>,
     x_axis_crossing_value: Option<f64>,
     y_axis_crossing_value: Option<f64>,
+    x2_axis_crossing: Option<&'static str>,
+    y2_axis_crossing: Option<&'static str>,
+    x2_axis_crossing_value: Option<f64>,
+    y2_axis_crossing_value: Option<f64>,
     horizontal_axis_hidden: Option<bool>,
     vertical_axis_hidden: Option<bool>,
     show_legend: bool,

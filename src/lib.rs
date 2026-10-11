@@ -2125,6 +2125,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "style",
             "xAxisCrossing",
             "yAxisCrossing",
+            "x2AxisCrossing",
+            "y2AxisCrossing",
         ],
         "Chart",
     )?;
@@ -2469,10 +2471,27 @@ fn validate_chart_title_layouts(chart: &Node) -> Result<()> {
 
 fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
     let date_axis = chart.props.get("categoryAxisType").and_then(Value::as_str) == Some("date");
-    for property in ["xAxisCrossing", "yAxisCrossing"] {
+    for property in [
+        "xAxisCrossing",
+        "yAxisCrossing",
+        "x2AxisCrossing",
+        "y2AxisCrossing",
+    ] {
         let Some(value) = chart.props.get(property) else {
             continue;
         };
+        let secondary = property.starts_with("x2") || property.starts_with("y2");
+        if secondary && !chart_has_secondary_series(chart) {
+            return Err(Error::Compile(format!(
+                "Chart.{property} requires at least one Series with secondaryAxis={{true}}; add a secondary series or remove {property}"
+            )));
+        }
+        let is_bar = chart_type.starts_with("bar");
+        if is_bar && property == "x2AxisCrossing" && value.as_str() != Some("automatic") {
+            return Err(Error::Compile(
+                "Chart.x2AxisCrossing overrides are unsupported for horizontal bar charts because rust_xlsxwriter drops secondary category-axis crossings; use `automatic` or omit the property".into(),
+            ));
+        }
         if !matches!(
             chart_type,
             "area"
@@ -2510,11 +2529,17 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
             )));
         }
         let is_scatter = chart_type.starts_with("scatter");
-        let is_bar = chart_type.starts_with("bar");
-        let is_category_handle = if is_bar {
-            property == "yAxisCrossing"
+        let horizontal_handle = property.starts_with('x');
+        let is_category_handle = if secondary {
+            if is_bar {
+                !horizontal_handle
+            } else {
+                horizontal_handle
+            }
+        } else if is_bar {
+            !horizontal_handle
         } else {
-            property == "xAxisCrossing"
+            horizontal_handle
         };
         if is_category_handle
             && !is_scatter
@@ -2528,6 +2553,17 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn chart_has_secondary_series(chart: &Node) -> bool {
+    chart.children.iter().any(|child| {
+        child.get("type").and_then(Value::as_str) == Some("Series")
+            && child
+                .get("props")
+                .and_then(|props| props.get("secondaryAxis"))
+                .and_then(Value::as_bool)
+                == Some(true)
+    })
 }
 
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
@@ -4691,6 +4727,8 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
             "x2AxisMinorGridlines",
             "y2AxisMajorGridlines",
             "y2AxisMinorGridlines",
+            "x2AxisCrossing",
+            "y2AxisCrossing",
             "secondaryValueAxisMin",
             "secondaryValueAxisMax",
             "secondaryValueAxisMajorUnit",
@@ -4702,7 +4740,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
         .any(|property| chart.props.contains_key(*property))
     {
         return Err(Error::Compile(
-            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, and gridlines require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties".into(),
+            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, gridlines, and crossings require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties".into(),
         ));
     }
     validate_chart_series_spacing(chart)?;

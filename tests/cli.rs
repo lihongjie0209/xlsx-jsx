@@ -452,6 +452,17 @@ fn spec_exposes_chart_axis_label_font_properties() {
 }
 
 #[test]
+fn spec_exposes_secondary_axis_crossings() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("x2AxisCrossing"))
+        .stdout(predicate::str::contains("y2AxisCrossing"));
+}
+
+#[test]
 fn spec_exposes_chart_data_label_font_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -4190,6 +4201,180 @@ fn secondary_bar_gridlines_map_by_axis_position_and_rebuild() {
 }
 
 #[test]
+fn secondary_axis_crossings_round_trip_without_a_manifest() {
+    for (chart_type, x_crossing, y_crossing, expected_x, expected_y) in [
+        (
+            ChartType::Line,
+            Some(ChartAxisCrossing::CategoryNumber(2)),
+            ChartAxisCrossing::AxisValue(15.0),
+            Some("x2AxisCrossing={2}"),
+            Some("y2AxisCrossing={15}"),
+        ),
+        (
+            ChartType::Scatter,
+            Some(ChartAxisCrossing::AxisValue(2.5)),
+            ChartAxisCrossing::AxisValue(15.0),
+            Some("x2AxisCrossing={2.5}"),
+            Some("y2AxisCrossing={15}"),
+        ),
+        (
+            ChartType::Bar,
+            None,
+            ChartAxisCrossing::CategoryNumber(2),
+            None,
+            Some("y2AxisCrossing={2}"),
+        ),
+    ] {
+        let directory = tempdir().expect("temporary directory is available");
+        let workbook_path = directory.path().join("secondary-crossings.xlsx");
+        let output_path = directory.path().join("secondary-crossings.tsx");
+        let mut workbook = XlsxWorkbook::new();
+        let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+        let mut chart = XlsxChart::new(chart_type);
+        let primary = chart.add_series();
+        primary.set_values("Data!B2:B4");
+        if chart_type == ChartType::Scatter {
+            primary.set_categories("Data!A2:A4");
+        }
+        let secondary = chart.add_series();
+        secondary.set_values("Data!C2:C4").set_secondary_axis(true);
+        if chart_type == ChartType::Scatter {
+            secondary.set_categories("Data!A2:A4");
+        }
+        if let Some(x_crossing) = x_crossing {
+            chart.x2_axis().set_crossing(x_crossing);
+        }
+        chart.y2_axis().set_crossing(y_crossing);
+        worksheet.insert_chart(0, 5, &chart).unwrap();
+        workbook.save(&workbook_path).unwrap();
+
+        Command::cargo_bin("xlsx-jsx")
+            .expect("binary is built")
+            .args(["reverse"])
+            .arg(&workbook_path)
+            .args(["-o"])
+            .arg(&output_path)
+            .assert()
+            .success();
+        let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+        if let Some(expected_x) = expected_x {
+            assert!(source.contains(expected_x), "{source}");
+        }
+        if let Some(expected_y) = expected_y {
+            assert!(source.contains(expected_y), "{source}");
+        }
+
+        let rebuilt_path = directory.path().join("rebuilt-secondary-crossings.xlsx");
+        Command::cargo_bin("xlsx-jsx")
+            .expect("binary is built")
+            .args(["build"])
+            .arg(&output_path)
+            .args(["-o"])
+            .arg(&rebuilt_path)
+            .assert()
+            .success();
+        let rebuilt_source = directory.path().join("rebuilt-secondary-crossings.tsx");
+        Command::cargo_bin("xlsx-jsx")
+            .expect("binary is built")
+            .args(["reverse"])
+            .arg(&rebuilt_path)
+            .args(["-o"])
+            .arg(&rebuilt_source)
+            .assert()
+            .success();
+        let rebuilt = std::fs::read_to_string(rebuilt_source).expect("rebuilt JSX exists");
+        if let Some(expected_x) = expected_x {
+            assert!(rebuilt.contains(expected_x), "{rebuilt}");
+        }
+        if let Some(expected_y) = expected_y {
+            assert!(rebuilt.contains(expected_y), "{rebuilt}");
+        }
+    }
+}
+
+#[test]
+fn secondary_axis_crossings_require_a_secondary_series() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("secondary-crossing-without-series.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" x2AxisCrossing={2}><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.x2AxisCrossing requires at least one Series with secondaryAxis={true}",
+        ));
+}
+
+#[test]
+fn rejects_unserializable_secondary_bar_crossing_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("secondary-bar-crossing.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="bar" cell="D2" x2AxisCrossing={4}><Series values="Data!B2:B4" /><Series values="Data!C2:C4" secondaryAxis={true} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "rust_xlsxwriter drops secondary category-axis crossings",
+        ))
+        .stderr(predicate::str::contains(
+            "use `automatic` or omit the property",
+        ));
+}
+
+#[test]
+fn reverse_rejects_secondary_bar_crossings_the_writer_drops() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-secondary-bar-crossing.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Bar);
+    chart.add_series().set_values("Data!B2:B4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_secondary_axis(true);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    rewrite_part(&workbook_path, "xl/charts/chart1.xml", |xml| {
+        assert!(xml.contains("<c:delete val=\"1\"/>"));
+        xml.replacen(
+            "<c:delete val=\"1\"/>",
+            "<c:delete val=\"1\"/><c:crosses val=\"max\"/>",
+            1,
+        )
+    });
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "secondary category-axis crossing on a horizontal bar chart that rust_xlsxwriter cannot reproduce",
+        ))
+        .stderr(predicate::str::contains("remove the crossing"));
+}
+
+#[test]
 fn secondary_axis_gridlines_require_a_secondary_series() {
     let directory = tempdir().expect("temporary directory is available");
     let source = directory.path().join("gridlines-without-secondary.tsx");
@@ -4205,7 +4390,7 @@ fn secondary_axis_gridlines_require_a_secondary_series() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, and gridlines require at least one Series with secondaryAxis={true}",
+            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, gridlines, and crossings require at least one Series with secondaryAxis={true}",
         ));
 }
 

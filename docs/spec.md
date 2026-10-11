@@ -115,6 +115,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   visible; transparency requires color. Reverse maps by secondary axis IDs and
   physical `axPos`, including bar-axis swaps, and preserves the supported RGB
   `ChartLine` subset. Gridline fills, effects, and extensions remain rejected.
+  `Chart.x2AxisCrossing?` and `Chart.y2AxisCrossing?` use the same
+  `"automatic" | "min" | "max" | number` values as primary crossings and
+  require at least one secondary series. Numeric values use positive 1-based
+  category indexes on category handles and finite values on numeric handles,
+  including horizontal-bar handle swaps. On horizontal bar charts, explicit
+  `x2AxisCrossing` overrides are rejected because the pinned writer drops them;
+  `automatic` is the only accepted value for that property. Reverse resolves
+  the secondary pair through chart-group axis IDs and bar direction before
+  mapping handle semantics. Numeric date-axis crossings and ambiguous axis
+  structures remain rejected.
   `Chart.secondaryValueAxisMin?` and `Chart.secondaryValueAxisMax?` set finite
   numeric bounds on the secondary value axis only. Both bounds may be omitted
   for automatic scaling; if both are present, minimum must be less than maximum.
@@ -634,9 +644,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   numbers must be positive integers. The names follow rust_xlsxwriter's x/y
   axis handles, including its bar-chart axis swap.
   Scatter reverse maps crossings by bottom/top versus left/right axis
-  orientation. Crossings on date, secondary, or ambiguous axes remain rejected
-  with repair guidance because their date-serial or axis identity semantics
-  cannot be reproduced by this DSL.
+  orientation. Numeric date-axis crossings and ambiguous axis structures
+  remain rejected with repair guidance because their date-serial or axis
+  identity semantics cannot be reproduced by this DSL.
 - `Series.showValue?: boolean`, `Series.showCategoryName?: boolean`,
   `Series.showSeriesName?: boolean`, and
   `Series.showPercentage?: boolean` configure per-series data-label contents
