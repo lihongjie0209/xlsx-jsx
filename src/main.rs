@@ -797,6 +797,14 @@ fn compile_chart(
         };
         chart.legend().set_position(position);
     }
+    if component
+        .props
+        .get("legendOverlay")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        chart.legend().set_overlay(true);
+    }
     if let Some(width) = component.props.get("width").and_then(Value::as_u64) {
         chart.set_width(u32::try_from(width).expect("validated Chart.width"));
     }
@@ -4548,6 +4556,9 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if chart.drop_lines == Some(true) {
         properties.push_str(" dropLines={true}");
     }
+    if chart.legend_overlay == Some(true) {
+        properties.push_str(" legendOverlay={true}");
+    }
     if chart.show_hidden_data == Some(true) {
         properties.push_str(" showHiddenData={true}");
     }
@@ -7445,6 +7456,7 @@ fn parse_chart_xml(
         "numFmt",
         "legend",
         "legendPos",
+        "overlay",
         "delete",
         "printSettings",
         "headerFooter",
@@ -7589,6 +7601,8 @@ fn parse_chart_xml(
     let mut legend_deleted = false;
     let mut legend_delete_seen = false;
     let mut legend_position: Option<&'static str> = None;
+    let mut legend_overlay = false;
+    let mut legend_overlay_seen = false;
     let mut hole_size = None;
     let mut hole_size_seen = false;
     let mut first_slice_angle = None;
@@ -8525,6 +8539,26 @@ fn parse_chart_xml(
                                 });
                             }
                         }
+                    }
+                    "overlay" => {
+                        if stack.last().is_none_or(|parent| parent != "legend")
+                            || legend_overlay_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or misplaced legend overlay; keep one overlay setting inside legend"
+                            )));
+                        }
+                        legend_overlay_seen = true;
+                        legend_overlay = parse_xml_bool(
+                            &chart_element_val_attribute(
+                                &event,
+                                part,
+                                reader.decoder(),
+                                "overlay",
+                            )?,
+                            part,
+                            "overlay",
+                        )?;
                     }
                     "delete" => {
                         let raw_hidden = event
@@ -10486,6 +10520,11 @@ fn parse_chart_xml(
         hole_size = Some(10);
     }
     let show_legend = legend_seen && !legend_deleted;
+    if !show_legend && legend_overlay {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` overlays a deleted legend; restore a visible legend or remove the overlay setting"
+        )));
+    }
     if !show_legend && legend_position.is_some_and(|position| position != "right") {
         return Err(Error::Reverse(format!(
             "chart part `{part}` has a hidden legend with a non-default position; remove legendPos because it cannot be reproduced while hidden"
@@ -10583,6 +10622,7 @@ fn parse_chart_xml(
         gridline_styles,
         show_legend,
         legend_position: legend_position.filter(|position| *position != "right"),
+        legend_overlay: legend_overlay.then_some(true),
         hole_size: hole_size.filter(|size| *size != 50),
         first_slice_angle: first_slice_angle.filter(|angle| *angle != 0),
         style: chart_style,
@@ -11368,7 +11408,7 @@ fn is_supported_chart_attribute(
         ("showLegendKey" | "showLeaderLines", "val") => {
             matches!(value, "0" | "1" | "false" | "true")
         }
-        ("showHorzBorder" | "showVertBorder" | "showOutline" | "showKeys", "val") => {
+        ("showHorzBorder" | "showVertBorder" | "showOutline" | "showKeys" | "overlay", "val") => {
             matches!(value, "0" | "1" | "false" | "true")
         }
         ("ext", "uri") => matches!(
@@ -14078,6 +14118,7 @@ struct WorksheetChart {
     vertical_axis_hidden: Option<bool>,
     show_legend: bool,
     legend_position: Option<&'static str>,
+    legend_overlay: Option<bool>,
     hole_size: Option<u8>,
     first_slice_angle: Option<u16>,
     style: Option<u8>,

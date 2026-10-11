@@ -1925,6 +1925,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "horizontalAxisHidden",
             "verticalAxisHidden",
             "showLegend",
+            "legendOverlay",
             "legendPosition",
             "holeSize",
             "firstSliceAngle",
@@ -2668,6 +2669,22 @@ fn validate_chart_legend(chart: &Node) -> Result<()> {
     {
         return Err(Error::Compile(
             "Chart cannot set legendPosition when showLegend={false}; remove legendPosition or show the legend".into(),
+        ));
+    }
+    if chart
+        .props
+        .get("legendOverlay")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(Error::Compile(
+            "Chart.legendOverlay must be a boolean; use true or false".into(),
+        ));
+    }
+    if chart.props.get("legendOverlay").and_then(Value::as_bool) == Some(true)
+        && chart.props.get("showLegend").and_then(Value::as_bool) == Some(false)
+    {
+        return Err(Error::Compile(
+            "Chart.legendOverlay requires a visible legend; remove legendOverlay or set showLegend={true}".into(),
         ));
     }
     if let Some(value) = chart.props.get("legendPosition") {

@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.71
+Version: 1.72
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -311,6 +311,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   false flags and the comma separator are omitted. Custom label text, fonts,
   and point-specific labels are not represented and are rejected with repair
   guidance.
+- `Chart.legendOverlay?: boolean` places the visible chart legend over the plot area
+  when true. Omission/false keeps the legend outside the plot area. The property
+  requires the legend to remain visible (`showLegend` must not be false). Reverse
+  preserves an enabled `<c:overlay val="1"/>` and folds an explicit false to the
+  default; custom legend positioning/layout is outside this property.
 - `Series.smooth?: boolean` explicitly selects straight or smoothed segments on
   line and scatter series. Omission retains the chart-type default; reverse
   preserves non-default `<c:smooth>` overrides. Explicit `false` where straight
