@@ -92,6 +92,7 @@ xlsx-jsx spec --format json
 | Scatter axis number formats | yes | yes | `xAxisNumberFormat` and `yAxisNumberFormat` apply independently to the horizontal and vertical value axes |
 | Scatter logarithmic axes | yes | yes | `xAxisLogBase` / `yAxisLogBase` independently apply valid base-2–1000 logarithmic scales to scatter X/Y axes |
 | Scatter axis crossing | yes | yes | `xAxisCrossing` / `yAxisCrossing` preserve min/max/automatic crossing positions; reverse resolves top/bottom and left/right axes by orientation |
+| Chart axis title fonts | yes | yes (supported subset) | `xAxisTitleFontSize`, `xAxisTitleFontBold`, `xAxisTitleFontItalic`, `xAxisTitleFontUnderline`, `xAxisTitleFontColor`, and `xAxisTitleFontName` (and matching `yAxisTitleFont*`) preserve supported static axis-title run styling; each requires its matching title |
 | Scatter axis titles | yes | yes | `xAxisTitle` / `yAxisTitle` preserve static axis titles, including when crossings move the axes to the top/right |
 | Scatter axis direction | yes | yes | `xAxisReversed={true}` / `yAxisReversed={true}` reverse the horizontal and vertical value scales independently |
 | Scatter axis display units | yes | yes | `xAxisDisplayUnit` / `yAxisDisplayUnit` independently scale each value axis; corresponding `*Label={false}` hides that unit label |

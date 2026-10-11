@@ -1894,6 +1894,18 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "title",
             "xAxisTitle",
             "yAxisTitle",
+            "xAxisTitleFontSize",
+            "xAxisTitleFontBold",
+            "xAxisTitleFontItalic",
+            "xAxisTitleFontUnderline",
+            "xAxisTitleFontColor",
+            "xAxisTitleFontName",
+            "yAxisTitleFontSize",
+            "yAxisTitleFontBold",
+            "yAxisTitleFontItalic",
+            "yAxisTitleFontUnderline",
+            "yAxisTitleFontColor",
+            "yAxisTitleFontName",
             "xAxisNumberFormat",
             "yAxisNumberFormat",
             "xAxisMajorUnit",
@@ -2171,6 +2183,7 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_title_font_properties(chart)?;
+    validate_chart_axis_title_fonts(chart)?;
     if chart.props.contains_key("titleLayout") && !chart.props.contains_key("title") {
         return Err(Error::Compile(
             "Chart.titleLayout requires Chart.title; add a static title or remove titleLayout"
@@ -2325,6 +2338,72 @@ fn validate_chart_title_font_properties(chart: &Node) -> Result<()> {
             return Err(Error::Compile(format!(
                 "Chart.{property} requires Chart.title; add a static title or remove {property}"
             )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_axis_title_fonts(chart: &Node) -> Result<()> {
+    for axis in ["x", "y"] {
+        let title = format!("{axis}AxisTitle");
+        let prefix = format!("{title}Font");
+        for suffix in ["Size", "Bold", "Italic", "Underline", "Color", "Name"] {
+            let property = format!("{prefix}{suffix}");
+            let Some(value) = chart.props.get(&property) else {
+                continue;
+            };
+            if !chart.props.contains_key(&title) {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} requires Chart.{title}; add the matching axis title or remove {property}"
+                )));
+            }
+            match suffix {
+                "Size"
+                    if value.as_f64().is_none_or(|size| {
+                        !size.is_finite() || !(1.0..=4000.0).contains(&size)
+                    }) =>
+                {
+                    return Err(Error::Compile(format!(
+                        "Chart.{property} must be a number from 1 to 4000 points"
+                    )));
+                }
+                "Bold" | "Italic" | "Underline" if !value.is_boolean() => {
+                    return Err(Error::Compile(format!(
+                        "Chart.{property} must be a boolean; use true or false"
+                    )));
+                }
+                "Color" => {
+                    let Some(color) = value.as_str() else {
+                        return Err(Error::Compile(format!(
+                            "Chart.{property} must be an opaque RGB color like #336699"
+                        )));
+                    };
+                    if color.len() != 7
+                        || !color.starts_with('#')
+                        || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+                    {
+                        return Err(Error::Compile(format!(
+                            "Chart.{property} must be an opaque RGB color like #336699"
+                        )));
+                    }
+                }
+                "Name" => {
+                    let Some(name) = value.as_str() else {
+                        return Err(Error::Compile(format!(
+                            "Chart.{property} must be a non-empty XML-safe typeface name"
+                        )));
+                    };
+                    if name.is_empty()
+                        || name.chars().count() > 255
+                        || !name.chars().all(is_valid_xml_character)
+                    {
+                        return Err(Error::Compile(format!(
+                            "Chart.{property} must contain 1–255 valid XML characters"
+                        )));
+                    }
+                }
+                _ => {}
+            }
         }
     }
     Ok(())

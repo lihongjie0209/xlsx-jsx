@@ -229,6 +229,19 @@ fn spec_exposes_chart_components_and_properties() {
 }
 
 #[test]
+fn spec_exposes_chart_axis_title_font_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("xAxisTitleFontSize"))
+        .stdout(predicate::str::contains("xAxisTitleFontBold"))
+        .stdout(predicate::str::contains("yAxisTitleFontColor"))
+        .stdout(predicate::str::contains("yAxisTitleFontName"));
+}
+
+#[test]
 fn spec_exposes_chart_data_label_font_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -4497,6 +4510,20 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     chart.y_axis().set_crossing(ChartAxisCrossing::Max);
     chart.x_axis().set_name("Sample X");
     chart.y_axis().set_name("Sample Y");
+    chart.x_axis().set_name_font(
+        ChartFont::new()
+            .set_size(14.0)
+            .set_bold()
+            .set_color("#336699")
+            .set_name("Aptos"),
+    );
+    chart.y_axis().set_name_font(
+        ChartFont::new()
+            .set_size(12.0)
+            .set_italic()
+            .set_underline()
+            .set_color("#993366"),
+    );
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
 
@@ -4511,6 +4538,22 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
     assert!(source.contains("xAxisTitle={\"Sample X\"}"), "{source}");
     assert!(source.contains("yAxisTitle={\"Sample Y\"}"), "{source}");
+    assert!(source.contains("xAxisTitleFontSize={14}"), "{source}");
+    assert!(source.contains("xAxisTitleFontBold={true}"), "{source}");
+    assert!(
+        source.contains("xAxisTitleFontColor=\"#336699\""),
+        "{source}"
+    );
+    assert!(source.contains("xAxisTitleFontName=\"Aptos\""), "{source}");
+    assert!(source.contains("yAxisTitleFontItalic={true}"), "{source}");
+    assert!(
+        source.contains("yAxisTitleFontUnderline={true}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("yAxisTitleFontColor=\"#993366\""),
+        "{source}"
+    );
 
     let rebuilt_path = directory.path().join("rebuilt-scatter-titles.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -4524,6 +4567,31 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
     assert!(xml.contains("Sample X"), "{xml}");
     assert!(xml.contains("Sample Y"), "{xml}");
+    assert!(xml.contains("val=\"336699\""), "{xml}");
+    assert!(xml.contains("val=\"993366\""), "{xml}");
+    assert!(xml.contains("Aptos"), "{xml}");
+    assert!(xml.contains("sz=\"1400\" b=\"1\""), "{xml}");
+    assert!(xml.contains("sz=\"1200\" i=\"1\" u=\"sng\""), "{xml}");
+}
+
+#[test]
+fn rejects_axis_title_font_without_matching_title_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-title-font-without-title.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisTitleFontBold={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitleFontBold requires Chart.xAxisTitle",
+        ));
 }
 
 #[test]
@@ -7031,7 +7099,7 @@ fn reverse_rejects_literal_series_titles_that_writer_would_reinterpret() {
 }
 
 #[test]
-fn reverse_rejects_formatted_chart_titles_instead_of_dropping_formatting() {
+fn reverse_preserves_formatted_chart_titles() {
     let directory = tempdir().expect("temporary directory is available");
     let external = directory.path().join("formatted-chart-title.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -7046,20 +7114,21 @@ fn reverse_rejects_formatted_chart_titles_instead_of_dropping_formatting() {
             "<a:rPr lang=\"en-US\" sz=\"1400\"/>",
         )
     });
+    let output = directory.path().join("formatted-chart-title.tsx");
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["reverse"])
         .arg(external)
+        .arg("--output")
+        .arg(&output)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("unsupported `rPr@sz=1400`"))
-        .stderr(predicate::str::contains(
-            "remove custom chart/axis/print formatting",
-        ));
+        .success();
+    let source = std::fs::read_to_string(output).expect("reversed source reads");
+    assert!(source.contains("titleFontSize={14}"), "{source}");
 }
 
 #[test]
-fn reverse_rejects_unmodeled_axis_title_typefaces() {
+fn reverse_preserves_axis_title_typefaces() {
     let directory = tempdir().expect("temporary directory is available");
     let external = directory.path().join("axis-title-typeface.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -7074,16 +7143,17 @@ fn reverse_rejects_unmodeled_axis_title_typefaces() {
             "<a:rPr lang=\"en-US\"><a:latin typeface=\"Aptos\"/></a:rPr>",
         )
     });
+    let output = directory.path().join("axis-title-typeface.tsx");
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["reverse"])
         .arg(external)
+        .arg("--output")
+        .arg(&output)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "unsupported `latin@typeface=Aptos`",
-        ))
-        .stderr(predicate::str::contains("matching DSL and reverse support"));
+        .success();
+    let source = std::fs::read_to_string(output).expect("reversed DSL reads");
+    assert!(source.contains("titleFontName=\"Aptos\""), "{source}");
 }
 
 #[test]

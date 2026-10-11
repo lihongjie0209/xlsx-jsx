@@ -14,21 +14,21 @@ use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisDateUnitType, ChartAxisDisplayUnitType,
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartFormat, ChartLayout, ChartLegendPosition,
-    ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartPoint, ChartSolidFill,
-    ChartTrendline, ChartTrendlineType, ChartType, Color, ConditionalFormat2ColorScale,
-    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
-    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
-    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
-    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
-    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
-    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
-    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
-    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
-    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
-    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
-    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
-    Workbook,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLayout,
+    ChartLegendPosition, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartPoint,
+    ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType, Color,
+    ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
+    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
+    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
+    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
+    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
+    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
+    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
+    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
+    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
+    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
+    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
+    TableColumn, TableStyle, Url, Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -876,6 +876,14 @@ fn compile_chart(
     if let Some(title) = component.props.get("yAxisTitle").and_then(Value::as_str) {
         chart.y_axis().set_name(title);
     }
+    let x_axis_title_font = chart_axis_title_font(component, "x");
+    if has_chart_axis_title_font(component, "x") {
+        chart.x_axis().set_name_font(&x_axis_title_font);
+    }
+    let y_axis_title_font = chart_axis_title_font(component, "y");
+    if has_chart_axis_title_font(component, "y") {
+        chart.y_axis().set_name_font(&y_axis_title_font);
+    }
     configure_chart_axis_number_formats(&mut chart, component);
     configure_chart_axis_bounds(&mut chart, component);
     configure_chart_axis_log_base(&mut chart, component);
@@ -1119,6 +1127,74 @@ fn compile_chart(
         .insert_chart(row, column, &chart)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+}
+
+fn chart_axis_title_font(component: &Node, axis: &str) -> ChartFont {
+    let property = |suffix: &str| format!("{axis}AxisTitleFont{suffix}");
+    let mut font = ChartFont::new();
+    if let Some(size) = component
+        .props
+        .get(&property("Size"))
+        .and_then(Value::as_f64)
+    {
+        font.set_size(size);
+    }
+    if component
+        .props
+        .get(&property("Bold"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        font.set_bold();
+    } else if component
+        .props
+        .get(&property("Bold"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        font.unset_bold();
+    }
+    if component
+        .props
+        .get(&property("Italic"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        font.set_italic();
+    }
+    if component
+        .props
+        .get(&property("Underline"))
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        font.set_underline();
+    }
+    if let Some(color) = component
+        .props
+        .get(&property("Color"))
+        .and_then(Value::as_str)
+    {
+        font.set_color(color);
+    }
+    if let Some(name) = component
+        .props
+        .get(&property("Name"))
+        .and_then(Value::as_str)
+    {
+        font.set_name(name);
+    }
+    font
+}
+
+fn has_chart_axis_title_font(component: &Node, axis: &str) -> bool {
+    ["Size", "Bold", "Italic", "Underline", "Color", "Name"]
+        .iter()
+        .any(|suffix| {
+            component
+                .props
+                .contains_key(&format!("{axis}AxisTitleFont{suffix}"))
+        })
 }
 
 fn configure_chart_series_spacing(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
@@ -5482,6 +5558,7 @@ fn append_chart_title_font_properties(properties: &mut String, chart: &Worksheet
 }
 
 fn append_chart_axis_value_properties(properties: &mut String, chart: &WorksheetChart) {
+    append_chart_axis_title_font_properties(properties, chart);
     for (name, value) in [
         (
             "xAxisTitle",
@@ -5575,6 +5652,49 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
         }
     }
     append_chart_gridline_properties(properties, chart);
+}
+
+fn append_chart_axis_title_font_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (axis, size, bold, italic, underline, color, name) in [
+        (
+            "x",
+            chart.x_axis_title_font_size,
+            chart.x_axis_title_font_bold,
+            chart.x_axis_title_font_italic,
+            chart.x_axis_title_font_underline,
+            chart.x_axis_title_font_color.as_deref(),
+            chart.x_axis_title_font_name.as_deref(),
+        ),
+        (
+            "y",
+            chart.y_axis_title_font_size,
+            chart.y_axis_title_font_bold,
+            chart.y_axis_title_font_italic,
+            chart.y_axis_title_font_underline,
+            chart.y_axis_title_font_color.as_deref(),
+            chart.y_axis_title_font_name.as_deref(),
+        ),
+    ] {
+        let prefix = format!("{axis}AxisTitleFont");
+        if let Some(value) = size {
+            let _ = write!(properties, " {prefix}Size={{{value}}}");
+        }
+        if let Some(value) = bold {
+            let _ = write!(properties, " {prefix}Bold={{{value}}}");
+        }
+        if let Some(value) = italic {
+            let _ = write!(properties, " {prefix}Italic={{{value}}}");
+        }
+        if underline == Some(true) {
+            let _ = write!(properties, " {prefix}Underline={{true}}");
+        }
+        if let Some(value) = color {
+            let _ = write!(properties, " {prefix}Color={value:?}");
+        }
+        if let Some(value) = name {
+            let _ = write!(properties, " {prefix}Name={value:?}");
+        }
+    }
 }
 
 fn append_chart_axis_reversal_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -8548,6 +8668,20 @@ fn parse_chart_xml(
     let mut title_overlay_seen = false;
     let mut x_axis_title: Option<String> = None;
     let mut y_axis_title: Option<String> = None;
+    let mut x_axis_title_font_size: Option<f64> = None;
+    let mut y_axis_title_font_size: Option<f64> = None;
+    let mut x_axis_title_font_size_seen = false;
+    let mut y_axis_title_font_size_seen = false;
+    let mut x_axis_title_font_bold: Option<bool> = None;
+    let mut y_axis_title_font_bold: Option<bool> = None;
+    let mut x_axis_title_font_italic: Option<bool> = None;
+    let mut y_axis_title_font_italic: Option<bool> = None;
+    let mut x_axis_title_font_underline: Option<bool> = None;
+    let mut y_axis_title_font_underline: Option<bool> = None;
+    let mut x_axis_title_font_color: Option<String> = None;
+    let mut y_axis_title_font_color: Option<String> = None;
+    let mut x_axis_title_font_name: Option<String> = None;
+    let mut y_axis_title_font_name: Option<String> = None;
     let mut x_axis_number_format: Option<String> = None;
     let mut y_axis_number_format: Option<String> = None;
     let mut x_axis_number_format_seen = false;
@@ -8798,20 +8932,27 @@ fn parse_chart_xml(
                     && stack.iter().any(|ancestor| ancestor == "title")
                     && !stack.iter().any(|ancestor| ancestor == "trendlineLbl")
                 {
-                    if chart_title_target != Some("title") {
+                    if chart_title_target.is_none() {
                         for key in ["b", "i", "u"] {
                             if chart_xml_attribute(&event, key, reader.decoder())?.is_some() {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` has unsupported `{tag}@{key}` formatting on an axis or series title; only Chart title font properties are modeled"
+                                    "chart part `{part}` has unsupported `{tag}@{key}` formatting outside a chart or primary-axis title; add a matching DSL property or remove the formatting"
                                 )));
                             }
                         }
                     }
-                    for (key, target) in
-                        [("b", &mut title_font_bold), ("i", &mut title_font_italic)]
-                    {
+                    for key in ["b", "i"] {
                         if let Some(value) = chart_xml_attribute(&event, key, reader.decoder())? {
                             let parsed = parse_xml_bool(&value, part, &format!("{tag}@{key}"))?;
+                            let target = match (chart_title_target, key) {
+                                (Some("title"), "b") => &mut title_font_bold,
+                                (Some("title"), "i") => &mut title_font_italic,
+                                (Some("xAxisTitle"), "b") => &mut x_axis_title_font_bold,
+                                (Some("xAxisTitle"), "i") => &mut x_axis_title_font_italic,
+                                (Some("yAxisTitle"), "b") => &mut y_axis_title_font_bold,
+                                (Some("yAxisTitle"), "i") => &mut y_axis_title_font_italic,
+                                _ => continue,
+                            };
                             if target.is_some_and(|previous| previous != parsed) {
                                 return Err(Error::Reverse(format!(
                                     "chart part `{part}` has inconsistent default/run title font `{key}` values; make them identical"
@@ -8830,7 +8971,12 @@ fn parse_chart_xml(
                                 )));
                             }
                         };
-                        let target = &mut title_font_underline;
+                        let target = match chart_title_target {
+                            Some("title") => &mut title_font_underline,
+                            Some("xAxisTitle") => &mut x_axis_title_font_underline,
+                            Some("yAxisTitle") => &mut y_axis_title_font_underline,
+                            _ => continue,
+                        };
                         if target.is_some_and(|previous| previous != parsed) {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has inconsistent default/run title font `u` values; make them identical"
@@ -8853,11 +8999,6 @@ fn parse_chart_xml(
                         })
                         .transpose()?;
                     if let Some(size) = size {
-                        if chart_title_target != Some("title") {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has unsupported `{tag}@sz={size}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
-                            )));
-                        }
                         let hundredths = size.parse::<u32>().map_err(|_| {
                             Error::Reverse(format!(
                                 "chart part `{part}` has an invalid chart-title font size `{size}`; use an explicit size from 100 to 400000 hundredths of a point"
@@ -8869,13 +9010,25 @@ fn parse_chart_xml(
                             )));
                         }
                         let points = f64::from(hundredths) / 100.0;
-                        if title_font_size_seen && title_font_size != Some(points) {
+                        let (target, seen) = match chart_title_target {
+                            Some("title") => (&mut title_font_size, &mut title_font_size_seen),
+                            Some("xAxisTitle") => (
+                                &mut x_axis_title_font_size,
+                                &mut x_axis_title_font_size_seen,
+                            ),
+                            Some("yAxisTitle") => (
+                                &mut y_axis_title_font_size,
+                                &mut y_axis_title_font_size_seen,
+                            ),
+                            _ => continue,
+                        };
+                        if *seen && *target != Some(points) {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has inconsistent default/run chart-title font sizes; make them identical or remove the custom formatting"
                             )));
                         }
-                        title_font_size = Some(points);
-                        title_font_size_seen = true;
+                        *target = Some(points);
+                        *seen = true;
                     }
                 }
                 if matches!(tag.as_str(), "rPr" | "defRPr")
@@ -12257,9 +12410,9 @@ fn parse_chart_xml(
                         if stack.last().is_some_and(|parent| parent == "solidFill")
                             && stack.iter().any(|ancestor| ancestor == "title") =>
                     {
-                        if chart_title_target != Some("title") {
+                        if chart_title_target.is_none() {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has custom axis or series title font color; only Chart.titleFontColor is modeled"
+                                "chart part `{part}` has title font color outside a supported chart/axis title; remove it or add matching reverse support"
                             )));
                         }
                         let color =
@@ -12270,20 +12423,23 @@ fn parse_chart_xml(
                             )));
                         }
                         let color = format!("#{}", color.to_ascii_uppercase());
-                        if title_font_color
-                            .as_ref()
-                            .is_some_and(|previous| previous != &color)
-                        {
+                        let target = match chart_title_target {
+                            Some("title") => &mut title_font_color,
+                            Some("xAxisTitle") => &mut x_axis_title_font_color,
+                            Some("yAxisTitle") => &mut y_axis_title_font_color,
+                            _ => unreachable!(),
+                        };
+                        if target.as_ref().is_some_and(|previous| previous != &color) {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has inconsistent default/run title font colors; make them identical"
                             )));
                         }
-                        title_font_color = Some(color);
+                        *target = Some(color);
                     }
                     "latin" if stack.iter().any(|ancestor| ancestor == "title") => {
-                        if chart_title_target != Some("title") {
+                        if chart_title_target.is_none() {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a custom axis or series title typeface; only Chart title font properties are modeled"
+                                "chart part `{part}` has a typeface outside a supported chart/axis title; remove it or add matching reverse support"
                             )));
                         }
                         let name = chart_xml_attribute(&event, "typeface", reader.decoder())?;
@@ -12325,19 +12481,36 @@ fn parse_chart_xml(
                             (Some(0) | None, None) => None,
                             (value, _) => value,
                         };
-                        if title_font_latin_seen
-                            && (title_font_name != name
-                                || title_font_pitch_family != pitch_family
-                                || title_font_charset != charset)
+                        let target_name = match chart_title_target {
+                            Some("title") => &mut title_font_name,
+                            Some("xAxisTitle") => &mut x_axis_title_font_name,
+                            Some("yAxisTitle") => &mut y_axis_title_font_name,
+                            _ => unreachable!(),
+                        };
+                        if target_name
+                            .as_ref()
+                            .is_some_and(|previous| Some(previous) != name.as_ref())
+                            || (chart_title_target == Some("title")
+                                && title_font_latin_seen
+                                && (title_font_pitch_family != pitch_family
+                                    || title_font_charset != charset))
                         {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has inconsistent default/run title typeface metadata; make them identical"
                             )));
                         }
-                        title_font_name = name;
-                        title_font_pitch_family = pitch_family;
-                        title_font_charset = charset;
-                        title_font_latin_seen = true;
+                        if let Some(name) = name {
+                            *target_name = Some(name);
+                        }
+                        if chart_title_target == Some("title") {
+                            title_font_pitch_family = pitch_family;
+                            title_font_charset = charset;
+                            title_font_latin_seen = true;
+                        } else if pitch_family.is_some() || charset.is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported axis-title pitch/charset metadata; remove it because the axis-title DSL models Latin typeface names only"
+                            )));
+                        }
                     }
                     "latin"
                         if stack.iter().any(|ancestor| ancestor == "txPr")
@@ -13769,6 +13942,18 @@ fn parse_chart_xml(
         title_font_charset,
         title_font_underline,
         title_font_rotation,
+        x_axis_title_font_size,
+        x_axis_title_font_bold,
+        x_axis_title_font_italic,
+        x_axis_title_font_underline,
+        x_axis_title_font_color,
+        x_axis_title_font_name,
+        y_axis_title_font_size,
+        y_axis_title_font_bold,
+        y_axis_title_font_italic,
+        y_axis_title_font_underline,
+        y_axis_title_font_color,
+        y_axis_title_font_name,
         title_overlay,
         chart_area_fill_color,
         plot_area_fill_color,
@@ -14566,7 +14751,7 @@ fn audit_chart_attributes(
             } else {
                 false
             };
-        let is_supported_chart_title_font_attribute = chart_title_target == Some("title")
+        let is_supported_chart_title_font_attribute = chart_title_target.is_some()
             && stack.iter().any(|ancestor| ancestor == "title")
             && if matches!(tag, "rPr" | "defRPr") {
                 match (key.as_str(), value.as_str()) {
@@ -14578,12 +14763,14 @@ fn audit_chart_attributes(
                     | ("baseline", "0") => true,
                     _ => false,
                 }
-            } else if tag == "latin" {
+            } else if tag == "latin" && chart_title_target == Some("title") {
                 match key.as_str() {
                     "typeface" => !value.is_empty() && value.chars().all(is_valid_xml_character),
                     "pitchFamily" | "charset" => value.parse::<u8>().is_ok(),
                     _ => false,
                 }
+            } else if tag == "latin" {
+                key == "typeface" && !value.is_empty() && value.chars().all(is_valid_xml_character)
             } else {
                 false
             };
@@ -17708,6 +17895,18 @@ struct WorksheetChart {
     title_font_charset: Option<u8>,
     title_font_underline: Option<bool>,
     title_font_rotation: Option<i16>,
+    x_axis_title_font_size: Option<f64>,
+    x_axis_title_font_bold: Option<bool>,
+    x_axis_title_font_italic: Option<bool>,
+    x_axis_title_font_underline: Option<bool>,
+    x_axis_title_font_color: Option<String>,
+    x_axis_title_font_name: Option<String>,
+    y_axis_title_font_size: Option<f64>,
+    y_axis_title_font_bold: Option<bool>,
+    y_axis_title_font_italic: Option<bool>,
+    y_axis_title_font_underline: Option<bool>,
+    y_axis_title_font_color: Option<String>,
+    y_axis_title_font_name: Option<String>,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     plot_area_fill_color: Option<String>,
