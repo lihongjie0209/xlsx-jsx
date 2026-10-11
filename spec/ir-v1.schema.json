@@ -651,6 +651,25 @@
           }
         },
         {
+          "if": { "properties": { "props": { "properties": { "type": { "enum": ["pie", "doughnut"] } }, "required": ["type"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "children": {
+                "items": {
+                  "properties": {
+                    "props": {
+                      "not": {
+                        "properties": { "deleteFromLegend": { "const": true } },
+                        "required": ["deleteFromLegend"]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
           "not": {
             "properties": {
               "props": {
@@ -668,6 +687,51 @@
               }
             },
             "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": { "showLegend": { "const": false } },
+                "required": ["showLegend"]
+              },
+              "children": {
+                "contains": {
+                  "anyOf": [
+                    {
+                      "properties": {
+                        "type": { "const": "Series" },
+                        "props": {
+                          "properties": { "deleteFromLegend": { "const": true } },
+                          "required": ["deleteFromLegend"]
+                        }
+                      },
+                      "required": ["type", "props"]
+                    },
+                    {
+                      "properties": {
+                        "type": { "const": "Series" },
+                        "children": {
+                          "contains": {
+                            "properties": {
+                              "type": { "const": "Trendline" },
+                              "props": {
+                                "properties": { "deleteFromLegend": { "const": true } },
+                                "required": ["deleteFromLegend"]
+                              }
+                            },
+                            "required": ["type", "props"]
+                          }
+                        }
+                      },
+                      "required": ["type", "children"]
+                    }
+                  ]
+                }
+              }
+            },
+            "required": ["props", "children"]
           }
         }
       ],
@@ -715,6 +779,7 @@
             "showCategoryName": { "type": "boolean" },
             "showSeriesName": { "type": "boolean" },
             "showPercentage": { "type": "boolean" },
+            "deleteFromLegend": { "type": "boolean" },
             "smooth": { "type": "boolean" },
             "invertIfNegative": { "type": "boolean" },
             "labelPosition": { "enum": ["center", "right", "left", "above", "below", "insideBase", "insideEnd", "outsideEnd", "bestFit"] },
@@ -843,7 +908,8 @@
             "period": { "type": "integer", "minimum": 2, "maximum": 3 },
             "forward": { "type": "number", "minimum": 0 },
             "backward": { "type": "number", "minimum": 0 },
-            "intercept": { "type": "number" }
+            "intercept": { "type": "number" },
+            "deleteFromLegend": { "type": "boolean" }
           },
           "additionalProperties": false
         },

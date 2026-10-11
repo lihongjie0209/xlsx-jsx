@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.73
+Version: 1.74
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -131,8 +131,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `intercept`. Zero extrapolation is the default and omitted. Only one trendline
   is allowed per series, on area, bar, column, line, and scatter charts.
   Reverse preserves these calculation settings without a manifest; custom
-  trendline names, line/label formatting, legend deletion, and equation/
-  R-squared labels are rejected with repair guidance.
+  `Trendline.deleteFromLegend?: boolean` removes only this trendline's legend
+  entry; false is the writer default. Reverse preserves the deletion when its
+  chart-level legend index can be mapped uniquely to this trendline. The writer
+  indexes series entries first in Series child order, then trendline entries in
+  series order. Trendline names, line/label formatting, and equation/R-squared
+  labels are rejected with repair guidance.
 - `Series.gap?: integer` (0–500) and `Series.overlap?: integer` (-100–100)
   control the group-level spacing of bar/column charts. Since OOXML stores
   these values on the chart group, declarations across all Series must agree;
@@ -329,6 +333,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   omits that default when rebuilding. `false` cannot override a smoothed scatter
   chart because the pinned writer omits that OOXML override. This property is
   supported only on line and scatter chart families.
+- `Series.deleteFromLegend?: boolean` removes this series' legend entry; false
+  is the writer default. It is only meaningful when the chart legend is visible
+  and is not valid for pie/doughnut charts, whose entries are data points.
+  Reverse maps chart-level legend deletion indices back to the matching Series
+  or Trendline property where possible; otherwise it retains the exact index in
+  `Chart.legendDeletedEntries`.
 - `Series.invertIfNegative?: boolean` enables Excel's inverted fill for
   negative values on bar/column charts. Omission and `false` use the writer's
   default; reverse preserves `true` and folds explicit `false`. Custom

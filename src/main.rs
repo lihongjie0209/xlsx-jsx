@@ -805,27 +805,35 @@ fn compile_chart(
     {
         chart.legend().set_overlay(true);
     }
-    if let Some(entries) = component
+    let mut explicit_legend_entries = component
         .props
         .get("legendDeletedEntries")
         .and_then(Value::as_array)
         .filter(|entries| !entries.is_empty())
-    {
-        let entries = entries
-            .iter()
-            .map(|entry| {
-                usize::try_from(entry.as_u64().expect("validated legend entry index"))
-                    .expect("legend entry index fits usize")
-            })
-            .collect::<Vec<_>>();
-        chart.legend().delete_entries(&entries);
-    }
+        .map(|entries| {
+            entries
+                .iter()
+                .map(|entry| {
+                    usize::try_from(entry.as_u64().expect("validated legend entry index"))
+                        .expect("legend entry index fits usize")
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let has_explicit_legend_entries = !explicit_legend_entries.is_empty();
+    let chart_series_count = component
+        .children
+        .iter()
+        .filter(|child| child["type"] == "Series")
+        .count();
     if let Some(width) = component.props.get("width").and_then(Value::as_u64) {
         chart.set_width(u32::try_from(width).expect("validated Chart.width"));
     }
     if let Some(height) = component.props.get("height").and_then(Value::as_u64) {
         chart.set_height(u32::try_from(height).expect("validated Chart.height"));
     }
+    let mut series_legend_index = 0;
+    let mut trendline_legend_index = chart_series_count;
     for child in &component.children {
         let child: Node = serde_json::from_value(child.clone())
             .map_err(|error| Error::Compile(error.to_string()))?;
@@ -879,6 +887,33 @@ fn compile_chart(
         if let Some(title) = series.props.get("title").and_then(Value::as_str) {
             chart_series.set_name(title);
         }
+        if series
+            .props
+            .get("deleteFromLegend")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            chart_series.delete_from_legend(true);
+            if has_explicit_legend_entries {
+                explicit_legend_entries.push(series_legend_index);
+            }
+        }
+        series_legend_index += 1;
+        let has_trendline = series
+            .children
+            .iter()
+            .any(|child| child["type"] == "Trendline");
+        let trendline_is_deleted = series
+            .children
+            .iter()
+            .find(|child| child["type"] == "Trendline")
+            .is_some_and(|child| child["props"]["deleteFromLegend"].as_bool() == Some(true));
+        if trendline_is_deleted && has_explicit_legend_entries {
+            explicit_legend_entries.push(trendline_legend_index);
+        }
+        if has_trendline {
+            trendline_legend_index += 1;
+        }
         configure_chart_series_data_labels(chart_series, &series);
         configure_chart_series_marker(chart_series, &series);
         configure_chart_series_line(chart_series, &series);
@@ -902,6 +937,11 @@ fn compile_chart(
                 .set_format(ChartLine::new().set_hidden(true))
                 .set_marker(ChartMarker::new().set_none());
         }
+    }
+    if has_explicit_legend_entries {
+        explicit_legend_entries.sort_unstable();
+        explicit_legend_entries.dedup();
+        chart.legend().delete_entries(&explicit_legend_entries);
     }
     worksheet
         .insert_chart(row, column, &chart)
@@ -1108,6 +1148,14 @@ fn configure_chart_series_trendline(
     }
     if let Some(intercept) = trendline.props.get("intercept").and_then(Value::as_f64) {
         settings.set_intercept(intercept);
+    }
+    if trendline
+        .props
+        .get("deleteFromLegend")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        settings.delete_from_legend(true);
     }
     chart_series.set_trendline(&settings);
 }
@@ -4402,6 +4450,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(title) = &series.title {
             let _ = write!(output, " title={{{title:?}}}");
         }
+        if series.delete_from_legend {
+            output.push_str(" deleteFromLegend={true}");
+        }
         if series_index == 0 {
             if let Some(gap) = series.gap {
                 let _ = write!(output, " gap={{{gap}}}");
@@ -4524,6 +4575,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 }
                 if let Some(intercept) = trendline.intercept {
                     let _ = write!(output, " intercept={{{intercept}}}");
+                }
+                if trendline.delete_from_legend {
+                    output.push_str(" deleteFromLegend={true}");
                 }
                 output.push_str(" />\n");
             }
@@ -9372,6 +9426,7 @@ fn parse_chart_xml(
                         data_label_position_seen: false,
                         label_separator_seen: false,
                         error_bars: Vec::new(),
+                        delete_from_legend: false,
                     }),
                     "invertIfNegative" => {
                         if stack.last().is_none_or(|parent| parent != "ser") {
@@ -10345,6 +10400,8 @@ fn parse_chart_xml(
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
+    let legend_deleted_entries =
+        normalize_chart_legend_deletions(chart_type, &mut series, legend_deleted_entries);
     if drop_lines
         && !matches!(
             chart_type,
@@ -11323,6 +11380,39 @@ fn chart_element_val_attribute(
                 "chart part `{part}` has {tag} without val; add the explicit OOXML value"
             ))
         })
+}
+
+fn normalize_chart_legend_deletions(
+    chart_type: &str,
+    series: &mut [WorksheetChartSeries],
+    deleted_entries: Vec<usize>,
+) -> Vec<usize> {
+    if matches!(chart_type, "pie" | "doughnut") {
+        return deleted_entries;
+    }
+
+    let series_count = series.len();
+    let mut remaining = Vec::new();
+    for index in deleted_entries {
+        if let Some(item) = series.get_mut(index) {
+            item.delete_from_legend = true;
+        } else {
+            remaining.push(index);
+        }
+    }
+
+    let mut trendline_index = series_count;
+    for item in series {
+        let Some(trendline) = item.trendline.as_mut() else {
+            continue;
+        };
+        if let Some(index) = remaining.iter().position(|index| *index == trendline_index) {
+            trendline.delete_from_legend = true;
+            remaining.remove(index);
+        }
+        trendline_index += 1;
+    }
+    remaining
 }
 
 fn validate_reversed_chart_error_bars(
@@ -14278,6 +14368,10 @@ struct WorksheetImage {
 }
 
 #[derive(Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "These fields preserve independent OOXML chart-series flags without conflating their semantics."
+)]
 struct WorksheetChartSeries {
     values: String,
     gap: Option<u16>,
@@ -14311,6 +14405,7 @@ struct WorksheetChartSeries {
     data_label_position_seen: bool,
     label_separator_seen: bool,
     error_bars: Vec<WorksheetChartErrorBars>,
+    delete_from_legend: bool,
 }
 
 #[derive(Clone, Default)]
@@ -14321,6 +14416,7 @@ struct WorksheetChartTrendline {
     forward: Option<f64>,
     backward: Option<f64>,
     intercept: Option<f64>,
+    delete_from_legend: bool,
 }
 
 #[derive(Clone, Default)]

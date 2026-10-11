@@ -82,6 +82,7 @@ xlsx-jsx spec --format json
 | Chart data display | yes | yes (supported subset) | `showHiddenData`, `emptyCellsAs="gap|zero|span"`, and `showNaAsEmptyCell` round-trip hidden source data, empty-cell behavior, and the pinned c16r3 N/A-as-blank extension |
 | Chart legend overlay | yes | yes | `legendOverlay={true}` draws a visible legend over the plot area; it cannot be combined with `showLegend={false}` |
 | Chart legend entry visibility | yes | yes | `legendDeletedEntries={[1, 3]}` hides zero-based legend entries (pie/doughnut point indices); duplicate indices and hidden legends are rejected |
+| Chart series and trendline legend entries | yes | yes | `Series` / `Trendline deleteFromLegend={true}` hides the corresponding entry; chart-level indices reverse to these properties when unambiguous |
 | Chart series markers | yes | yes (supported subset) | `Series markerType="circle" markerSize={9}` preserves supported marker symbols and size on line, radar, and scatter charts; custom marker formatting remains rejected |
 | Chart series line styles | yes | yes (supported subset) | `Series lineColor="#336699" lineWidth={1.5} lineDash="dashDot"` preserves RGB, quarter-point widths, supported dash patterns, transparency, and hidden lines; unsupported line fills/effects are rejected |
 | Chart data-point colors | yes | yes (supported subset) | `pointColors={{0: "#FF0000", 3: "#336699"}}` assigns zero-based per-point solid RGB fills and preserves sparse indices; custom point borders/fills are rejected |

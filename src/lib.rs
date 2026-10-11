@@ -2811,6 +2811,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "showCategoryName",
                 "showSeriesName",
                 "showPercentage",
+                "deleteFromLegend",
                 "smooth",
                 "invertIfNegative",
                 "labelPosition",
@@ -2959,6 +2960,7 @@ fn validate_chart_series_properties(
     series: &Node,
     series_index: usize,
 ) -> Result<()> {
+    validate_chart_series_legend_deletion(chart, series)?;
     validate_chart_series_invert_if_negative(chart, series)?;
     validate_chart_series_smoothing(chart, series)?;
     validate_series_data_label_props(chart, series)?;
@@ -2967,6 +2969,36 @@ fn validate_chart_series_properties(
     validate_chart_series_point_colors(series)?;
     validate_chart_series_trendline(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
+}
+
+fn validate_chart_series_legend_deletion(chart: &Node, series: &Node) -> Result<()> {
+    let Some(value) = series.props.get("deleteFromLegend") else {
+        return Ok(());
+    };
+    let Some(enabled) = value.as_bool() else {
+        return Err(Error::Compile(
+            "Series.deleteFromLegend must be a boolean; use true or false".into(),
+        ));
+    };
+    if !enabled {
+        return Ok(());
+    }
+    let chart_type = chart
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if matches!(chart_type, "pie" | "doughnut") {
+        return Err(Error::Compile(
+            "Series.deleteFromLegend is not available for pie/doughnut charts because their legend entries represent data points; use Chart.legendDeletedEntries instead".into(),
+        ));
+    }
+    if chart.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
+        return Err(Error::Compile(
+            "Series.deleteFromLegend requires a visible chart legend; remove it or set showLegend={true}".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_chart_series_invert_if_negative(chart: &Node, series: &Node) -> Result<()> {
@@ -3052,6 +3084,7 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
             &trendline,
             &[
                 "type",
+                "deleteFromLegend",
                 "order",
                 "period",
                 "forward",
@@ -3060,6 +3093,18 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
             ],
             "Trendline",
         )?;
+        if let Some(value) = trendline.props.get("deleteFromLegend") {
+            let Some(enabled) = value.as_bool() else {
+                return Err(Error::Compile(
+                    "Trendline.deleteFromLegend must be a boolean; use true or false".into(),
+                ));
+            };
+            if enabled && chart.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
+                return Err(Error::Compile(
+                    "Trendline.deleteFromLegend requires a visible chart legend; remove it or set showLegend={true}".into(),
+                ));
+            }
+        }
         let chart_type = chart
             .props
             .get("type")
