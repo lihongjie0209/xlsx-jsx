@@ -547,6 +547,8 @@
             "showLegend": { "type": "boolean" },
             "autoTitleDeleted": { "type": "boolean" },
             "titleOverlay": { "type": "boolean" },
+            "chartAreaFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "plotAreaFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "legendOverlay": { "type": "boolean" },
             "legendDeletedEntries": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0, "maximum": 1048575 } },
             "legendPosition": { "enum": ["right", "left", "top", "bottom", "topRight"] },

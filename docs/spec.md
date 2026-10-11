@@ -167,6 +167,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   outside the plot area. True requires `Chart.title`; reverse preserves an
   explicit chart-title `<c:overlay val="1"/>` and folds false to omission.
   Axis-title overlays are not represented and are rejected when enabled.
+- `Chart.chartAreaFillColor?: "#RRGGBB"` and
+  `Chart.plotAreaFillColor?: "#RRGGBB"` set opaque RGB solid fills through
+  `ChartArea::set_format()` and `ChartPlotArea::set_format()`. Both properties
+  are optional, independent, and valid for every chart type. Reverse preserves
+  chart-space and plot-area fills without a manifest. Pattern/gradient fills,
+  transparency, theme/indexed colors, no-fill overrides, and area borders are
+  not represented and are rejected rather than discarded.
 - `Chart.autoTitleDeleted?: boolean` controls Excel's automatic chart title when
   a chart has a single named series. Omission/false allows Excel to show its
   default automatic title; true suppresses it via `ChartTitle::set_hidden()`.

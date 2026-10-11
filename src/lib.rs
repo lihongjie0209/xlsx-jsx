@@ -1943,6 +1943,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "showLegend",
             "autoTitleDeleted",
             "titleOverlay",
+            "chartAreaFillColor",
+            "plotAreaFillColor",
             "legendOverlay",
             "legendDeletedEntries",
             "legendPosition",
@@ -2037,6 +2039,19 @@ fn validate_chart_style(chart: &Node) -> Result<()> {
 
 fn validate_chart_visual_properties(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_style(chart)?;
+    for property in ["chartAreaFillColor", "plotAreaFillColor"] {
+        if let Some(color) = chart.props.get(property)
+            && color.as_str().is_none_or(|color| {
+                color.len() != 7
+                    || !color.starts_with('#')
+                    || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+            })
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must match `#RRGGBB`; use exactly six hexadecimal digits after `#`"
+            )));
+        }
+    }
     validate_chart_crossings(chart, chart_type)
 }
 
@@ -7987,6 +8002,29 @@ mod tests {
             ],
         )]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_chart_and_plot_area_rgb_solid_fills() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart",
+                "props":{
+                    "type":"column",
+                    "cell":"D2",
+                    "chartAreaFillColor":"#F1F2F3",
+                    "plotAreaFillColor":"#A1B2C3"
+                },
+                "children":[{
+                    "type":"Series",
+                    "props":{"values":"Charts!B1:B3"},
+                    "children":[]
+                }]
+            })],
+        )]);
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
     }
 
     #[test]

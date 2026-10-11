@@ -5,9 +5,9 @@ use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisDateUnitType, ChartAxisDisplayUnitType,
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartLine, ChartLineDashType, ChartMarker,
-    ChartMarkerType, ChartRange, ChartTrendline, ChartTrendlineType, ChartType,
-    Workbook as XlsxWorkbook,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartFormat, ChartLine, ChartLineDashType,
+    ChartMarker, ChartMarkerType, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType,
+    ChartType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -180,6 +180,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("style"))
         .stdout(predicate::str::contains("xAxisCrossing"))
         .stdout(predicate::str::contains("yAxisCrossing"))
+        .stdout(predicate::str::contains("chartAreaFillColor"))
+        .stdout(predicate::str::contains("plotAreaFillColor"))
         .stdout(predicate::str::contains("showValue"))
         .stdout(predicate::str::contains("showCategoryName"))
         .stdout(predicate::str::contains("showSeriesName"))
@@ -683,6 +685,126 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
         "{second_source}"
     );
     assert_chart_title_round_trip(&second_source);
+}
+
+#[test]
+fn reverses_external_chart_and_plot_area_rgb_fills_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-area-fills.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_string(0, 0, "Quarter").unwrap();
+    worksheet.write_string(1, 0, "Q1").unwrap();
+    worksheet.write_string(2, 0, "Q2").unwrap();
+    worksheet.write_string(3, 0, "Q3").unwrap();
+    worksheet.write_string(0, 1, "Revenue").unwrap();
+    worksheet.write_number(1, 1, 10).unwrap();
+    worksheet.write_number(2, 1, 20).unwrap();
+    worksheet.write_number(3, 1, 30).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .chart_area()
+        .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#F1F2F3")));
+    chart
+        .plot_area()
+        .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#A1B2C3")));
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    let reversed = directory.path().join("chart-area-fills.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(
+        source.contains("chartAreaFillColor=\"#F1F2F3\""),
+        "{source}"
+    );
+    assert!(source.contains("plotAreaFillColor=\"#A1B2C3\""), "{source}");
+
+    let rebuilt = directory.path().join("chart-area-fills-roundtrip.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second = directory.path().join("chart-area-fills-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&second)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(second).expect("second reverse source exists"),
+        source
+    );
+}
+
+#[test]
+fn rejects_invalid_chart_area_fill_color_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-area-fill.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" chartAreaFillColor="#ABC"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.chartAreaFillColor must match `#RRGGBB`",
+        ))
+        .stderr(predicate::str::contains("exactly six hexadecimal digits"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn reverse_rejects_unmodeled_chart_area_fill_semantics_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-area-no-fill.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .chart_area()
+        .set_format(ChartFormat::new().set_no_fill());
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported chart-area formatting `<noFill>`",
+        ))
+        .stderr(predicate::str::contains("opaque RGB solid fill"))
+        .stderr(predicate::str::contains("suggestion:"));
 }
 
 #[test]

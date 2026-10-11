@@ -82,6 +82,7 @@ xlsx-jsx spec --format json
 | Chart data display | yes | yes (supported subset) | `showHiddenData`, `emptyCellsAs="gap|zero|span"`, and `showNaAsEmptyCell` round-trip hidden source data, empty-cell behavior, and the pinned c16r3 N/A-as-blank extension |
 | Automatic chart title | yes | yes | `autoTitleDeleted={true}` suppresses Excel's generated single-series title; it cannot be combined with an explicit `title` |
 | Chart title overlay | yes | yes (supported subset) | `titleOverlay={true}` draws an explicit chart title over the plot area; it requires `title` |
+| Chart and plot area fills | yes | yes (supported subset) | `chartAreaFillColor="#FFFFFF"` and `plotAreaFillColor="#F2F2F2"` round-trip opaque RGB solid fills; patterns, gradients, transparency, and custom borders are rejected |
 | Date category axes | yes | yes (supported subset) | `categoryAxisType="date"` supports day/month/year time units and ISO `categoryAxisMinDate` / `categoryAxisMaxDate` bounds; scatter, pie, and doughnut have no category axis |
 | Scatter axis bounds | yes | yes | `xAxisMin` / `xAxisMax` and `yAxisMin` / `yAxisMax` preserve the horizontal and vertical value-axis scales independently |
 | Scatter axis intervals | yes | yes | `xAxisMajorUnit` / `xAxisMinorUnit` and `yAxisMajorUnit` / `yAxisMinorUnit` preserve major and minor tick spacing on both value axes |

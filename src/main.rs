@@ -14,12 +14,12 @@ use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisDateUnitType, ChartAxisDisplayUnitType,
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartLineDashType,
-    ChartMarker, ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType,
-    ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
-    ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
-    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
-    ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartFormat, ChartLegendPosition, ChartLine,
+    ChartLineDashType, ChartMarker, ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline,
+    ChartTrendlineType, ChartType, Color, ConditionalFormat2ColorScale,
+    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
+    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
+    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
     ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
     ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
     ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
@@ -720,6 +720,24 @@ fn compile_chart(
         .expect("validated Chart.cell");
     let (row, column) = parse_a1_cell_reference(cell).expect("validated Chart.cell");
     let mut chart = Chart::new(chart_type);
+    if let Some(color) = component
+        .props
+        .get("chartAreaFillColor")
+        .and_then(Value::as_str)
+    {
+        chart
+            .chart_area()
+            .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)));
+    }
+    if let Some(color) = component
+        .props
+        .get("plotAreaFillColor")
+        .and_then(Value::as_str)
+    {
+        chart
+            .plot_area()
+            .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)));
+    }
     if component.props.get("type").and_then(Value::as_str) == Some("stock") {
         chart.set_high_low_lines(true);
         if component
@@ -4684,7 +4702,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -4722,6 +4740,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         chart
             .first_slice_angle
             .map(|value| format!(" firstSliceAngle={{{value}}}"))
+            .unwrap_or_default(),
+        chart
+            .chart_area_fill_color
+            .as_ref()
+            .map(|value| format!(" chartAreaFillColor={value:?}"))
+            .unwrap_or_default(),
+        chart
+            .plot_area_fill_color
+            .as_ref()
+            .map(|value| format!(" plotAreaFillColor={value:?}"))
             .unwrap_or_default()
     );
     for (series_index, series) in chart.series.iter().enumerate() {
@@ -8157,6 +8185,12 @@ fn parse_chart_xml(
     let mut first_slice_angle_seen = false;
     let mut chart_style = None;
     let mut chart_style_seen = false;
+    let mut chart_area_fill_color: Option<String> = None;
+    let mut plot_area_fill_color: Option<String> = None;
+    let mut chart_area_sppr_seen = false;
+    let mut plot_area_sppr_seen = false;
+    let mut chart_area_fill_seen = false;
+    let mut plot_area_fill_seen = false;
     let mut x_axis_crossing = None;
     let mut y_axis_crossing = None;
     let mut x_axis_crossing_seen = false;
@@ -8177,6 +8211,31 @@ fn parse_chart_xml(
                     unreachable!()
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                let area_sppr_context = chart_area_sppr_context(&stack);
+                if area_sppr_context.is_some() && !matches!(tag.as_str(), "solidFill" | "srgbClr") {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported chart-area formatting `<{tag}>`; retain one opaque RGB solid fill and remove transparency, borders, and other effects"
+                    )));
+                }
+                if tag == "spPr" {
+                    let area_kind = match stack.last().map(String::as_str) {
+                        Some("chartSpace") => Some("chartArea"),
+                        Some("plotArea") => Some("plotArea"),
+                        _ => None,
+                    };
+                    if let Some(area_kind) = area_kind {
+                        let seen = if area_kind == "chartArea" {
+                            &mut chart_area_sppr_seen
+                        } else {
+                            &mut plot_area_sppr_seen
+                        };
+                        if std::mem::replace(seen, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats {area_kind} shape properties; keep one solid RGB fill"
+                            )));
+                        }
+                    }
+                }
                 if stack.iter().any(|ancestor| ancestor == "legendEntry")
                     && !matches!(tag.as_str(), "idx" | "delete")
                 {
@@ -10863,9 +10922,49 @@ fn parse_chart_xml(
                             }
                         }
                     }
+                    "solidFill" if chart_area_sppr_context(&stack).is_some() => {
+                        let area = chart_area_sppr_context(&stack).expect("area fill context");
+                        let seen = if area == "chartArea" {
+                            &mut chart_area_fill_seen
+                        } else {
+                            &mut plot_area_fill_seen
+                        };
+                        if std::mem::replace(seen, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats the {area} solid fill; keep one RGB color"
+                            )));
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && chart_area_sppr_context(&stack).is_some() =>
+                    {
+                        let area = chart_area_sppr_context(&stack).expect("area fill context");
+                        let color =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "srgbClr")?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB {area} fill; use an opaque six-digit RGB color"
+                            )));
+                        }
+                        let target = if area == "chartArea" {
+                            &mut chart_area_fill_color
+                        } else {
+                            &mut plot_area_fill_color
+                        };
+                        if target.replace(format!("#{color}")).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats the {area} RGB fill color; keep one value"
+                            )));
+                        }
+                    }
                     "spPr" => {
                         let has_supported_parent =
                             stack.last().is_some_and(|ancestor| ancestor == "ser")
+                                || matches!(
+                                    stack.last().map(String::as_str),
+                                    Some("chartSpace" | "plotArea")
+                                )
                                 || (stack.iter().any(|ancestor| ancestor == "dPt")
                                     && matches!(
                                         stack.last().map(String::as_str),
@@ -11905,6 +12004,24 @@ fn parse_chart_xml(
         // OOXML's absent holeSize default is 10; the pinned writer emits 50.
         hole_size = Some(10);
     }
+    for (area, present, color) in [
+        (
+            "chartArea",
+            chart_area_sppr_seen,
+            chart_area_fill_color.as_ref(),
+        ),
+        (
+            "plotArea",
+            plot_area_sppr_seen,
+            plot_area_fill_color.as_ref(),
+        ),
+    ] {
+        if present && color.is_none() {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has {area} shape properties without one opaque RGB solid fill; add the supported fill or remove the shape properties"
+            )));
+        }
+    }
     let show_legend = legend_seen && !legend_deleted;
     if !legend_deleted_entries.is_empty() && !show_legend {
         return Err(Error::Reverse(format!(
@@ -11991,6 +12108,8 @@ fn parse_chart_xml(
         name: anchor.name,
         title: chart_title,
         title_overlay,
+        chart_area_fill_color,
+        plot_area_fill_color,
         category_axis_type,
         category_axis_major_time_unit,
         category_axis_minor_time_unit,
@@ -12061,6 +12180,22 @@ fn parse_chart_xml(
         data_table,
         series,
     })
+}
+
+fn chart_area_sppr_context(stack: &[String]) -> Option<&'static str> {
+    if stack
+        .windows(2)
+        .any(|pair| pair[0] == "chartSpace" && pair[1] == "spPr")
+    {
+        Some("chartArea")
+    } else if stack
+        .windows(2)
+        .any(|pair| pair[0] == "plotArea" && pair[1] == "spPr")
+    {
+        Some("plotArea")
+    } else {
+        None
+    }
 }
 
 fn chart_gridline_index(position: &str, major: bool) -> usize {
@@ -15699,6 +15834,8 @@ struct WorksheetChart {
     name: String,
     title: Option<String>,
     title_overlay: bool,
+    chart_area_fill_color: Option<String>,
+    plot_area_fill_color: Option<String>,
     category_axis_type: Option<&'static str>,
     category_axis_major_time_unit: Option<&'static str>,
     category_axis_minor_time_unit: Option<&'static str>,
