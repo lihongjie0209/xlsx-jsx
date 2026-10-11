@@ -97,6 +97,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   OOXML default of 10 explicitly. `Chart.firstSliceAngle?: number` is valid
   only for pie and doughnut charts, accepts integer degrees from 0 through 360,
   and defaults to 0; reverse preserves non-default angles.
+- `Series.markerType?: "automatic" | "square" | "diamond" | "triangle" | "x" | "star" |
+  "shortDash" | "longDash" | "circle" | "plusSign" | "none"` selects an
+  OOXML marker symbol; `Series.markerSize?: number` accepts integer sizes from
+  2 through 72. Omission preserves each chart type's writer default. Marker
+  shape and size overrides are only valid for line, radar, and scatter charts;
+  marker shape formatting is currently rejected during reverse rather than
+  discarded.
 - `ChartDataTable` is an optional child of `Chart`, at most one per chart.
   `showHorizontalBorders`, `showVerticalBorders`, `showOutlineBorders`, and
   `showLegendKeys` are booleans. Omission uses the pinned writer defaults

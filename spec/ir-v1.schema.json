@@ -690,7 +690,9 @@
             "showLegendKey": { "type": "boolean" },
             "showLeaderLines": { "type": "boolean" },
             "labelSeparator": { "enum": ["comma", "semicolon", "period", "space", "newline"] },
-            "labelNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 }
+            "labelNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "markerType": { "enum": ["automatic", "square", "diamond", "triangle", "x", "star", "shortDash", "longDash", "circle", "plusSign", "none"] },
+            "markerSize": { "type": "integer", "minimum": 2, "maximum": 72 }
           },
           "additionalProperties": false
         },

@@ -5,7 +5,8 @@ use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition,
     ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
     ChartDataTable as XlsxChartDataTable, ChartErrorBars, ChartErrorBarsDirection,
-    ChartErrorBarsType, ChartLine, ChartMarker, ChartType, Workbook as XlsxWorkbook,
+    ChartErrorBarsType, ChartLine, ChartMarker, ChartMarkerType, ChartType,
+    Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -159,6 +160,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("labelNumberFormat"))
         .stdout(predicate::str::contains("ErrorBars"))
         .stdout(predicate::str::contains("ChartDataTable"))
+        .stdout(predicate::str::contains("markerType"))
+        .stdout(predicate::str::contains("markerSize"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1842,6 +1845,160 @@ fn reverse_rejects_custom_chart_data_table_formatting_with_guidance() {
 }
 
 #[test]
+fn reverses_external_chart_series_marker_type_and_size_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-marker.xlsx");
+    let output_path = directory.path().join("external-chart-marker.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    let mut marker = ChartMarker::new();
+    marker.set_type(ChartMarkerType::Circle).set_size(9);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_marker(&marker);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("markerType=\"circle\" markerSize={9}"));
+
+    let rebuilt_path = directory.path().join("rebuilt-chart-marker.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<c:symbol val=\"circle\"/>"));
+    assert!(chart_xml.contains("<c:size val=\"9\"/>"));
+}
+
+#[test]
+fn reverses_automatic_line_series_markers_from_chart_group_defaults() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("automatic-chart-marker.xlsx");
+    let source_path = directory.path().join("automatic-chart-marker.tsx");
+    let rebuilt_path = directory.path().join("automatic-chart-marker-rebuilt.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    let mut marker = ChartMarker::new();
+    marker.set_automatic();
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_marker(&marker);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("markerType=\"automatic\""));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<c:marker val=\"1\"/>"));
+    assert!(!chart_xml.contains("<c:marker><c:symbol val=\"none\"/></c:marker>"));
+}
+
+#[test]
+fn rejects_invalid_chart_series_marker_size_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-marker.tsx");
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" markerType="circle" markerSize={1} /></Chart></Worksheet></Workbook>;"#).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Series.markerSize must be an integer from 2 through 72",
+        ));
+}
+
+#[test]
+fn rejects_invalid_chart_series_marker_type_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-marker-type.tsx");
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" markerType="round" /></Chart></Worksheet></Workbook>;"#).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "markerType `round` is unsupported",
+        ))
+        .stderr(predicate::str::contains("use automatic, square, diamond"));
+}
+
+#[test]
+fn reverse_rejects_custom_chart_series_marker_formatting_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("formatted-chart-marker.xlsx");
+    let output_path = directory.path().join("formatted-chart-marker.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    let mut line = ChartLine::new();
+    line.set_color("#FF0000");
+    let mut marker = ChartMarker::new();
+    marker
+        .set_type(ChartMarkerType::Circle)
+        .set_format(&mut line);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_marker(&marker);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook_path)
+        .args(["-o"])
+        .arg(output_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported `<spPr>` marker formatting",
+        ))
+        .stderr(predicate::str::contains("remove custom marker formatting"));
+}
+
+#[test]
 fn rejects_invalid_chart_error_bar_values_with_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-chart-error-bars.tsx");
@@ -2845,7 +3002,7 @@ fn rejects_axis_number_formats_for_ambiguous_scatter_axes() {
 }
 
 #[test]
-fn reverse_rejects_mixed_scatter_marker_overrides_with_guidance() {
+fn reverses_mixed_scatter_marker_overrides_without_losing_series_visibility() {
     let directory = tempdir().expect("temporary directory is available");
     let source = directory.path().join("scatter.tsx");
     let workbook = directory.path().join("scatter.xlsx");
@@ -2873,9 +3030,21 @@ fn reverse_rejects_mixed_scatter_marker_overrides_with_guidance() {
         .args(["-o"])
         .arg(&reversed)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("mixed scatter marker overrides"))
-        .stderr(predicate::str::contains("same marker behavior"));
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(source.contains("type=\"scatterWithLinesAndMarkers\""));
+    assert!(source.contains("markerType=\"none\""));
+    let rebuilt = directory.path().join("scatter-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:symbol val=\"none\"/>"));
 }
 
 #[test]
@@ -3478,9 +3647,10 @@ fn reverse_rejects_out_of_range_first_slice_angle_with_guidance() {
 }
 
 #[test]
-fn reverse_rejects_mixed_radar_marker_behavior_with_guidance() {
+fn reverses_mixed_radar_marker_behavior_without_losing_series_visibility() {
     let directory = tempdir().expect("temporary directory is available");
     let external = directory.path().join("mixed-radar-markers.xlsx");
+    let reversed = directory.path().join("mixed-radar-markers.tsx");
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["build", "examples/charts.tsx", "-o"])
@@ -3494,12 +3664,22 @@ fn reverse_rejects_mixed_radar_marker_behavior_with_guidance() {
         .expect("binary is built")
         .args(["reverse"])
         .arg(external)
+        .args(["-o"])
+        .arg(&reversed)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("mixed radar marker overrides"))
-        .stderr(predicate::str::contains(
-            "same marker behavior for every series",
-        ));
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(source.contains("type=\"radarWithMarkers\""));
+    assert!(source.contains("markerType=\"none\""));
+    let rebuilt = directory.path().join("mixed-radar-markers-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
 }
 
 #[test]

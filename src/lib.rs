@@ -2599,6 +2599,8 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "showLeaderLines",
                 "labelSeparator",
                 "labelNumberFormat",
+                "markerType",
+                "markerSize",
             ],
             "Series",
         )?;
@@ -2677,7 +2679,74 @@ fn validate_chart_series_properties(
     series_index: usize,
 ) -> Result<()> {
     validate_series_data_label_props(chart, series)?;
+    validate_chart_series_marker(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
+}
+
+fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize) -> Result<()> {
+    let chart_type = chart
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let marker_type = series.props.get("markerType");
+    if let Some(value) = marker_type {
+        let Some(marker_type) = value.as_str() else {
+            return Err(Error::Compile(format!(
+                "Chart Series {}.markerType must be a string; use one of the supported marker symbols",
+                series_index + 1
+            )));
+        };
+        if ![
+            "automatic",
+            "square",
+            "diamond",
+            "triangle",
+            "x",
+            "star",
+            "shortDash",
+            "longDash",
+            "circle",
+            "plusSign",
+            "none",
+        ]
+        .contains(&marker_type)
+        {
+            return Err(Error::Compile(format!(
+                "Chart Series {}.markerType `{marker_type}` is unsupported; use automatic, square, diamond, triangle, x, star, shortDash, longDash, circle, plusSign, or none",
+                series_index + 1
+            )));
+        }
+    }
+    if let Some(value) = series.props.get("markerSize")
+        && !value.as_u64().is_some_and(|size| (2..=72).contains(&size))
+    {
+        return Err(Error::Compile(
+            "Series.markerSize must be an integer from 2 through 72; adjust the marker size".into(),
+        ));
+    }
+    if (marker_type.is_some() || series.props.contains_key("markerSize"))
+        && !matches!(
+            chart_type,
+            "line"
+                | "lineStacked"
+                | "linePercentStacked"
+                | "radar"
+                | "radarWithMarkers"
+                | "radarFilled"
+                | "scatter"
+                | "scatterWithLines"
+                | "scatterWithLinesAndMarkers"
+                | "scatterWithSmoothLines"
+                | "scatterWithSmoothLinesAndMarkers"
+        )
+    {
+        return Err(Error::Compile(format!(
+            "Chart Series {} markerType/markerSize are supported only for line, radar, and scatter charts; remove the marker properties or change Chart.type",
+            series_index + 1
+        )));
+    }
+    Ok(())
 }
 
 fn validate_chart_series_error_bars(

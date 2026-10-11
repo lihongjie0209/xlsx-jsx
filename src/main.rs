@@ -14,7 +14,7 @@ use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
     ChartDataLabel, ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartMarker,
-    ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
+    ChartMarkerType, ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
     ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
     ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
     ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
@@ -827,6 +827,7 @@ fn compile_chart(
             chart_series.set_name(title);
         }
         configure_chart_series_data_labels(chart_series, &series);
+        configure_chart_series_marker(chart_series, &series);
         configure_chart_series_error_bars(chart_series, &series)?;
         if component.props.get("type").and_then(Value::as_str) == Some("stock") {
             chart_series
@@ -838,6 +839,39 @@ fn compile_chart(
         .insert_chart(row, column, &chart)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+}
+
+fn configure_chart_series_marker(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
+    if !series.props.contains_key("markerType") && !series.props.contains_key("markerSize") {
+        return;
+    }
+    let mut marker = ChartMarker::new();
+    if let Some(marker_type) = series.props.get("markerType").and_then(Value::as_str) {
+        if marker_type == "none" {
+            marker.set_none();
+        } else if marker_type == "automatic" {
+            marker.set_automatic();
+        } else {
+            let marker_type = match marker_type {
+                "automatic" => unreachable!("automatic marker is handled above"),
+                "square" => ChartMarkerType::Square,
+                "diamond" => ChartMarkerType::Diamond,
+                "triangle" => ChartMarkerType::Triangle,
+                "x" => ChartMarkerType::X,
+                "star" => ChartMarkerType::Star,
+                "shortDash" => ChartMarkerType::ShortDash,
+                "longDash" => ChartMarkerType::LongDash,
+                "circle" => ChartMarkerType::Circle,
+                "plusSign" => ChartMarkerType::PlusSign,
+                _ => unreachable!("validated Series.markerType"),
+            };
+            marker.set_type(marker_type);
+        }
+    }
+    if let Some(size) = series.props.get("markerSize").and_then(Value::as_u64) {
+        marker.set_size(u8::try_from(size).expect("validated Series.markerSize"));
+    }
+    chart_series.set_marker(&marker);
 }
 
 fn configure_chart_series_error_bars(
@@ -4096,6 +4130,26 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(title) = &series.title {
             let _ = write!(output, " title={{{title:?}}}");
         }
+        if let Some(marker_type) = series.marker_type {
+            let marker_type = match marker_type {
+                "square" => "square",
+                "diamond" => "diamond",
+                "triangle" => "triangle",
+                "x" => "x",
+                "star" => "star",
+                "dot" => "shortDash",
+                "dash" => "longDash",
+                "circle" => "circle",
+                "plus" => "plusSign",
+                "none" => "none",
+                "auto" => "automatic",
+                _ => unreachable!("chart marker type was validated"),
+            };
+            let _ = write!(output, " markerType=\"{marker_type}\"");
+        }
+        if let Some(marker_size) = series.marker_size {
+            let _ = write!(output, " markerSize={{{marker_size}}}");
+        }
         for (name, enabled) in [
             ("showValue", series.show_value),
             ("showCategoryName", series.show_category_name),
@@ -7039,6 +7093,7 @@ fn parse_chart_xml(
         "plotVisOnly",
         "marker",
         "symbol",
+        "size",
         "varyColors",
         "firstSliceAng",
         "dLbls",
@@ -7070,6 +7125,7 @@ fn parse_chart_xml(
     let mut chart_grouping_seen = false;
     let mut stock_high_low_lines = false;
     let mut stock_up_down_bars = false;
+    let mut chart_group_marker_enabled = false;
     let mut series = Vec::<WorksheetChartSeries>::new();
     let mut data_table: Option<WorksheetChartDataTable> = None;
     let mut data_table_flags_seen = [false; 4];
@@ -7254,6 +7310,20 @@ fn parse_chart_xml(
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has unsupported `<{tag}>` data-table formatting; only the four display flags are represented, so remove custom fonts, shape formatting, and extensions"
+                    )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "marker")
+                    && !matches!(tag.as_str(), "symbol" | "size")
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported `<{tag}>` marker formatting; marker fill and line styles are not represented, so remove custom marker formatting"
+                    )));
+                }
+                if matches!(tag.as_str(), "symbol" | "size")
+                    && stack.last().is_none_or(|parent| parent != "marker")
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has {tag} outside a series marker; repair the marker structure"
                     )));
                 }
                 match tag.as_str() {
@@ -7445,6 +7515,7 @@ fn parse_chart_xml(
                                 "in" => Some("inside"),
                                 "out" => Some("outside"),
                                 "none" => Some("none"),
+                                "auto" => Some("auto"),
                                 _ => None,
                             })
                         else {
@@ -8436,6 +8507,8 @@ fn parse_chart_xml(
                         name: None,
                         title: None,
                         marker: None,
+                        marker_type: None,
+                        marker_size: None,
                         smooth: None,
                         line_hidden: None,
                         show_value: None,
@@ -8718,17 +8791,66 @@ fn parse_chart_xml(
                         }
                         current.label_separator_seen = true;
                     }
-                    "marker" if stack.iter().any(|ancestor| ancestor == "ser") => {
+                    "marker" if stack.last().is_some_and(|parent| parent == "ser") => {
                         if let Some(current) = series.last_mut() {
                             current.marker = Some(true);
                         }
                     }
-                    "symbol"
-                        if stack.iter().any(|ancestor| ancestor == "marker")
-                            && stack.iter().any(|ancestor| ancestor == "ser") =>
+                    "marker"
+                        if stack.last().is_some_and(|parent| {
+                            matches!(parent.as_str(), "lineChart" | "radarChart")
+                        }) =>
                     {
+                        chart_group_marker_enabled = true;
+                    }
+                    "symbol" if stack.last().is_some_and(|parent| parent == "marker") => {
                         if let Some(current) = series.last_mut() {
-                            current.marker = Some(false);
+                            let value = chart_element_val_attribute(
+                                &event,
+                                part,
+                                reader.decoder(),
+                                "symbol",
+                            )
+                            .ok();
+                            let parsed = value.as_deref().and_then(|value| match value {
+                                "none" => Some("none"),
+                                "square" => Some("square"),
+                                "diamond" => Some("diamond"),
+                                "triangle" => Some("triangle"),
+                                "x" => Some("x"),
+                                "star" => Some("star"),
+                                "dash" => Some("dash"),
+                                "dot" => Some("dot"),
+                                "circle" => Some("circle"),
+                                "plus" => Some("plus"),
+                                _ => None,
+                            });
+                            match parsed {
+                                Some("none") => {
+                                    current.marker = Some(false);
+                                    current.marker_type = Some("none");
+                                }
+                                Some(marker_type) => {
+                                    current.marker = Some(true);
+                                    current.marker_type = Some(marker_type);
+                                }
+                                None => current.marker = Some(true),
+                            }
+                        }
+                    }
+                    "size" if stack.last().is_some_and(|parent| parent == "marker") => {
+                        let value =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "size")?;
+                        let size = value.parse::<u8>().ok().filter(|size| (2..=72).contains(size)).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has invalid marker size `{value}`; use a marker size from 2 through 72")))?;
+                        let Some(current) = series.last_mut() else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a marker size outside a series; move it inside a Series marker"
+                            )));
+                        };
+                        if current.marker_size.replace(size).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats marker size; retain one size from 2 through 72"
+                            )));
                         }
                     }
                     "smooth" if stack.iter().any(|ancestor| ancestor == "ser") => {
@@ -9075,6 +9197,41 @@ fn parse_chart_xml(
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
+    if chart_group_marker_enabled {
+        for item in &mut series {
+            if item.marker.is_none() {
+                item.marker = Some(true);
+                item.marker_type = Some("auto");
+            }
+        }
+    }
+    if matches!(
+        chart_type,
+        "line"
+            | "lineStacked"
+            | "linePercentStacked"
+            | "radar"
+            | "stock"
+            | "scatterWithLines"
+            | "scatterWithSmoothLines"
+    ) {
+        for item in &mut series {
+            if item.marker_type == Some("none") {
+                item.marker_type = None;
+            }
+        }
+    }
+    if !chart_type_supports_marker_overrides(chart_type)
+        && series.iter().any(|item| {
+            item.marker_size.is_some()
+                || item.marker_type.is_some()
+                || (chart_type != "stock" && item.marker.is_some())
+        })
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` applies marker shape or size to unsupported chart type `{chart_type}`; remove the marker override or use a line, radar, or scatter chart"
+        )));
+    }
     if series.is_empty() {
         return Err(Error::Reverse(format!(
             "chart part `{part}` contains no data series; add at least one series"
@@ -9677,38 +9834,18 @@ fn resolve_radar_chart_type(
         return Ok(chart_type);
     }
     let marker_count = series.iter().filter(|item| item.marker.is_some()).count();
-    if marker_count != 0 && marker_count != series.len() {
-        return Err(Error::Reverse(format!(
-            "chart part `{part}` has mixed radar marker overrides; use the same marker behavior for every series"
-        )));
-    }
-    let disabled_marker_count = series
-        .iter()
-        .filter(|item| item.marker == Some(false))
-        .count();
-    if disabled_marker_count != 0 && disabled_marker_count != marker_count && marker_count != 0 {
-        return Err(Error::Reverse(format!(
-            "chart part `{part}` has mixed radar marker visibility; use the same marker behavior for every series"
-        )));
-    }
-    let markers_disabled = (marker_count > 0
-        && series.iter().all(|item| item.marker == Some(false)))
-        || radar_style == Some("standard");
-    let markers_enabled = (marker_count > 0 && series.iter().all(|item| item.marker == Some(true)))
-        || (marker_count == 0 && radar_style == Some("marker"));
-    let markers_overridden = marker_count > 0;
+    let markers_enabled = series.iter().any(|item| item.marker == Some(true));
+    let all_markers_explicitly_disabled =
+        marker_count == series.len() && series.iter().all(|item| item.marker == Some(false));
     match radar_style {
-        Some("filled") if !markers_overridden => Ok("radarFilled"),
+        Some("filled") if marker_count == 0 => Ok("radarFilled"),
         Some("filled") => Err(Error::Reverse(format!(
             "chart part `{part}` combines filled radar with per-series markers; remove marker overrides or use a standard radar chart"
         ))),
-        Some("standard") if !markers_enabled => Ok("radar"),
-        Some("standard") => Err(Error::Reverse(format!(
-            "chart part `{part}` radarStyle=standard conflicts with enabled series markers; remove marker overrides or use radarStyle=marker"
-        ))),
-        Some("marker") | None if markers_disabled => Ok("radar"),
-        Some("marker") | None if markers_enabled => Ok("radarWithMarkers"),
-        None => Ok("radar"),
+        Some("marker") if all_markers_explicitly_disabled => Ok("radar"),
+        Some("standard") | None if markers_enabled => Ok("radarWithMarkers"),
+        Some("standard") | None => Ok("radar"),
+        Some("marker") => Ok("radarWithMarkers"),
         Some(_) => Err(Error::Reverse(format!(
             "chart part `{part}` has an unsupported radar style; use standard, marker, or filled"
         ))),
@@ -9737,6 +9874,23 @@ fn chart_default_data_label_position(chart_type: &str) -> Option<&'static str> {
         "pie" | "doughnut" => Some("bestFit"),
         _ => None,
     }
+}
+
+fn chart_type_supports_marker_overrides(chart_type: &str) -> bool {
+    matches!(
+        chart_type,
+        "line"
+            | "lineStacked"
+            | "linePercentStacked"
+            | "radar"
+            | "radarWithMarkers"
+            | "radarFilled"
+            | "scatter"
+            | "scatterWithLines"
+            | "scatterWithLinesAndMarkers"
+            | "scatterWithSmoothLines"
+            | "scatterWithSmoothLinesAndMarkers"
+    )
 }
 
 fn resolve_scatter_chart_type(
@@ -9800,29 +9954,16 @@ fn resolve_scatter_chart_type(
                 "chart part `{part}` has custom scatter line formatting; only the writer's hidden default line is supported"
             )));
         }
-        if scatter_style != Some("lineMarker")
-            || smooth_enabled > 0
-            || series.iter().any(|item| item.marker.is_some())
-        {
+        if scatter_style != Some("lineMarker") || smooth_enabled > 0 {
             return Err(Error::Reverse(format!(
-                "chart part `{part}` combines a hidden scatter line with marker/smoothing overrides; use default markers and no smoothing for a plain scatter chart"
+                "chart part `{part}` combines a hidden scatter line with unsupported smoothing; use the lineMarker scatter style without smoothing"
             )));
         }
         return Ok("scatter");
     }
-    let marker_overrides = series.iter().filter(|item| item.marker.is_some()).count();
-    if marker_overrides != 0 && marker_overrides != series.len() {
-        return Err(Error::Reverse(format!(
-            "chart part `{part}` has mixed scatter marker overrides; use the same marker behavior for every series"
-        )));
-    }
-    if series.iter().any(|item| item.marker == Some(true)) {
-        return Err(Error::Reverse(format!(
-            "chart part `{part}` has unsupported visible scatter marker overrides; remove per-series markers or add marker style support"
-        )));
-    }
+    let markers_disabled = series.iter().all(|item| item.marker == Some(false));
     let smooth = scatter_style == Some("smoothMarker") || smooth_enabled > 0;
-    match (smooth, marker_overrides == series.len()) {
+    match (smooth, markers_disabled) {
         (false, true) => Ok("scatterWithLines"),
         (false, false) => Ok("scatterWithLinesAndMarkers"),
         (true, true) => Ok("scatterWithSmoothLines"),
@@ -10043,7 +10184,7 @@ fn is_supported_chart_attribute(
             matches!(value, "0" | "1" | "false" | "true")
         }
         ("smooth", "val") => matches!(value, "0" | "1" | "false" | "true"),
-        ("symbol", "val") => value == "none",
+        ("symbol" | "size", "val") => is_supported_chart_marker_attribute(tag, value),
         ("lblAlgn", "val") => matches!(value, "ctr" | "l" | "r"),
         ("lblOffset", "val") => value == "100",
         ("crossBetween", "val") => matches!(value, "between" | "midCat"),
@@ -10076,6 +10217,29 @@ fn is_supported_chart_attribute(
         ("pageMargins", "b" | "t") => value == "0.75",
         ("pageMargins", "l" | "r") => value == "0.7",
         ("pageMargins", "header" | "footer") => value == "0.3",
+        _ => false,
+    }
+}
+
+fn is_supported_chart_marker_attribute(tag: &str, value: &str) -> bool {
+    match tag {
+        "symbol" => matches!(
+            value,
+            "auto"
+                | "none"
+                | "square"
+                | "diamond"
+                | "triangle"
+                | "x"
+                | "star"
+                | "dash"
+                | "dot"
+                | "circle"
+                | "plus"
+        ),
+        "size" => value
+            .parse::<u8>()
+            .is_ok_and(|size| (2..=72).contains(&size)),
         _ => false,
     }
 }
@@ -12687,6 +12851,8 @@ struct WorksheetChartSeries {
     name: Option<String>,
     title: Option<String>,
     marker: Option<bool>,
+    marker_type: Option<&'static str>,
+    marker_size: Option<u8>,
     smooth: Option<bool>,
     line_hidden: Option<bool>,
     show_value: Option<bool>,
