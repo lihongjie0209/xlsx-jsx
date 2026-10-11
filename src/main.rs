@@ -1516,6 +1516,7 @@ fn compile_chart(
                 "fontPitchFamily",
                 "fontCharset",
                 "fontRotation",
+                "fontRightToLeft",
             ]
             .iter()
             .any(|property| child.props.contains_key(*property))
@@ -1557,6 +1558,11 @@ fn compile_chart(
                 }
                 if let Some(rotation) = child.props.get("fontRotation").and_then(Value::as_i64) {
                     font.set_rotation(i16::try_from(rotation).expect("validated font rotation"));
+                }
+                if let Some(right_to_left) =
+                    child.props.get("fontRightToLeft").and_then(Value::as_bool)
+                {
+                    font.set_right_to_left(right_to_left);
                 }
                 data_table = data_table.set_font(&font);
             }
@@ -6380,6 +6386,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(rotation) = table.font_rotation {
             let _ = write!(output, " fontRotation={{{rotation}}}");
         }
+        if let Some(right_to_left) = table.font_right_to_left {
+            let _ = write!(output, " fontRightToLeft={{{right_to_left}}}");
+        }
         if let Some(color) = &table.fill_color {
             let _ = write!(output, " fillColor={color:?}");
         }
@@ -10625,6 +10634,27 @@ fn parse_chart_xml(
                         }
                         table.font_rotation = Some(rotation);
                     }
+                }
+                if tag == "pPr"
+                    && stack.iter().any(|ancestor| ancestor == "txPr")
+                    && stack.iter().any(|ancestor| ancestor == "dTable")
+                    && let Some(raw_right_to_left) =
+                        chart_xml_attribute(&event, "rtl", reader.decoder())?
+                {
+                    let right_to_left =
+                        parse_xml_bool(&raw_right_to_left, part, "data-table pPr@rtl")?;
+                    let table = data_table
+                        .as_mut()
+                        .expect("data-table paragraph has a table context");
+                    if table
+                        .font_right_to_left
+                        .is_some_and(|previous| previous != right_to_left)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has inconsistent data-table paragraph directions; make txPr pPr rtl values identical"
+                        )));
+                    }
+                    table.font_right_to_left = Some(right_to_left);
                 }
                 if tag == "bodyPr"
                     && stack.iter().any(|ancestor| ancestor == "txPr")
@@ -18958,6 +18988,8 @@ fn audit_chart_attributes(
                     | ("rtl", "0" | "1" | "true" | "false") => true,
                     _ => false,
                 }
+            } else if tag == "pPr" {
+                key == "rtl" && matches!(value.as_str(), "0" | "1" | "true" | "false")
             } else if tag == "endParaRPr" {
                 key == "lang" && value == "en-US"
             } else {
@@ -19046,6 +19078,8 @@ fn audit_chart_attributes(
                     ("vert", "horz" | "wordArtVert" | "eaVert") => true,
                     _ => false,
                 }
+            } else if tag == "pPr" {
+                key == "rtl" && matches!(value.as_str(), "0" | "1" | "true" | "false")
             } else if tag == "endParaRPr" {
                 key == "lang" && value == "en-US"
             } else {
@@ -22488,6 +22522,7 @@ struct WorksheetChartDataTable {
     font_pitch_family: Option<u8>,
     font_charset: Option<u8>,
     font_rotation: Option<i16>,
+    font_right_to_left: Option<bool>,
     fill_color: Option<String>,
     fill_transparency: Option<u8>,
     line_style: Option<WorksheetChartGridlineStyle>,

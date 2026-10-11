@@ -14,7 +14,7 @@ export default <Workbook>
         <Trendline type="linear" deleteFromLegend={true} lineColor="#C00000" lineWidth={1.5} lineDash="dash" />
       </Series>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" deleteFromLegend={true} />
-      <ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={true} showLegendKeys={true} fontSize={10} fontBold={true} fontColor="#336699" fontName="Aptos" fontPitchFamily={34} fontCharset={127} fontRotation={45} fillColor="#EAF2F8" fillTransparency={20} lineColor="#4472C4" lineWidth={1.25} lineDash="dash" lineTransparency={20} />
+      <ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={true} showLegendKeys={true} fontSize={10} fontBold={true} fontColor="#336699" fontName="Aptos" fontPitchFamily={34} fontCharset={127} fontRotation={45} fontRightToLeft={true} fillColor="#EAF2F8" fillTransparency={20} lineColor="#4472C4" lineWidth={1.25} lineDash="dash" lineTransparency={20} />
     </Chart>
     <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true} categoryAxisLabelInterval={2} categoryAxisTickInterval={2} dropLines={true} dropLinesColor="#4472C4" dropLinesWidth={1.5} dropLinesDash="dashDot" dropLinesTransparency={20}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" markerType="circle" markerSize={8} lineColor="#336699" lineWidth={1.5} lineDash="dashDot" smooth={true} showValue={true} showLegendKey={true} showLeaderLines={true} labelSeparator="semicolon">

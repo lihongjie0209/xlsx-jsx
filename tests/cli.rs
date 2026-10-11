@@ -469,6 +469,7 @@ fn spec_exposes_chart_data_table_font_properties() {
         .stdout(predicate::str::contains("fontPitchFamily"))
         .stdout(predicate::str::contains("fontCharset"))
         .stdout(predicate::str::contains("fontRotation"))
+        .stdout(predicate::str::contains("fontRightToLeft"))
         .stdout(predicate::str::contains("fillColor"))
         .stdout(predicate::str::contains("fillTransparency"))
         .stdout(predicate::str::contains("lineColor"))
@@ -4167,7 +4168,8 @@ fn reverses_external_chart_data_table_without_a_manifest() {
                 .set_color("#336699")
                 .set_name("Arial")
                 .set_pitch_family(34)
-                .set_character_set(127),
+                .set_character_set(127)
+                .set_right_to_left(true),
         )
         .set_format(
             ChartFormat::new().set_solid_fill(
@@ -4190,9 +4192,8 @@ fn reverses_external_chart_data_table_without_a_manifest() {
         .success();
     let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
     assert!(source.contains(
-        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} fontSize={11} fontBold={true} fontItalic={true} fontUnderline={true} fontColor=\"#336699\" fontName=\"Arial\" fontPitchFamily={34} fontCharset={127} fillColor=\"#F0E0D0\" fillTransparency={35} />"
+        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} fontSize={11} fontBold={true} fontItalic={true} fontUnderline={true} fontColor=\"#336699\" fontName=\"Arial\" fontPitchFamily={34} fontCharset={127} fontRightToLeft={true} fillColor=\"#F0E0D0\" fillTransparency={35} />"
     ));
-
     let rebuilt_path = directory.path().join("rebuilt-chart-data-table.xlsx");
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -4212,8 +4213,7 @@ fn reverses_external_chart_data_table_without_a_manifest() {
         chart_xml.contains("<c:spPr><a:solidFill><a:srgbClr val=\"F0E0D0\"><a:alpha val=\"65000\"/></a:srgbClr></a:solidFill></c:spPr>"),
         "{chart_xml}"
     );
-    assert!(chart_xml.contains("<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"1100\" b=\"1\" i=\"1\" u=\"sng\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill><a:latin typeface=\"Arial\" pitchFamily=\"34\" charset=\"127\"/></a:defRPr></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p></c:txPr>"), "{chart_xml}");
-
+    assert!(chart_xml.contains("<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr rtl=\"1\"><a:defRPr sz=\"1100\" b=\"1\" i=\"1\" u=\"sng\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill><a:latin typeface=\"Arial\" pitchFamily=\"34\" charset=\"127\"/></a:defRPr></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p></c:txPr>"), "{chart_xml}");
     let rebuilt_source_path = directory.path().join("rebuilt-chart-data-table.tsx");
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -4243,6 +4243,57 @@ fn reverses_external_chart_data_table_without_a_manifest() {
             "data-table fill alpha not exactly representable by whole-percent transparency",
         ))
         .stderr(predicate::str::contains("use increments of 1%"));
+}
+
+#[test]
+fn reverses_explicit_false_chart_data_table_text_direction() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-chart-data-table-rtl-false.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-chart-data-table-rtl-false.tsx");
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-chart-data-table-rtl-false.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.set_data_table(
+        &XlsxChartDataTable::new().set_font(ChartFont::new().set_right_to_left(false)),
+    );
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("fontRightToLeft={false}"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        chart_xml.contains("<a:pPr rtl=\"0\"><a:defRPr/></a:pPr>"),
+        "{chart_xml}"
+    );
 }
 
 #[test]

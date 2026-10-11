@@ -4327,6 +4327,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     "fontPitchFamily",
                     "fontCharset",
                     "fontRotation",
+                    "fontRightToLeft",
                     "fillColor",
                     "fillTransparency",
                     "lineColor",
@@ -4525,6 +4526,11 @@ fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
             ));
         }
     }
+    validate_chart_data_table_font_properties(data_table)?;
+    Ok(())
+}
+
+fn validate_chart_data_table_font_properties(data_table: &Node) -> Result<()> {
     if let Some(value) = data_table.props.get("fontSize") {
         let Some(size) = value.as_f64().filter(|size| size.is_finite()) else {
             return Err(Error::Compile(
@@ -4537,14 +4543,22 @@ fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
             ));
         }
     }
-    for property in ["fontBold", "fontItalic", "fontUnderline"] {
+    for (property, guidance) in [
+        ("fontBold", "use true or false"),
+        ("fontItalic", "use true or false"),
+        ("fontUnderline", "use true or false"),
+        (
+            "fontRightToLeft",
+            "use true or false for paragraph reading direction",
+        ),
+    ] {
         if data_table
             .props
             .get(property)
             .is_some_and(|value| !value.is_boolean())
         {
             return Err(Error::Compile(format!(
-                "ChartDataTable.{property} must be a boolean; use true or false"
+                "ChartDataTable.{property} must be a boolean; {guidance}"
             )));
         }
     }
