@@ -942,8 +942,10 @@
           "required": ["axis", "type"],
           "properties": {
             "axis": { "enum": ["x", "y"] },
-            "type": { "enum": ["standardError", "fixedValue", "percentage", "standardDeviation"] },
+            "type": { "enum": ["standardError", "fixedValue", "percentage", "standardDeviation", "custom"] },
             "value": { "type": "number" },
+            "plusRange": { "type": "string", "minLength": 1 },
+            "minusRange": { "type": "string", "minLength": 1 },
             "direction": { "enum": ["both", "minus", "plus"] },
             "endCap": { "type": "boolean" },
             "lineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
@@ -959,11 +961,15 @@
       "allOf": [
         {
           "if": { "properties": { "props": { "properties": { "type": { "const": "standardError" } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "props": { "not": { "required": ["value"] } } } }
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["value"] }, { "required": ["plusRange"] }, { "required": ["minusRange"] }] } } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["fixedValue", "percentage", "standardDeviation"] } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "props": { "required": ["value"] } } }
+          "then": { "properties": { "props": { "required": ["value"], "not": { "anyOf": [{ "required": ["plusRange"] }, { "required": ["minusRange"] }] } } } }
+        },
+        {
+          "if": { "properties": { "props": { "properties": { "type": { "const": "custom" } }, "required": ["type"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "required": ["plusRange", "minusRange"], "not": { "required": ["value"] } } } }
         }
       ],
       "additionalProperties": false

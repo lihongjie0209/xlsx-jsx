@@ -413,8 +413,8 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   the pinned writer either omits the requested axis or has no matching axis.
   For column and bar charts, the writer omits `errDir`; reverse infers its
   unambiguous implicit Y or X axis from the chart type. `type` is `standardError`,
-  `fixedValue`, `percentage`, or `standardDeviation`. The latter three require
-  a finite `value`; fixed values must be greater than zero, while percentage
+  `fixedValue`, `percentage`, `standardDeviation`, or `custom`. The three
+  non-custom scalar types require a finite `value`; fixed values must be greater than zero, while percentage
   and standard-deviation multipliers may be zero. `standardError` forbids
   `value`. `direction?: "both" | "minus" | "plus"` defaults to `both`, and
   `endCap?: boolean` defaults to true. Reverse preserves the writer's
@@ -423,8 +423,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `lineColor?` (opaque RGB), `lineWidth?` (0.25–1584 pt in quarter-point
   increments), `lineDash?` (a supported chart-line dash), and
   `lineTransparency?` (integer 0–100) style the error-bar line. Transparency
-  requires a color. Reverse preserves these supported line attributes; custom
-  plus/minus ranges and other line formatting remain rejected.
+  requires a color. `type="custom"` requires `plusRange` and `minusRange`,
+  each a sheet-qualified A1 cell or one-dimensional range without a leading
+  `=`; a single cell is repeated for every point, otherwise each range must
+  match the `Series.values` point count. Custom type forbids `value`. Reverse
+  preserves the custom range formulas and supported line attributes. It folds
+  only a `General` numeric cache whose point count matches its source range and
+  whose populated values match the referenced worksheet cells; stale caches
+  and other custom error-bar formatting are rejected with repair guidance.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed

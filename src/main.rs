@@ -1091,6 +1091,18 @@ fn configure_chart_series_error_bars(
             "standardDeviation" => {
                 ChartErrorBarsType::StandardDeviation(value.expect("validated value"))
             }
+            "custom" => ChartErrorBarsType::Custom(
+                rust_xlsxwriter::ChartRange::new_from_string(
+                    error_bars.props["plusRange"]
+                        .as_str()
+                        .expect("validated plusRange"),
+                ),
+                rust_xlsxwriter::ChartRange::new_from_string(
+                    error_bars.props["minusRange"]
+                        .as_str()
+                        .expect("validated minusRange"),
+                ),
+            ),
             _ => unreachable!("validated error-bar type"),
         };
         settings.set_type(error_type);
@@ -4078,6 +4090,91 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
     let mut workbook =
         open_workbook_auto(path).map_err(|error| Error::Reverse(error.to_string()))?;
     let sheet_names = workbook.sheet_names().clone();
+    for metadata in metadata_by_sheet.values() {
+        for chart in &metadata.charts {
+            for series in &chart.series {
+                for error_bar in &series.error_bars {
+                    for (property, formula, cached_points) in [
+                        (
+                            "plusRange",
+                            error_bar.plus_range.as_deref(),
+                            &error_bar.plus_cache_points,
+                        ),
+                        (
+                            "minusRange",
+                            error_bar.minus_range.as_deref(),
+                            &error_bar.minus_cache_points,
+                        ),
+                    ] {
+                        let Some(formula) = formula else { continue };
+                        if cached_points.is_empty() {
+                            continue;
+                        }
+                        let referenced_sheet = chart_formula_sheet_name(formula).ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "ErrorBars.{property} `{formula}` is not a sheet-qualified A1 range"
+                            ))
+                        })?;
+                        let Some((_, reference)) = formula.split_once('!') else {
+                            return Err(Error::Reverse(format!(
+                                "ErrorBars.{property} `{formula}` is not a supported A1 reference"
+                            )));
+                        };
+                        let (first_row, first_column, last_row, last_column) = parse_a1_range(
+                            reference,
+                        )
+                        .ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "ErrorBars.{property} `{formula}` is not a supported A1 reference"
+                            ))
+                        })?;
+                        let source_range = workbook
+                            .worksheet_range(&referenced_sheet)
+                            .map_err(|error| {
+                                Error::Reverse(format!(
+                                    "cannot read source cells for ErrorBars.{property} `{formula}`: {error}"
+                                ))
+                            })?;
+                        for (index, cached_value) in cached_points {
+                            let Some(cached_value) = cached_value else {
+                                return Err(Error::Reverse(format!(
+                                    "ErrorBars.{property} `{formula}` has a cache point without a numeric value"
+                                )));
+                            };
+                            let point_index = u32::try_from(*index).unwrap_or(u32::MAX);
+                            let (row, column) = if first_row == last_row {
+                                (first_row, u32::from(first_column) + point_index)
+                            } else {
+                                (first_row + point_index, u32::from(first_column))
+                            };
+                            if row > last_row || column > u32::from(last_column) {
+                                return Err(Error::Reverse(format!(
+                                    "ErrorBars.{property} `{formula}` has cache point index {index} outside the referenced range"
+                                )));
+                            }
+                            let source_value = source_range.get_value((row, column));
+                            let expected_value = if source_value.is_none_or(DataType::is_empty) {
+                                0.0
+                            } else if let Some(value) = source_value.and_then(DataType::as_f64) {
+                                value
+                            } else {
+                                return Err(Error::Reverse(format!(
+                                    "ErrorBars.{property} source cell {referenced_sheet}!{formula} at cache index {index} is not numeric; correct the range or its cached values"
+                                )));
+                            };
+                            if (expected_value - cached_value).abs()
+                                > expected_value.abs().max(1.0) * 1e-12
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "ErrorBars.{property} `{formula}` has cached value {cached_value} at index {index}, but the referenced worksheet cell contains {expected_value}; update the source cell or cache"
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     let mut output = String::from(
         "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Image, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
@@ -4730,6 +4827,12 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 let _ = write!(output, " axis=\"{axis}\" type=\"{error_type}\"");
                 if let Some(value) = error_bar.value {
                     let _ = write!(output, " value={{{value}}}");
+                }
+                if let Some(range) = &error_bar.plus_range {
+                    let _ = write!(output, " plusRange={range:?}");
+                }
+                if let Some(range) = &error_bar.minus_range {
+                    let _ = write!(output, " minusRange={range:?}");
                 }
                 if let Some(direction) = error_bar.direction {
                     let _ = write!(output, " direction=\"{direction}\"");
@@ -8143,10 +8246,19 @@ fn parse_chart_xml(
                             | "srgbClr"
                             | "alpha"
                             | "prstDash"
+                            | "plus"
+                            | "minus"
+                            | "numRef"
+                            | "f"
+                            | "numCache"
+                            | "formatCode"
+                            | "ptCount"
+                            | "pt"
+                            | "v"
                     )
                 {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported `<{tag}>` error-bar content; custom plus/minus ranges and line formatting are not represented, so use a standard scalar error-bar type without custom formatting"
+                        "chart part `{part}` has unsupported `<{tag}>` error-bar content; retain only numeric custom plus/minus references and supported line formatting"
                     )));
                 }
                 if matches!(
@@ -10169,6 +10281,199 @@ fn parse_chart_xml(
                         current.error_bars.push(WorksheetChartErrorBars::default());
                         current_error_bar = Some(current.error_bars.len() - 1);
                     }
+                    "plus" | "minus" if stack.last().is_some_and(|parent| parent == "errBars") => {
+                        let Some(error_bar) = current_error_bar
+                            .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a custom direction without an error-bar group"
+                            )));
+                        };
+                        if error_bar.error_type != Some("custom") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a custom {tag} range without errValType=cust; use a custom error-bar type or remove the range"
+                            )));
+                        }
+                        let seen = if tag == "plus" {
+                            &mut error_bar.plus_seen
+                        } else {
+                            &mut error_bar.minus_seen
+                        };
+                        if std::mem::replace(seen, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a custom {tag} error range; keep one range per direction"
+                            )));
+                        }
+                    }
+                    "numRef" if stack.iter().any(|parent| parent == "errBars") => {
+                        let Some(error_bar) = current_error_bar
+                            .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a custom numeric reference without an error-bar group"
+                            )));
+                        };
+                        let seen = match stack.last().map(String::as_str) {
+                            Some("plus") => &mut error_bar.plus_ref_seen,
+                            Some("minus") => &mut error_bar.minus_ref_seen,
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has numRef outside a custom plus/minus range; retain one numeric reference in each direction"
+                                )));
+                            }
+                        };
+                        if std::mem::replace(seen, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats numRef in one custom error-bar direction; keep one numeric reference"
+                            )));
+                        }
+                    }
+                    "numCache" if stack.iter().any(|parent| parent == "errBars") => {
+                        let Some(error_bar) = current_error_bar
+                            .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a numeric cache without an error-bar group"
+                            )));
+                        };
+                        let seen = match stack.iter().find_map(|parent| match parent.as_str() {
+                            "plus" => Some(true),
+                            "minus" => Some(false),
+                            _ => None,
+                        }) {
+                            Some(true) => &mut error_bar.plus_cache_seen,
+                            Some(false) => &mut error_bar.minus_cache_seen,
+                            None => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has numCache outside a custom plus/minus range"
+                                )));
+                            }
+                        };
+                        if std::mem::replace(seen, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a custom error-bar numeric cache"
+                            )));
+                        }
+                    }
+                    "formatCode" if stack.iter().any(|parent| parent == "errBars") => {
+                        let Some(error_bar) = current_error_bar
+                            .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a cache format without an error-bar group"
+                            )));
+                        };
+                        let seen = match stack.iter().find_map(|parent| match parent.as_str() {
+                            "plus" => Some(true),
+                            "minus" => Some(false),
+                            _ => None,
+                        }) {
+                            Some(true) => &mut error_bar.plus_cache_format_seen,
+                            Some(false) => &mut error_bar.minus_cache_format_seen,
+                            None => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an error-bar cache format outside plus/minus"
+                                )));
+                            }
+                        };
+                        if std::mem::replace(seen, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a custom error-bar cache format"
+                            )));
+                        }
+                    }
+                    "ptCount" if stack.iter().any(|parent| parent == "errBars") => {
+                        let value =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "ptCount")?;
+                        let count = value.parse::<usize>().map_err(|_| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has invalid custom error-bar cache point count `{value}`; use a non-negative integer"
+                            ))
+                        })?;
+                        let Some(error_bar) = current_error_bar
+                            .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a cache point count without an error-bar group"
+                            )));
+                        };
+                        let count_slot = match stack.iter().find_map(|parent| {
+                            match parent.as_str() {
+                                "plus" => Some(true),
+                                "minus" => Some(false),
+                                _ => None,
+                            }
+                        }) {
+                            Some(true) => &mut error_bar.plus_cache_count,
+                            Some(false) => &mut error_bar.minus_cache_count,
+                            None => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an error-bar cache count outside plus/minus"
+                                )));
+                            }
+                        };
+                        if count_slot.replace(count).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a custom error-bar cache point count"
+                            )));
+                        }
+                    }
+                    "pt" if stack.iter().any(|parent| parent == "errBars") => {
+                        let Some(error_bar) = current_error_bar
+                            .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a custom cache point without an error-bar group"
+                            )));
+                        };
+                        let index = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"idx")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .and_then(|value| value.parse::<usize>().ok())
+                            })
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a custom cache point without a valid idx; include a non-negative point index"
+                            )))?;
+                        let point = (index, None);
+                        let points = match stack.iter().find_map(|parent| match parent.as_str() {
+                            "plus" => Some(true),
+                            "minus" => Some(false),
+                            _ => None,
+                        }) {
+                            Some(true) => &mut error_bar.plus_cache_points,
+                            Some(false) => &mut error_bar.minus_cache_points,
+                            None => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a custom cache point outside plus/minus"
+                                )));
+                            }
+                        };
+                        if points.iter().any(|(existing, _)| *existing == index) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats custom cache point idx `{index}`; keep one value per point"
+                            )));
+                        }
+                        points.push(point);
+                        let pending = if stack.iter().any(|parent| parent == "plus") {
+                            &mut error_bar.pending_plus_cache_index
+                        } else {
+                            &mut error_bar.pending_minus_cache_index
+                        };
+                        if pending.replace(index).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` nests cache points in an unsupported way; keep one `<pt><v>` pair"
+                            )));
+                        }
+                    }
                     "errDir" | "errBarType" | "errValType" | "noEndCap" | "val"
                         if stack.last().is_some_and(|parent| parent == "errBars") =>
                     {
@@ -10217,9 +10522,10 @@ fn parse_chart_xml(
                                     "fixedVal" => "fixedValue",
                                     "percentage" => "percentage",
                                     "stdDev" => "standardDeviation",
+                                    "cust" => "custom",
                                     _ => {
                                         return Err(Error::Reverse(format!(
-                                            "chart part `{part}` uses custom error bars; custom plus/minus ranges are not represented, so use a standard error-bar type"
+                                            "chart part `{part}` has unsupported error-bar amount type `{raw_value}`; use stdErr, fixedVal, percentage, stdDev, or cust with numeric plus/minus ranges"
                                         )));
                                     }
                                 };
@@ -10808,21 +11114,30 @@ fn parse_chart_xml(
                     }
                     "cat" | "xVal" if !series.is_empty() => category_source_open = true,
                     "f" if !series.is_empty() => {
-                        formula_target = if stack.iter().any(|ancestor| ancestor == "tx") {
-                            Some("name")
-                        } else if stack
-                            .iter()
-                            .any(|ancestor| matches!(ancestor.as_str(), "cat" | "xVal"))
-                        {
-                            Some("categories")
-                        } else if stack
-                            .iter()
-                            .any(|ancestor| matches!(ancestor.as_str(), "yVal" | "val"))
-                        {
-                            Some("values")
-                        } else {
-                            None
-                        };
+                        formula_target =
+                            if stack.last().is_some_and(|ancestor| ancestor == "numRef")
+                                && stack.iter().any(|ancestor| ancestor == "plus")
+                            {
+                                Some("plusRange")
+                            } else if stack.last().is_some_and(|ancestor| ancestor == "numRef")
+                                && stack.iter().any(|ancestor| ancestor == "minus")
+                            {
+                                Some("minusRange")
+                            } else if stack.iter().any(|ancestor| ancestor == "tx") {
+                                Some("name")
+                            } else if stack
+                                .iter()
+                                .any(|ancestor| matches!(ancestor.as_str(), "cat" | "xVal"))
+                            {
+                                Some("categories")
+                            } else if stack
+                                .iter()
+                                .any(|ancestor| matches!(ancestor.as_str(), "yVal" | "val"))
+                            {
+                                Some("values")
+                            } else {
+                                None
+                            };
                         if formula_target.is_none() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has a formula outside supported series name/category/value ranges; remove it or add matching DSL support"
@@ -10860,6 +11175,84 @@ fn parse_chart_xml(
                 }
             }
             Ok(Event::Text(text)) => {
+                if stack.last().is_some_and(|tag| tag == "formatCode")
+                    && stack.iter().any(|tag| tag == "errBars")
+                {
+                    let format_code = text
+                        .xml_content(XmlVersion::Implicit1_0)
+                        .map_err(|error| Error::Reverse(error.to_string()))?;
+                    if format_code.as_ref() != "General" {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a custom error-bar cache format `{format_code}`; retain only the writer-default General empty cache"
+                        )));
+                    }
+                    let Some(error_bar) = current_error_bar
+                        .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                    else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a numeric cache format without an error-bar group"
+                        )));
+                    };
+                    match stack.iter().find_map(|tag| match tag.as_str() {
+                        "plus" => Some(true),
+                        "minus" => Some(false),
+                        _ => None,
+                    }) {
+                        Some(true) => error_bar.plus_cache_format_value_seen = true,
+                        Some(false) => error_bar.minus_cache_format_value_seen = true,
+                        None => {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an error-bar cache format outside plus/minus"
+                            )));
+                        }
+                    }
+                }
+                if stack.last().is_some_and(|tag| tag == "v")
+                    && stack.iter().any(|tag| tag == "errBars")
+                {
+                    let value = text
+                        .xml_content(XmlVersion::Implicit1_0)
+                        .map_err(|error| Error::Reverse(error.to_string()))?
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|value| value.is_finite())
+                        .ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has a non-numeric custom error-bar cache value; use finite numeric values or remove the cached points"
+                        )))?;
+                    let Some(error_bar) = current_error_bar
+                        .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                    else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a custom cache value without an error-bar group"
+                        )));
+                    };
+                    let (pending, points) = if stack.iter().any(|tag| tag == "plus") {
+                        (
+                            &mut error_bar.pending_plus_cache_index,
+                            &mut error_bar.plus_cache_points,
+                        )
+                    } else if stack.iter().any(|tag| tag == "minus") {
+                        (
+                            &mut error_bar.pending_minus_cache_index,
+                            &mut error_bar.minus_cache_points,
+                        )
+                    } else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an error-bar cache value outside plus/minus"
+                        )));
+                    };
+                    let index = pending.take().ok_or_else(|| Error::Reverse(format!(
+                        "chart part `{part}` has a custom error-bar cache value without a preceding `<pt idx>`"
+                    )))?;
+                    let Some((_, cached_value)) =
+                        points.iter_mut().find(|(point, _)| *point == index)
+                    else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a custom error-bar cache value for an unknown point index `{index}`"
+                        )));
+                    };
+                    *cached_value = Some(value);
+                }
                 if stack.last().is_some_and(|tag| tag == "separator") {
                     let serialized_separator = text
                         .xml_content(XmlVersion::Implicit1_0)
@@ -10927,6 +11320,25 @@ fn parse_chart_xml(
                         }
                         "name" if current.name.is_none() && !formula.is_empty() => {
                             current.name = Some(formula);
+                        }
+                        "plusRange" | "minusRange" if !formula.is_empty() => {
+                            let Some(error_bar) = current_error_bar
+                                .and_then(|index| current.error_bars.get_mut(index))
+                            else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` contains a custom error formula outside an active error-bar group"
+                                )));
+                            };
+                            let range = if target == "plusRange" {
+                                &mut error_bar.plus_range
+                            } else {
+                                &mut error_bar.minus_range
+                            };
+                            if range.replace(formula).is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats a custom error-bar {target} formula; keep one nonempty formula"
+                                )));
+                            }
                         }
                         _ => {
                             return Err(Error::Reverse(format!(
@@ -11521,6 +11933,27 @@ fn parse_chart_xml(
                 return Err(Error::Reverse(format!(
                     "chart part `{part}` Series.{property} references missing worksheet `{sheet_name}`; add the referenced worksheet or repair the chart formula"
                 )));
+            }
+        }
+        for error_bar in &item.error_bars {
+            for (property, formula) in [
+                ("plusRange", error_bar.plus_range.as_deref()),
+                ("minusRange", error_bar.minus_range.as_deref()),
+            ] {
+                let Some(formula) = formula else { continue };
+                let sheet_name = chart_formula_sheet_name(formula).ok_or_else(|| Error::Reverse(format!(
+                    "chart part `{part}` ErrorBars.{property} `{formula}` is not a sheet-qualified A1 reference; repair it to a cell or range"
+                )))?;
+                if !chart_formula_has_valid_reference(formula, false) {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` ErrorBars.{property} `{formula}` is not a supported A1 cell/range; repair it to a cell or one-dimensional range"
+                    )));
+                }
+                if !worksheet_names.contains(&sheet_name.to_lowercase()) {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` ErrorBars.{property} references missing worksheet `{sheet_name}`; add the referenced worksheet or repair the formula"
+                    )));
+                }
             }
         }
         if chart_type.starts_with("scatter") {
@@ -12256,6 +12689,10 @@ fn normalize_chart_legend_deletions(
     remaining
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Validation order is intentional so each malformed error-bar group gets the most specific repair diagnostic."
+)]
 fn validate_reversed_chart_error_bars(
     chart_type: &str,
     series: &mut [WorksheetChartSeries],
@@ -12320,27 +12757,119 @@ fn validate_reversed_chart_error_bars(
                     "chart part `{part}` has error-bar line transparency without an RGB line color; add an explicit solid RGB line color or remove transparency"
                 )));
             }
-            match (error_type, error_bar.value) {
-                ("standardError", None) => {}
-                ("standardError", Some(_)) => {
+            if error_type == "custom" {
+                if error_bar.value.is_some() {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` combines standard error bars with a numeric val; remove val or use a fixed, percentage, or standard-deviation type"
+                        "chart part `{part}` combines custom error ranges with a scalar val; remove val and retain plus/minus ranges"
                     )));
                 }
-                ("fixedValue", Some(value)) if value.is_finite() && value > 0.0 => {}
-                ("percentage" | "standardDeviation", Some(value))
-                    if value.is_finite() && value >= 0.0 => {}
-                ("fixedValue" | "percentage" | "standardDeviation", None) => {
-                    return Err(Error::Reverse(format!(
-                        "chart part `{part}` has a numeric error-bar type without val; provide a finite amount"
-                    )));
+                let point_count = item
+                    .values
+                    .split_once('!')
+                    .and_then(|(_, range)| parse_a1_range(range))
+                    .and_then(one_dimensional_range_length);
+                for (direction, formula, seen, ref_seen) in [
+                    (
+                        "plus",
+                        error_bar.plus_range.as_deref(),
+                        error_bar.plus_seen,
+                        error_bar.plus_ref_seen,
+                    ),
+                    (
+                        "minus",
+                        error_bar.minus_range.as_deref(),
+                        error_bar.minus_seen,
+                        error_bar.minus_ref_seen,
+                    ),
+                ] {
+                    let Some(formula) = formula.filter(|_| seen && ref_seen) else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has incomplete custom error bars; include one `<{direction}><numRef><f>` formula"
+                        )));
+                    };
+                    if !chart_formula_has_valid_reference(formula, false) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` custom {direction} formula `{formula}` is not a sheet-qualified A1 cell/range; repair it to a supported reference"
+                        )));
+                    }
+                    let range_count = formula
+                        .split_once('!')
+                        .and_then(|(_, range)| parse_a1_range(range))
+                        .and_then(one_dimensional_range_length);
+                    let count_matches = match (range_count, point_count) {
+                        (Some(1), Some(_)) => true,
+                        (Some(range_count), Some(point_count)) => range_count == point_count,
+                        _ => false,
+                    };
+                    if !count_matches {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` custom {direction} range `{formula}` must be one cell or match the series point count; use one cell or a one-dimensional range with {point_count:?} values"
+                        )));
+                    }
+                    let (cache_seen, format_seen, format_value_seen, cache_count) =
+                        if direction == "plus" {
+                            (
+                                error_bar.plus_cache_seen,
+                                error_bar.plus_cache_format_seen,
+                                error_bar.plus_cache_format_value_seen,
+                                error_bar.plus_cache_count,
+                            )
+                        } else {
+                            (
+                                error_bar.minus_cache_seen,
+                                error_bar.minus_cache_format_seen,
+                                error_bar.minus_cache_format_value_seen,
+                                error_bar.minus_cache_count,
+                            )
+                        };
+                    if cache_seen && !(format_seen && format_value_seen && cache_count.is_some()) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an incomplete {direction} numeric cache; use a General format and a point count matching its source range"
+                        )));
+                    }
+                    let expected_cache_count =
+                        range_count.and_then(|count| usize::try_from(count).ok());
+                    if cache_count.is_some_and(|count| Some(count) != expected_cache_count) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a {direction} error-bar cache point count that differs from its source formula; repair it to match the referenced range"
+                        )));
+                    }
+                    let cache_points = if direction == "plus" {
+                        &error_bar.plus_cache_points
+                    } else {
+                        &error_bar.minus_cache_points
+                    };
+                    if cache_points.iter().any(|(index, value)| {
+                        value.is_none() || expected_cache_count.is_none_or(|count| *index >= count)
+                    }) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an incomplete or out-of-range {direction} cache point; repair the cache indices to match its source range"
+                        )));
+                    }
                 }
-                ("fixedValue" | "percentage" | "standardDeviation", Some(_)) => {
-                    return Err(Error::Reverse(format!(
-                        "chart part `{part}` has an invalid error-bar amount; fixed values must be > 0 and percentages/deviations must be >= 0"
-                    )));
+            } else {
+                match (error_type, error_bar.value) {
+                    ("standardError", None) => {}
+                    ("standardError", Some(_)) => {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` combines standard error bars with a numeric val; remove val or use a fixed, percentage, or standard-deviation type"
+                        )));
+                    }
+                    ("fixedValue", Some(value)) if value.is_finite() && value > 0.0 => {}
+                    ("percentage" | "standardDeviation", Some(value))
+                        if value.is_finite() && value >= 0.0 => {}
+                    ("fixedValue" | "percentage" | "standardDeviation", None) => {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a numeric error-bar type without val; provide a finite amount"
+                        )));
+                    }
+                    ("fixedValue" | "percentage" | "standardDeviation", Some(_)) => {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an invalid error-bar amount; fixed values must be > 0 and percentages/deviations must be >= 0"
+                        )));
+                    }
+                    _ => unreachable!("error-bar types are validated while parsing"),
                 }
-                _ => unreachable!("error-bar types are validated while parsing"),
             }
             if error_bar.direction == Some("both") {
                 error_bar.direction = None;
@@ -15288,6 +15817,10 @@ struct WorksheetChartTrendline {
 }
 
 #[derive(Clone, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "These flags record independent XML element presence for lossless custom error-bar cache validation."
+)]
 struct WorksheetChartErrorBars {
     axis: Option<&'static str>,
     error_type: Option<&'static str>,
@@ -15298,6 +15831,24 @@ struct WorksheetChartErrorBars {
     line_width: Option<f64>,
     line_dash: Option<&'static str>,
     line_transparency: Option<u32>,
+    plus_range: Option<String>,
+    minus_range: Option<String>,
+    plus_seen: bool,
+    minus_seen: bool,
+    plus_ref_seen: bool,
+    minus_ref_seen: bool,
+    plus_cache_seen: bool,
+    minus_cache_seen: bool,
+    plus_cache_format_seen: bool,
+    minus_cache_format_seen: bool,
+    plus_cache_format_value_seen: bool,
+    minus_cache_format_value_seen: bool,
+    plus_cache_count: Option<usize>,
+    minus_cache_count: Option<usize>,
+    plus_cache_points: Vec<(usize, Option<f64>)>,
+    minus_cache_points: Vec<(usize, Option<f64>)>,
+    pending_plus_cache_index: Option<usize>,
+    pending_minus_cache_index: Option<usize>,
 }
 
 #[derive(Clone)]

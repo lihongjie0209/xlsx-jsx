@@ -3687,6 +3687,8 @@ fn validate_chart_series_error_bars(
                 "axis",
                 "type",
                 "value",
+                "plusRange",
+                "minusRange",
                 "direction",
                 "endCap",
                 "lineColor",
@@ -3733,7 +3735,7 @@ fn validate_chart_series_error_bars(
                 "Y ErrorBars are not supported for `{chart_type}` charts; use axis=\"x\" for bar charts or choose an area, column, line, radar, scatter, or stock chart"
             )));
         }
-        validate_chart_error_bar_amount(&error_bars)?;
+        validate_chart_error_bar_amount(&error_bars, series)?;
         if let Some(direction) = error_bars.props.get("direction")
             && !matches!(direction.as_str(), Some("both" | "minus" | "plus"))
         {
@@ -3809,17 +3811,63 @@ fn validate_chart_error_bar_line(error_bars: &Node) -> Result<()> {
     Ok(())
 }
 
-fn validate_chart_error_bar_amount(error_bars: &Node) -> Result<()> {
+fn validate_chart_error_bar_amount(error_bars: &Node, series: &Node) -> Result<()> {
     let error_type = error_bars
         .props
         .get("type")
         .and_then(Value::as_str)
         .ok_or_else(|| {
             Error::Compile(
-                "ErrorBars.type is required; use standardError, fixedValue, percentage, or standardDeviation".into(),
+                "ErrorBars.type is required; use standardError, fixedValue, percentage, standardDeviation, or custom".into(),
             )
         })?;
     let value = error_bars.props.get("value");
+    if error_type == "custom" {
+        if value.is_some() {
+            return Err(Error::Compile(
+                "ErrorBars.value is not valid with type=\"custom\"; remove value and provide plusRange and minusRange".into(),
+            ));
+        }
+        let point_count = series
+            .props
+            .get("values")
+            .and_then(Value::as_str)
+            .and_then(|formula| formula.split_once('!'))
+            .and_then(|(_, range)| parse_a1_range(range))
+            .and_then(one_dimensional_range_length);
+        for property in ["plusRange", "minusRange"] {
+            let Some(formula) = error_bars.props.get(property).and_then(Value::as_str) else {
+                return Err(Error::Compile(format!(
+                    "ErrorBars.type=\"custom\" requires {property}; provide a sheet-qualified A1 cell/range such as `Data!$D$2:$D$4`"
+                )));
+            };
+            if !valid_chart_source_reference(formula, false) {
+                return Err(Error::Compile(format!(
+                    "ErrorBars.{property} `{formula}` must be a sheet-qualified A1 cell or range without a leading `=`; use a reference such as `Data!$D$2:$D$4`"
+                )));
+            }
+            let range_count = formula
+                .split_once('!')
+                .and_then(|(_, range)| parse_a1_range(range))
+                .and_then(one_dimensional_range_length);
+            let count_matches = match (range_count, point_count) {
+                (Some(1), Some(_)) => true,
+                (Some(range_count), Some(point_count)) => range_count == point_count,
+                _ => false,
+            };
+            if !count_matches {
+                return Err(Error::Compile(format!(
+                    "ErrorBars.{property} `{formula}` must be one cell or a one-dimensional range with the same point count as Series.values; use one cell or a range with the series point count"
+                )));
+            }
+        }
+        return Ok(());
+    }
+    if error_bars.props.contains_key("plusRange") || error_bars.props.contains_key("minusRange") {
+        return Err(Error::Compile(
+            "ErrorBars.plusRange and minusRange are valid only with type=\"custom\"; choose custom or remove both range properties".into(),
+        ));
+    }
     if error_type == "standardError" {
         if value.is_some() {
             return Err(Error::Compile(
@@ -3855,7 +3903,7 @@ fn validate_chart_error_bar_amount(error_bars: &Node) -> Result<()> {
         }
     } else {
         return Err(Error::Compile(format!(
-            "ErrorBars.type `{error_type}` is unsupported; use standardError, fixedValue, percentage, or standardDeviation"
+            "ErrorBars.type `{error_type}` is unsupported; use standardError, fixedValue, percentage, standardDeviation, or custom"
         )));
     }
     Ok(())
@@ -4167,6 +4215,34 @@ fn validate_chart_sheet_references(
                                 .and_then(Value::as_str)
                                 .unwrap_or("?")
                         )));
+                    }
+                }
+                for child_value in &series.children {
+                    let error_bars: Node = serde_json::from_value(child_value.clone())
+                        .map_err(|error| Error::Compile(error.to_string()))?;
+                    if error_bars.r#type != "ErrorBars"
+                        || error_bars.props.get("type").and_then(Value::as_str) != Some("custom")
+                    {
+                        continue;
+                    }
+                    for property in ["plusRange", "minusRange"] {
+                        let Some(formula) = error_bars.props.get(property).and_then(Value::as_str)
+                        else {
+                            continue;
+                        };
+                        let Some(referenced_sheet) = chart_source_sheet_name(formula) else {
+                            continue;
+                        };
+                        if !worksheet_names.contains(&referenced_sheet.to_lowercase()) {
+                            return Err(Error::Compile(format!(
+                                "ErrorBars.{property} `{formula}` on Worksheet `{}` refers to missing worksheet `{referenced_sheet}`; add that sheet or correct the reference",
+                                sheet
+                                    .props
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("?")
+                            )));
+                        }
                     }
                 }
             }

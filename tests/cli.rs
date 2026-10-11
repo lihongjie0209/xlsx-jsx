@@ -6,7 +6,8 @@ use rust_xlsxwriter::{
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartLine, ChartLineDashType, ChartMarker,
-    ChartMarkerType, ChartTrendline, ChartTrendlineType, ChartType, Workbook as XlsxWorkbook,
+    ChartMarkerType, ChartRange, ChartTrendline, ChartTrendlineType, ChartType,
+    Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -188,6 +189,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("labelSeparator"))
         .stdout(predicate::str::contains("labelNumberFormat"))
         .stdout(predicate::str::contains("ErrorBars"))
+        .stdout(predicate::str::contains("plusRange"))
+        .stdout(predicate::str::contains("minusRange"))
         .stdout(predicate::str::contains("ChartDataTable"))
         .stdout(predicate::str::contains("Trendline"))
         .stdout(predicate::str::contains("markerType"))
@@ -1783,6 +1786,101 @@ fn reverses_external_scatter_error_bars_without_a_manifest() {
 }
 
 #[test]
+fn reverses_custom_chart_error_bar_ranges_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-custom-error-bars.xlsx");
+    let output_path = directory.path().join("external-custom-error-bars.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    for (row, plus, minus) in [(1, 1.5, 0.8), (2, 1.2, 0.9), (3, 1.8, 0.6)] {
+        worksheet.write_number(row, 3, plus).unwrap();
+        worksheet.write_number(row, 4, minus).unwrap();
+    }
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    let mut error_bars = ChartErrorBars::new();
+    error_bars.set_type(ChartErrorBarsType::Custom(
+        ChartRange::new_from_string("Data!$D$2:$D$4"),
+        ChartRange::new_from_string("Data!$E$2:$E$4"),
+    ));
+    chart
+        .add_series()
+        .set_categories("Data!$A$2:$A$4")
+        .set_values("Data!$B$2:$B$4")
+        .set_y_error_bars(&error_bars);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("<ErrorBars axis=\"y\" type=\"custom\" plusRange=\"Data!$D$2:$D$4\" minusRange=\"Data!$E$2:$E$4\" />"));
+
+    let rebuilt_path = directory.path().join("rebuilt-custom-error-bars.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<c:errValType val=\"cust\"/>"));
+    assert!(chart_xml.contains("<c:plus><c:numRef><c:f>Data!$D$2:$D$4</c:f>"));
+    assert!(chart_xml.contains("<c:minus><c:numRef><c:f>Data!$E$2:$E$4</c:f>"));
+}
+
+#[test]
+fn reverse_rejects_custom_error_bar_cache_values_that_disagree_with_source_cells() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("mismatched-error-bar-cache.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    for (row, plus, minus) in [(1, 1.5, 0.8), (2, 1.2, 0.9), (3, 1.8, 0.6)] {
+        worksheet.write_number(row, 3, plus).unwrap();
+        worksheet.write_number(row, 4, minus).unwrap();
+    }
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    let mut error_bars = ChartErrorBars::new();
+    error_bars.set_type(ChartErrorBarsType::Custom(
+        ChartRange::new_from_string("Data!$D$2:$D$4"),
+        ChartRange::new_from_string("Data!$E$2:$E$4"),
+    ));
+    chart
+        .add_series()
+        .set_categories("Data!$A$2:$A$4")
+        .set_values("Data!$B$2:$B$4")
+        .set_y_error_bars(&error_bars);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    rewrite_part(&input, "xl/charts/chart1.xml", |xml| {
+        let original = "<c:pt idx=\"0\"><c:v>1.5</c:v></c:pt>";
+        assert!(
+            xml.contains(original),
+            "the custom error-bar cache is present"
+        );
+        xml.replacen(original, "<c:pt idx=\"0\"><c:v>9</c:v></c:pt>", 1)
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "has cached value 9 at index 0, but the referenced worksheet cell contains 1.5",
+        ))
+        .stderr(predicate::str::contains("update the source cell or cache"));
+}
+
+#[test]
 fn reverses_and_rebuilds_external_scatter_axis_bounds_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("external-scatter-axis-bounds.xlsx");
@@ -3093,6 +3191,26 @@ fn rejects_invalid_chart_error_bar_values_with_guidance() {
 }
 
 #[test]
+fn rejects_custom_error_bar_ranges_with_mismatched_point_counts() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("mismatched-custom-error-bars.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ErrorBars } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><ErrorBars axis="y" type="custom" plusRange="Data!D2:D3" minusRange="Data!E2:E4" /></Series></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ErrorBars.plusRange `Data!D2:D3` must be one cell or a one-dimensional range with the same point count as Series.values",
+        ));
+}
+
+#[test]
 fn rejects_error_bar_line_transparency_without_a_color_with_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-error-bar-line.tsx");
@@ -3187,9 +3305,11 @@ fn reverse_rejects_custom_chart_error_bar_ranges_with_repair_guidance() {
         .arg(&mutated)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("custom error bars"))
         .stderr(predicate::str::contains(
-            "custom plus/minus ranges are not represented",
+            "combines custom error ranges with a scalar val",
+        ))
+        .stderr(predicate::str::contains(
+            "remove val and retain plus/minus ranges",
         ))
         .stderr(predicate::str::contains("suggestion:"));
 }

@@ -2,15 +2,15 @@ import { Workbook, Worksheet, Row, Cell, Chart, Series, ErrorBars, Trendline, Ch
 
 export default <Workbook>
   <Worksheet name="Data">
-    <Row><Cell>Month</Cell><Cell>Revenue</Cell><Cell>Expenses</Cell></Row>
-    <Row><Cell>Jan</Cell><Cell value={12} /><Cell value={7} /></Row>
-    <Row><Cell>Feb</Cell><Cell value={18} /><Cell value={9} /></Row>
-    <Row><Cell>Mar</Cell><Cell value={15} /><Cell value={6} /></Row>
+    <Row><Cell>Month</Cell><Cell>Revenue</Cell><Cell>Expenses</Cell><Cell>Plus error</Cell><Cell>Minus error</Cell></Row>
+    <Row><Cell>Jan</Cell><Cell value={12} /><Cell value={7} /><Cell value={1.5} /><Cell value={0.8} /></Row>
+    <Row><Cell>Feb</Cell><Cell value={18} /><Cell value={9} /><Cell value={1.2} /><Cell value={0.9} /></Row>
+    <Row><Cell>Mar</Cell><Cell value={15} /><Cell value={6} /><Cell value={1.8} /><Cell value={0.6} /></Row>
   </Worksheet>
   <Worksheet name="Sales">
     <Chart type="column" cell="D2" width={480} height={288} name="Revenue and expenses" title="Monthly revenue &amp; expenses — 2026" titleOverlay={true} xAxisTitle="Month" yAxisTitle="Revenue ($)" yAxisNumberFormat="$#,##0.00" yAxisMin={0} yAxisMax={20} yAxisMajorUnit={5} yAxisMinorUnit={1} valueAxisDisplayUnit="thousands" categoryAxisLabelAlignment="left" categoryAxisOnTickMarks={true} style={7} xAxisCrossing="max" yAxisCrossing="min" horizontalAxisHidden={true} horizontalAxisMinorGridlines={true} verticalAxisMajorGridlines={{color: "#D9E1F2", width: 0.75, dash: "solid"}} horizontalAxisMajorTickType="none" verticalAxisMajorTickType="outside" horizontalAxisLabelPosition="high" verticalAxisLabelPosition="low" legendPosition="bottom" legendOverlay={true} showHiddenData={true} emptyCellsAs="span" showNaAsEmptyCell={true} altText="Monthly revenue compared with expenses">
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" gap={70} overlap={-25} showValue={true} showCategoryName={true} labelPosition="insideEnd" labelNumberFormat="$#,##0.00">
-        <ErrorBars axis="y" type="standardError" lineColor="#4472C4" lineWidth={1.5} lineDash="dash" lineTransparency={20} />
+        <ErrorBars axis="y" type="custom" plusRange="Data!$D$2:$D$4" minusRange="Data!$E$2:$E$4" lineColor="#4472C4" lineWidth={1.5} lineDash="dash" lineTransparency={20} />
         <Trendline type="linear" deleteFromLegend={true} />
       </Series>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" deleteFromLegend={true} />
