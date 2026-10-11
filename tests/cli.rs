@@ -159,6 +159,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("legendDeletedEntries"))
         .stdout(predicate::str::contains("deleteFromLegend"))
         .stdout(predicate::str::contains("valueAxisReversed"))
+        .stdout(predicate::str::contains("xAxisReversed"))
+        .stdout(predicate::str::contains("yAxisReversed"))
         .stdout(predicate::str::contains("categoryAxisLabelInterval"))
         .stdout(predicate::str::contains("categoryAxisTickInterval"))
         .stdout(predicate::str::contains("horizontalAxisMajorTickType"))
@@ -3279,6 +3281,91 @@ fn validates_scatter_axis_titles() {
         .arg(input)
         .assert()
         .success();
+}
+
+#[test]
+fn validates_independent_scatter_axis_reversal() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-axis-reversal.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisReversed={true} yAxisReversed={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .success();
+}
+
+#[test]
+fn rejects_scatter_axis_reversal_on_category_charts_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("category-axis-reversal.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" xAxisReversed={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisReversed is supported only for scatter charts",
+        ))
+        .stderr(predicate::str::contains("use a scatter chart"));
+}
+
+#[test]
+fn reverses_and_rebuilds_external_scatter_axis_reversal_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-reversal.xlsx");
+    let output_path = directory.path().join("external-scatter-reversal.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_name("Measurements");
+    chart.x_axis().set_reverse();
+    chart.y_axis().set_reverse();
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("xAxisReversed={true}"), "{source}");
+    assert!(source.contains("yAxisReversed={true}"), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-reversal.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert_eq!(
+        xml.matches("<c:orientation val=\"maxMin\"/>").count(),
+        2,
+        "{xml}"
+    );
 }
 
 #[test]

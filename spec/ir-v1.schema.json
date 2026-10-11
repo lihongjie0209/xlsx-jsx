@@ -508,6 +508,8 @@
             "xAxisLogBase": { "type": "integer", "minimum": 2, "maximum": 1000 },
             "yAxisLogBase": { "type": "integer", "minimum": 2, "maximum": 1000 },
             "valueAxisReversed": { "type": "boolean" },
+            "xAxisReversed": { "type": "boolean" },
+            "yAxisReversed": { "type": "boolean" },
             "categoryAxisLabelInterval": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "categoryAxisTickInterval": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "horizontalAxisMajorTickType": { "enum": ["cross", "inside", "outside", "none"] },
@@ -655,7 +657,7 @@
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }, { "required": ["xAxisLogBase"] }] } } } }
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }, { "required": ["xAxisLogBase"] }, { "required": ["xAxisReversed"] }, { "required": ["yAxisReversed"] }] } } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["pie", "doughnut"] } } }, "required": ["type"] } }, "required": ["props"] },

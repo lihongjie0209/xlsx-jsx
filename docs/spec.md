@@ -261,6 +261,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   value axis. Scatter charts (two value axes) and pie/doughnut charts (no axes)
   reject it. Reverse preserves explicit reversed value-axis orientation and
   rejects reversed category/date axes rather than silently normalizing them.
+- `Chart.xAxisReversed?: boolean` and `Chart.yAxisReversed?: boolean` independently
+  reverse the horizontal X and vertical Y value scales on scatter charts. Omission
+  or `false` keeps that axis in its normal direction; these properties are
+  scatter-only because other chart families expose one primary value axis through
+  `valueAxisReversed`. Reverse maps each `<valAx><scaling><orientation>` by axis
+  direction (top/bottom is X, left/right is Y), including axis positions changed
+  by crossing or reversal settings.
 - `Chart.categoryAxisLabelInterval?: integer` and
   `Chart.categoryAxisTickInterval?: integer` set the interval between visible
   category/date-axis labels and tick marks, respectively. Each accepts 1–65535;

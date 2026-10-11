@@ -1904,6 +1904,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisMax",
             "xAxisLogBase",
             "yAxisLogBase",
+            "xAxisReversed",
+            "yAxisReversed",
             "valueAxisDisplayUnit",
             "valueAxisDisplayUnitLabel",
             "dropLines",
@@ -2134,6 +2136,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_bounds(chart, chart_type)?;
     validate_chart_axis_log_base(chart, chart_type)?;
     validate_chart_value_axis_reversed(chart, chart_type)?;
+    validate_chart_scatter_axes_reversed(chart, chart_type)?;
     validate_chart_category_axis_intervals(chart, chart_type)?;
     validate_chart_category_axis_date_properties(chart, chart_type)?;
     validate_chart_axis_tick_types(chart, chart_type)?;
@@ -2294,6 +2297,26 @@ fn validate_chart_value_axis_reversed(chart: &Node, chart_type: &str) -> Result<
         return Err(Error::Compile(
             "Chart.valueAxisReversed is not supported for scatter, pie, or doughnut charts because there is no single primary value axis; omit it or use a supported category/value chart".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_chart_scatter_axes_reversed(chart: &Node, chart_type: &str) -> Result<()> {
+    let scatter_chart = chart_type.starts_with("scatter");
+    for property in ["xAxisReversed", "yAxisReversed"] {
+        let Some(value) = chart.props.get(property) else {
+            continue;
+        };
+        if !value.is_boolean() {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be a boolean; use true to reverse that scatter axis or false for its normal direction"
+            )));
+        }
+        if !scatter_chart {
+            return Err(Error::Compile(format!(
+                "Chart.{property} is supported only for scatter charts; omit it or use a scatter chart with two numeric axes"
+            )));
+        }
     }
     Ok(())
 }

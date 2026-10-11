@@ -760,6 +760,7 @@ fn compile_chart(
     configure_chart_axis_bounds(&mut chart, component);
     configure_chart_axis_log_base(&mut chart, component);
     configure_chart_value_axis_reversed(&mut chart, component);
+    configure_chart_scatter_axes_reversed(&mut chart, component);
     configure_chart_value_axis_display_units(&mut chart, component);
     if component
         .props
@@ -1385,6 +1386,25 @@ fn configure_chart_value_axis_reversed(chart: &mut Chart, component: &Node) {
         chart.y_axis()
     };
     value_axis.set_reverse();
+}
+
+fn configure_chart_scatter_axes_reversed(chart: &mut Chart, component: &Node) {
+    if component
+        .props
+        .get("xAxisReversed")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        chart.x_axis().set_reverse();
+    }
+    if component
+        .props
+        .get("yAxisReversed")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        chart.y_axis().set_reverse();
+    }
 }
 
 fn configure_chart_category_axis_intervals(chart: &mut Chart, component: &Node) {
@@ -4722,6 +4742,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
         }
     }
     append_chart_axis_value_properties(&mut properties, chart);
+    append_chart_axis_reversal_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
     append_chart_axis_label_properties(&mut properties, chart);
     if chart.category_axis_type == Some("date") {
@@ -4891,6 +4912,17 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
         }
     }
     append_chart_gridline_properties(properties, chart);
+}
+
+fn append_chart_axis_reversal_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (name, reversed) in [
+        ("xAxisReversed", chart.x_axis_reversed),
+        ("yAxisReversed", chart.y_axis_reversed),
+    ] {
+        if let Some(reversed) = reversed {
+            let _ = write!(properties, " {name}={{{reversed}}}");
+        }
+    }
 }
 
 fn append_chart_gridline_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -7814,6 +7846,8 @@ fn parse_chart_xml(
     let mut y_axis_log_base = None;
     let mut y_axis_log_base_seen = false;
     let mut scatter_axis_log_bases = Vec::<Option<u16>>::new();
+    let mut x_axis_reversed = None;
+    let mut y_axis_reversed = None;
     let mut value_axis_reversed = None;
     let mut value_axis_reversed_seen = false;
     let mut nonstandard_axis_position_seen = false;
@@ -7836,6 +7870,8 @@ fn parse_chart_xml(
     let mut y_axis_max_seen = false;
     let mut scatter_axis_bounds = Vec::<(Option<f64>, Option<f64>)>::new();
     let mut scatter_axis_positions = Vec::<Option<&'static str>>::new();
+    let mut scatter_axis_reversed = Vec::<Option<bool>>::new();
+    let mut scatter_axis_orientation_seen = Vec::<bool>::new();
     let mut current_value_axis_index = None;
     let mut y_axis_major_unit = None;
     let mut y_axis_minor_unit = None;
@@ -8285,6 +8321,8 @@ fn parse_chart_xml(
                             scatter_axis_bounds.push((None, None));
                             scatter_axis_log_bases.push(None);
                             scatter_axis_positions.push(None);
+                            scatter_axis_reversed.push(None);
+                            scatter_axis_orientation_seen.push(false);
                         } else if tag == "dateAx" {
                             current_value_axis_index = None;
                             if category_axis_type.is_some() {
@@ -9648,22 +9686,65 @@ fn parse_chart_xml(
                                 )));
                             }
                             if !value_axis_context
-                                || chart_type.is_some_and(|value| {
-                                    value.starts_with("scatter")
-                                        || matches!(value, "pie" | "doughnut")
-                                })
+                                || chart_type
+                                    .is_some_and(|value| matches!(value, "pie" | "doughnut"))
                             {
                                 return Err(Error::Reverse(format!(
                                     "chart part `{part}` reverses an axis without one unambiguous primary value axis; restore minMax or use a supported category/value chart"
                                 )));
                             }
-                            if value_axis_reversed_seen {
+                            if chart_type.is_some_and(|value| value.starts_with("scatter")) {
+                                let Some(index) = current_value_axis_index else {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` reverses a scatter axis outside a tracked value axis; repair the axis structure"
+                                    )));
+                                };
+                                let Some(seen) = scatter_axis_orientation_seen.get_mut(index)
+                                else {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has orientation on an untracked scatter axis; keep exactly two primary value axes"
+                                    )));
+                                };
+                                if *seen {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats scatter-axis scaling orientation; retain one orientation per value axis"
+                                    )));
+                                }
+                                *seen = true;
+                                let Some(target) = scatter_axis_reversed.get_mut(index) else {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` reverses an untracked scatter axis; keep exactly two primary value axes"
+                                    )));
+                                };
+                                *target = Some(true);
+                            } else {
+                                if value_axis_reversed_seen {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has multiple reversed value axes; keep one primary value-axis orientation"
+                                    )));
+                                }
+                                value_axis_reversed_seen = true;
+                                value_axis_reversed = Some(true);
+                            }
+                        } else if chart_type.is_some_and(|value| value.starts_with("scatter"))
+                            && value_axis_context
+                        {
+                            let Some(index) = current_value_axis_index else {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` has multiple reversed value axes; keep one primary value-axis orientation"
+                                    "chart part `{part}` has scatter-axis orientation outside a tracked value axis; repair the axis structure"
+                                )));
+                            };
+                            let Some(seen) = scatter_axis_orientation_seen.get_mut(index) else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has orientation on an untracked scatter axis; keep exactly two primary value axes"
+                                )));
+                            };
+                            if *seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats scatter-axis scaling orientation; retain one orientation per value axis"
                                 )));
                             }
-                            value_axis_reversed_seen = true;
-                            value_axis_reversed = Some(true);
+                            *seen = true;
                         }
                     }
                     "tickLblSkip" | "tickMarkSkip" => {
@@ -11116,6 +11197,8 @@ fn parse_chart_xml(
         y_axis_max = y_maximum;
         x_axis_log_base = scatter_axis_log_bases[x_axis_index];
         y_axis_log_base = scatter_axis_log_bases[y_axis_index];
+        x_axis_reversed = scatter_axis_reversed[x_axis_index];
+        y_axis_reversed = scatter_axis_reversed[y_axis_index];
         if x_axis_min
             .zip(x_axis_max)
             .is_some_and(|(minimum, maximum)| minimum >= maximum)
@@ -11163,6 +11246,8 @@ fn parse_chart_xml(
     }
     if nonstandard_axis_position_seen
         && value_axis_reversed != Some(true)
+        && x_axis_reversed != Some(true)
+        && y_axis_reversed != Some(true)
         && x_axis_crossing != Some("max")
         && y_axis_crossing != Some("max")
     {
@@ -11254,6 +11339,8 @@ fn parse_chart_xml(
         y_axis_min,
         y_axis_max,
         y_axis_log_base,
+        x_axis_reversed,
+        y_axis_reversed,
         value_axis_reversed,
         category_axis_label_interval: category_axis_label_interval
             .filter(|interval| *interval != 1),
@@ -14821,6 +14908,8 @@ struct WorksheetChart {
     y_axis_min: Option<f64>,
     y_axis_max: Option<f64>,
     y_axis_log_base: Option<u16>,
+    x_axis_reversed: Option<bool>,
+    y_axis_reversed: Option<bool>,
     value_axis_reversed: Option<bool>,
     category_axis_label_interval: Option<u16>,
     category_axis_tick_interval: Option<u16>,
