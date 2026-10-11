@@ -3644,6 +3644,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     "fontUnderline",
                     "fontColor",
                     "fontName",
+                    "fillColor",
                 ],
                 "ChartDataTable",
             )?;
@@ -3797,6 +3798,13 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
 }
 
 fn validate_chart_data_table_font(data_table: &Node) -> Result<()> {
+    if let Some(value) = data_table.props.get("fillColor")
+        && !value.as_str().is_some_and(is_opaque_rgb_color)
+    {
+        return Err(Error::Compile(
+            "ChartDataTable.fillColor must be an opaque RGB color like #336699".into(),
+        ));
+    }
     if let Some(value) = data_table.props.get("fontSize") {
         let Some(size) = value.as_f64().filter(|size| size.is_finite()) else {
             return Err(Error::Compile(

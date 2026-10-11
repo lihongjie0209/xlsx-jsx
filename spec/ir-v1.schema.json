@@ -1102,7 +1102,8 @@
             "fontItalic": { "type": "boolean" },
             "fontUnderline": { "type": "boolean" },
             "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
-            "fontName": { "type": "string", "minLength": 1, "maxLength": 255 }
+            "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
           },
           "additionalProperties": false
         },

@@ -305,7 +305,6 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("categoryAxisMinorTimeUnit"))
         .stdout(predicate::str::contains("categoryAxisType"))
         .stdout(predicate::str::contains("legendOverlay"))
-        .stdout(predicate::str::contains("legendFillColor"))
         .stdout(predicate::str::contains("legendDeletedEntries"))
         .stdout(predicate::str::contains("deleteFromLegend"))
         .stdout(predicate::str::contains("valueAxisReversed"))
@@ -432,7 +431,18 @@ fn spec_exposes_chart_data_table_font_properties() {
         .success()
         .stdout(predicate::str::contains("fontSize"))
         .stdout(predicate::str::contains("fontColor"))
-        .stdout(predicate::str::contains("fontName"));
+        .stdout(predicate::str::contains("fontName"))
+        .stdout(predicate::str::contains("fillColor"));
+}
+
+#[test]
+fn spec_exposes_chart_legend_shape_fill() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("legendFillColor"));
 }
 
 #[test]
@@ -3172,7 +3182,8 @@ fn reverses_external_chart_data_table_without_a_manifest() {
                 .set_underline()
                 .set_color("#336699")
                 .set_name("Arial"),
-        );
+        )
+        .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0")));
     chart.set_data_table(&data_table);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
@@ -3187,7 +3198,7 @@ fn reverses_external_chart_data_table_without_a_manifest() {
         .success();
     let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
     assert!(source.contains(
-        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} fontSize={11} fontBold={true} fontItalic={true} fontUnderline={true} fontColor=\"#336699\" fontName=\"Arial\" />"
+        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} fontSize={11} fontBold={true} fontItalic={true} fontUnderline={true} fontColor=\"#336699\" fontName=\"Arial\" fillColor=\"#F0E0D0\" />"
     ));
 
     let rebuilt_path = directory.path().join("rebuilt-chart-data-table.xlsx");
@@ -3205,6 +3216,11 @@ fn reverses_external_chart_data_table_without_a_manifest() {
     assert!(chart_xml.contains("<c:showVertBorder val=\"1\"/>"));
     assert!(!chart_xml.contains("<c:showOutline"));
     assert!(chart_xml.contains("<c:showKeys val=\"1\"/>"));
+    assert!(
+        chart_xml
+            .contains("<c:spPr><a:solidFill><a:srgbClr val=\"F0E0D0\"/></a:solidFill></c:spPr>"),
+        "{chart_xml}"
+    );
     assert!(chart_xml.contains("<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"1100\" b=\"1\" i=\"1\" u=\"sng\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill><a:latin typeface=\"Arial\"/></a:defRPr></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p></c:txPr>"), "{chart_xml}");
 }
 
@@ -3223,6 +3239,26 @@ fn rejects_invalid_chart_data_table_properties_with_guidance() {
             "ChartDataTable.showHorizontalBorders must be a boolean",
         ))
         .stderr(predicate::str::contains("use true/false"));
+}
+
+#[test]
+fn rejects_invalid_chart_data_table_fill_color_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-data-table-fill.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ChartDataTable } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /><ChartDataTable fillColor="red" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ChartDataTable.fillColor must be an opaque RGB color like #336699",
+        ));
 }
 
 #[test]
@@ -3275,11 +3311,9 @@ fn reverse_rejects_custom_chart_data_table_formatting_with_guidance() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "unsupported `<spPr>` data-table formatting",
+            "unsupported `<ln>` data-table formatting",
         ))
-        .stderr(predicate::str::contains(
-            "remove shape formatting or extensions",
-        ));
+        .stderr(predicate::str::contains("remove borders or extensions"));
 }
 
 #[test]

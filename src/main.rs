@@ -1033,6 +1033,11 @@ fn compile_chart(
             if let Some(value) = child.props.get("showLegendKeys").and_then(Value::as_bool) {
                 data_table = data_table.show_legend_keys(value);
             }
+            if let Some(color) = child.props.get("fillColor").and_then(Value::as_str) {
+                data_table = data_table.set_format(
+                    ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)),
+                );
+            }
             if [
                 "fontSize",
                 "fontBold",
@@ -5519,6 +5524,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(name) = &table.font_name {
             let _ = write!(output, " fontName={name:?}");
         }
+        if let Some(color) = &table.fill_color {
+            let _ = write!(output, " fillColor={color:?}");
+        }
         output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
@@ -8957,6 +8965,7 @@ fn parse_chart_xml(
     let mut chart_group_marker_enabled = false;
     let mut series = Vec::<WorksheetChartSeries>::new();
     let mut data_table: Option<WorksheetChartDataTable> = None;
+    let mut data_table_sppr_seen = false;
     let mut data_table_flags_seen = [false; 4];
     let mut data_table_last_flag = None;
     let mut current_error_bar: Option<usize> = None;
@@ -9709,6 +9718,13 @@ fn parse_chart_xml(
                     )));
                 }
                 if tag == "spPr" {
+                    if stack.last().is_some_and(|ancestor| ancestor == "dTable")
+                        && std::mem::replace(&mut data_table_sppr_seen, true)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats data-table shape properties; keep one opaque RGB solid fill"
+                        )));
+                    }
                     if stack.last().is_some_and(|ancestor| ancestor == "legend")
                         && std::mem::replace(&mut legend_sppr_seen, true)
                     {
@@ -9987,15 +10003,20 @@ fn parse_chart_xml(
                                     | "srgbClr"
                                     | "latin"
                             )));
+                let data_table_shape_content = stack.iter().any(|ancestor| ancestor == "dTable")
+                    && ((tag == "spPr" && stack.last().is_some_and(|parent| parent == "dTable"))
+                        || (stack.iter().any(|ancestor| ancestor == "spPr")
+                            && matches!(tag.as_str(), "solidFill" | "srgbClr")));
                 if stack.iter().any(|ancestor| ancestor == "dTable")
                     && !matches!(
                         tag.as_str(),
                         "showHorzBorder" | "showVertBorder" | "showOutline" | "showKeys"
                     )
                     && !data_table_font_content
+                    && !data_table_shape_content
                 {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported `<{tag}>` data-table formatting; keep the four display flags and supported font properties, and remove shape formatting or extensions"
+                        "chart part `{part}` has unsupported `<{tag}>` data-table formatting; keep the four display flags, one opaque RGB solid fill, and supported font properties, and remove borders or extensions"
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "marker")
@@ -13268,7 +13289,7 @@ fn parse_chart_xml(
                                 || stack.last().is_some_and(|ancestor| ancestor == "trendline")
                                 || matches!(
                                     stack.last().map(String::as_str),
-                                    Some("chartSpace" | "plotArea" | "legend")
+                                    Some("chartSpace" | "plotArea" | "legend" | "dTable")
                                 )
                                 || (stack.iter().any(|ancestor| ancestor == "dPt")
                                     && matches!(
@@ -13420,6 +13441,34 @@ fn parse_chart_xml(
                                 }
                                 current.line_width = Some(f64::from(width_emu) / 12700.0);
                             }
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|ancestor| ancestor == "dTable")
+                            && stack.iter().any(|ancestor| ancestor == "spPr")
+                            && !stack.iter().any(|ancestor| ancestor == "ln") =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "data-table fill",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB data-table fill; use an opaque six-digit RGB color"
+                            )));
+                        }
+                        let table = data_table.as_mut().ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has a data-table fill without a dTable"
+                            ))
+                        })?;
+                        if table.fill_color.replace(format!("#{color}")).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a data-table RGB fill; retain one opaque solid fill"
+                            )));
                         }
                     }
                     "srgbClr"
@@ -14676,6 +14725,15 @@ fn parse_chart_xml(
                 "chart part `{part}` has {area} shape properties without one opaque RGB solid fill; add the supported fill or remove the shape properties"
             )));
         }
+    }
+    if data_table_sppr_seen
+        && data_table
+            .as_ref()
+            .is_none_or(|table| table.fill_color.is_none())
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has data-table shape properties without one opaque RGB solid fill; add fillColor or remove the shape properties"
+        )));
     }
     for (label, title, fill, line) in [
         (
@@ -19077,6 +19135,7 @@ struct WorksheetChartDataTable {
     font_underline: Option<bool>,
     font_color: Option<String>,
     font_name: Option<String>,
+    fill_color: Option<String>,
 }
 
 #[derive(Clone)]
