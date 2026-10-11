@@ -531,6 +531,10 @@
             "yAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "valueAxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
             "valueAxisDisplayUnitLabel": { "type": "boolean" },
+            "xAxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
+            "xAxisDisplayUnitLabel": { "type": "boolean" },
+            "yAxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
+            "yAxisDisplayUnitLabel": { "type": "boolean" },
             "dropLines": { "type": "boolean" },
             "showHiddenData": { "type": "boolean" },
             "emptyCellsAs": { "enum": ["gap", "zero", "span"] },
@@ -657,7 +661,7 @@
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }, { "required": ["xAxisLogBase"] }, { "required": ["xAxisReversed"] }, { "required": ["yAxisReversed"] }] } } } }
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }, { "required": ["xAxisLogBase"] }, { "required": ["xAxisReversed"] }, { "required": ["yAxisReversed"] }, { "required": ["xAxisDisplayUnit"] }, { "required": ["xAxisDisplayUnitLabel"] }, { "required": ["yAxisDisplayUnit"] }, { "required": ["yAxisDisplayUnitLabel"] }] } } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["pie", "doughnut"] } } }, "required": ["type"] } }, "required": ["props"] },

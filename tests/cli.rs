@@ -146,6 +146,10 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisLogBase"))
         .stdout(predicate::str::contains("valueAxisDisplayUnit"))
         .stdout(predicate::str::contains("valueAxisDisplayUnitLabel"))
+        .stdout(predicate::str::contains("xAxisDisplayUnit"))
+        .stdout(predicate::str::contains("xAxisDisplayUnitLabel"))
+        .stdout(predicate::str::contains("yAxisDisplayUnit"))
+        .stdout(predicate::str::contains("yAxisDisplayUnitLabel"))
         .stdout(predicate::str::contains("dropLines"))
         .stdout(predicate::str::contains("showHiddenData"))
         .stdout(predicate::str::contains("emptyCellsAs"))
@@ -3319,6 +3323,107 @@ fn rejects_scatter_axis_reversal_on_category_charts_with_repair_guidance() {
             "Chart.xAxisReversed is supported only for scatter charts",
         ))
         .stderr(predicate::str::contains("use a scatter chart"));
+}
+
+#[test]
+fn validates_scatter_axis_display_units() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-axis-display-units.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisDisplayUnit="millions" xAxisDisplayUnitLabel={false} yAxisDisplayUnit="thousands"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .success();
+}
+
+#[test]
+fn rejects_scatter_axis_display_unit_label_without_its_unit() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-axis-display-unit-label.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisDisplayUnitLabel={false}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisDisplayUnitLabel requires xAxisDisplayUnit",
+        ))
+        .stderr(predicate::str::contains("add a built-in unit"));
+}
+
+#[test]
+fn reverses_and_rebuilds_external_scatter_axis_display_units_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-display-units.xlsx");
+    let output_path = directory.path().join("external-scatter-display-units.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_name("Measurements");
+    chart
+        .x_axis()
+        .set_display_unit_type(ChartAxisDisplayUnitType::Millions)
+        .set_display_units_visible(false)
+        .set_reverse();
+    chart
+        .y_axis()
+        .set_display_unit_type(ChartAxisDisplayUnitType::Thousands)
+        .set_reverse();
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("xAxisDisplayUnit=\"millions\""), "{source}");
+    assert!(source.contains("xAxisDisplayUnitLabel={false}"), "{source}");
+    assert!(
+        source.contains("yAxisDisplayUnit=\"thousands\""),
+        "{source}"
+    );
+    assert!(source.contains("xAxisReversed={true}"), "{source}");
+    assert!(source.contains("yAxisReversed={true}"), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-display-units.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:builtInUnit val=\"millions\"/>"), "{xml}");
+    assert!(xml.contains("<c:builtInUnit val=\"thousands\"/>"), "{xml}");
+    assert_eq!(
+        xml.matches("<c:dispUnitsLbl><c:layout/></c:dispUnitsLbl>")
+            .count(),
+        1,
+        "{xml}"
+    );
 }
 
 #[test]

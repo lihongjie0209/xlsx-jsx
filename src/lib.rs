@@ -1908,6 +1908,10 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisReversed",
             "valueAxisDisplayUnit",
             "valueAxisDisplayUnitLabel",
+            "xAxisDisplayUnit",
+            "xAxisDisplayUnitLabel",
+            "yAxisDisplayUnit",
+            "yAxisDisplayUnitLabel",
             "dropLines",
             "showHiddenData",
             "emptyCellsAs",
@@ -2336,18 +2340,48 @@ fn validate_chart_value_axis_display_units(chart: &Node, chart_type: &str) -> Re
             ));
         }
     }
-    let Some(unit) = unit else {
-        return Ok(());
-    };
-    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
-        return Err(Error::Compile(
-            "Chart.valueAxisDisplayUnit is not supported for scatter, pie, or doughnut charts because they have no single unambiguous value axis; use an area/bar/column/line/radar/stock chart or omit the display unit".into(),
-        ));
+    if let Some(unit) = unit {
+        if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+            return Err(Error::Compile(
+                "Chart.valueAxisDisplayUnit is not supported for scatter, pie, or doughnut charts because they have no single unambiguous value axis; use an area/bar/column/line/radar/stock chart or omit the display unit".into(),
+            ));
+        }
+        if !unit.as_str().is_some_and(is_chart_value_axis_display_unit) {
+            return Err(Error::Compile(
+                "Chart.valueAxisDisplayUnit must be a built-in unit: hundreds, thousands, tenThousands, hundredThousands, millions, tenMillions, hundredMillions, billions, or trillions".into(),
+            ));
+        }
     }
-    if !unit.as_str().is_some_and(is_chart_value_axis_display_unit) {
-        return Err(Error::Compile(
-            "Chart.valueAxisDisplayUnit must be a built-in unit: hundreds, thousands, tenThousands, hundredThousands, millions, tenMillions, hundredMillions, billions, or trillions".into(),
-        ));
+    for (unit_property, label_property) in [
+        ("xAxisDisplayUnit", "xAxisDisplayUnitLabel"),
+        ("yAxisDisplayUnit", "yAxisDisplayUnitLabel"),
+    ] {
+        let unit = chart.props.get(unit_property);
+        let label = chart.props.get(label_property);
+        if let Some(label) = label {
+            if !label.is_boolean() {
+                return Err(Error::Compile(format!(
+                    "Chart.{label_property} must be a boolean; use true/false or omit it for the writer default"
+                )));
+            }
+            if unit.is_none() {
+                return Err(Error::Compile(format!(
+                    "Chart.{label_property} requires {unit_property}; add a built-in unit or remove the label setting"
+                )));
+            }
+        }
+        if let Some(unit) = unit {
+            if !chart_type.starts_with("scatter") {
+                return Err(Error::Compile(format!(
+                    "Chart.{unit_property} is supported only for scatter charts; omit it or use a scatter chart with two numeric axes"
+                )));
+            }
+            if !unit.as_str().is_some_and(is_chart_value_axis_display_unit) {
+                return Err(Error::Compile(format!(
+                    "Chart.{unit_property} must be a built-in unit: hundreds, thousands, tenThousands, hundredThousands, millions, tenMillions, hundredMillions, billions, or trillions"
+                )));
+            }
+        }
     }
     Ok(())
 }

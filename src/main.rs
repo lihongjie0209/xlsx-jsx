@@ -762,6 +762,7 @@ fn compile_chart(
     configure_chart_value_axis_reversed(&mut chart, component);
     configure_chart_scatter_axes_reversed(&mut chart, component);
     configure_chart_value_axis_display_units(&mut chart, component);
+    configure_chart_scatter_axis_display_units(&mut chart, component);
     if component
         .props
         .get("showHiddenData")
@@ -1333,18 +1334,7 @@ fn configure_chart_value_axis_display_units(chart: &mut Chart, component: &Node)
     else {
         return;
     };
-    let unit = match unit {
-        "hundreds" => ChartAxisDisplayUnitType::Hundreds,
-        "thousands" => ChartAxisDisplayUnitType::Thousands,
-        "tenThousands" => ChartAxisDisplayUnitType::TenThousands,
-        "hundredThousands" => ChartAxisDisplayUnitType::HundredThousands,
-        "millions" => ChartAxisDisplayUnitType::Millions,
-        "tenMillions" => ChartAxisDisplayUnitType::TenMillions,
-        "hundredMillions" => ChartAxisDisplayUnitType::HundredMillions,
-        "billions" => ChartAxisDisplayUnitType::Billions,
-        "trillions" => ChartAxisDisplayUnitType::Trillions,
-        _ => unreachable!("validated Chart.valueAxisDisplayUnit"),
-    };
+    let unit = chart_axis_display_unit_type(unit);
     let value_axis = if component
         .props
         .get("type")
@@ -1363,6 +1353,42 @@ fn configure_chart_value_axis_display_units(chart: &mut Chart, component: &Node)
         == Some(false)
     {
         value_axis.set_display_units_visible(false);
+    }
+}
+
+fn configure_chart_scatter_axis_display_units(chart: &mut Chart, component: &Node) {
+    for (unit_property, label_property, horizontal_axis) in [
+        ("xAxisDisplayUnit", "xAxisDisplayUnitLabel", true),
+        ("yAxisDisplayUnit", "yAxisDisplayUnitLabel", false),
+    ] {
+        let Some(unit) = component.props.get(unit_property).and_then(Value::as_str) else {
+            continue;
+        };
+        let unit = chart_axis_display_unit_type(unit);
+        let axis = if horizontal_axis {
+            chart.x_axis()
+        } else {
+            chart.y_axis()
+        };
+        axis.set_display_unit_type(unit);
+        if component.props.get(label_property).and_then(Value::as_bool) == Some(false) {
+            axis.set_display_units_visible(false);
+        }
+    }
+}
+
+fn chart_axis_display_unit_type(value: &str) -> ChartAxisDisplayUnitType {
+    match value {
+        "hundreds" => ChartAxisDisplayUnitType::Hundreds,
+        "thousands" => ChartAxisDisplayUnitType::Thousands,
+        "tenThousands" => ChartAxisDisplayUnitType::TenThousands,
+        "hundredThousands" => ChartAxisDisplayUnitType::HundredThousands,
+        "millions" => ChartAxisDisplayUnitType::Millions,
+        "tenMillions" => ChartAxisDisplayUnitType::TenMillions,
+        "hundredMillions" => ChartAxisDisplayUnitType::HundredMillions,
+        "billions" => ChartAxisDisplayUnitType::Billions,
+        "trillions" => ChartAxisDisplayUnitType::Trillions,
+        _ => unreachable!("chart display unit was validated"),
     }
 }
 
@@ -4743,6 +4769,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     }
     append_chart_axis_value_properties(&mut properties, chart);
     append_chart_axis_reversal_properties(&mut properties, chart);
+    append_chart_scatter_axis_display_unit_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
     append_chart_axis_label_properties(&mut properties, chart);
     if chart.category_axis_type == Some("date") {
@@ -4921,6 +4948,33 @@ fn append_chart_axis_reversal_properties(properties: &mut String, chart: &Worksh
     ] {
         if let Some(reversed) = reversed {
             let _ = write!(properties, " {name}={{{reversed}}}");
+        }
+    }
+}
+
+fn append_chart_scatter_axis_display_unit_properties(
+    properties: &mut String,
+    chart: &WorksheetChart,
+) {
+    for (unit_name, unit, label_name, label) in [
+        (
+            "xAxisDisplayUnit",
+            chart.x_axis_display_unit,
+            "xAxisDisplayUnitLabel",
+            chart.x_axis_display_unit_label,
+        ),
+        (
+            "yAxisDisplayUnit",
+            chart.y_axis_display_unit,
+            "yAxisDisplayUnitLabel",
+            chart.y_axis_display_unit_label,
+        ),
+    ] {
+        if let Some(unit) = unit {
+            let _ = write!(properties, " {unit_name}=\"{unit}\"");
+            if label == Some(false) {
+                let _ = write!(properties, " {label_name}={{false}}");
+            }
         }
     }
 }
@@ -7886,6 +7940,14 @@ fn parse_chart_xml(
     let mut value_axis_display_unit_label_seen = false;
     let mut value_axis_display_unit_label = false;
     let mut display_units_seen = false;
+    let mut x_axis_display_unit = None;
+    let mut y_axis_display_unit = None;
+    let mut x_axis_display_unit_label = None;
+    let mut y_axis_display_unit_label = None;
+    let mut scatter_axis_display_units = Vec::<Option<&'static str>>::new();
+    let mut scatter_axis_display_units_seen = Vec::<bool>::new();
+    let mut scatter_axis_display_unit_label_seen = Vec::<bool>::new();
+    let mut scatter_axis_display_unit_label = Vec::<bool>::new();
     let mut drop_lines = false;
     let mut drop_lines_seen = false;
     // In OOXML the absent plotVisOnly element means hidden rows/columns are plotted.
@@ -8323,6 +8385,10 @@ fn parse_chart_xml(
                             scatter_axis_positions.push(None);
                             scatter_axis_reversed.push(None);
                             scatter_axis_orientation_seen.push(false);
+                            scatter_axis_display_units.push(None);
+                            scatter_axis_display_units_seen.push(false);
+                            scatter_axis_display_unit_label_seen.push(false);
+                            scatter_axis_display_unit_label.push(false);
                         } else if tag == "dateAx" {
                             current_value_axis_index = None;
                             if category_axis_type.is_some() {
@@ -8341,20 +8407,39 @@ fn parse_chart_xml(
                         current_axis_hidden_declared = false;
                     }
                     "dispUnits" => {
-                        if stack.last().is_none_or(|parent| parent != "valAx") || display_units_seen
-                        {
+                        if stack.last().is_none_or(|parent| parent != "valAx") {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has duplicate or misplaced dispUnits; keep one built-in display unit directly on the primary value axis"
+                                "chart part `{part}` has misplaced dispUnits; keep a built-in display unit directly on a primary value axis"
+                            )));
+                        }
+                        if chart_type.is_some_and(|value| value.starts_with("scatter")) {
+                            let Some(index) = current_value_axis_index else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has scatter display units outside a tracked value axis; repair the axis structure"
+                                )));
+                            };
+                            let Some(seen) = scatter_axis_display_units_seen.get_mut(index) else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has display units on an untracked scatter axis; keep exactly two primary value axes"
+                                )));
+                            };
+                            if *seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats dispUnits on one scatter axis; keep one built-in unit per axis"
+                                )));
+                            }
+                            *seen = true;
+                        } else if display_units_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate dispUnits; keep one built-in display unit on the primary value axis"
                             )));
                         }
                         display_units_seen = true;
                     }
                     "builtInUnit" => {
-                        if stack.last().is_none_or(|parent| parent != "dispUnits")
-                            || value_axis_display_unit_seen
-                        {
+                        if stack.last().is_none_or(|parent| parent != "dispUnits") {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has duplicate or misplaced builtInUnit; keep one built-in unit inside dispUnits"
+                                "chart part `{part}` has misplaced builtInUnit; keep one built-in unit inside dispUnits"
                             )));
                         }
                         let raw = chart_element_val_attribute(
@@ -8379,19 +8464,66 @@ fn parse_chart_xml(
                                 )));
                             }
                         };
-                        value_axis_display_unit_seen = true;
-                        value_axis_display_unit = Some(unit);
+                        if chart_type.is_some_and(|value| value.starts_with("scatter")) {
+                            let Some(index) = current_value_axis_index else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has scatter builtInUnit outside a tracked value axis; repair the axis structure"
+                                )));
+                            };
+                            let Some(target) = scatter_axis_display_units.get_mut(index) else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has builtInUnit on an untracked scatter axis; keep exactly two primary value axes"
+                                )));
+                            };
+                            if target.replace(unit).is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats builtInUnit on one scatter axis; keep one unit per axis"
+                                )));
+                            }
+                        } else {
+                            if value_axis_display_unit_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats builtInUnit; keep one unit inside dispUnits"
+                                )));
+                            }
+                            value_axis_display_unit_seen = true;
+                            value_axis_display_unit = Some(unit);
+                        }
                     }
                     "dispUnitsLbl" => {
-                        if stack.last().is_none_or(|parent| parent != "dispUnits")
-                            || value_axis_display_unit_label_seen
-                        {
+                        if stack.last().is_none_or(|parent| parent != "dispUnits") {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has duplicate or misplaced dispUnitsLbl; keep at most one default unit label"
+                                "chart part `{part}` has misplaced dispUnitsLbl; keep a default unit label inside dispUnits"
                             )));
                         }
-                        value_axis_display_unit_label_seen = true;
-                        value_axis_display_unit_label = true;
+                        if chart_type.is_some_and(|value| value.starts_with("scatter")) {
+                            let Some(index) = current_value_axis_index else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has scatter dispUnitsLbl outside a tracked value axis; repair the axis structure"
+                                )));
+                            };
+                            let Some(seen) = scatter_axis_display_unit_label_seen.get_mut(index)
+                            else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has dispUnitsLbl on an untracked scatter axis; keep exactly two primary value axes"
+                                )));
+                            };
+                            if *seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats dispUnitsLbl on one scatter axis; keep at most one unit label per axis"
+                                )));
+                            }
+                            *seen = true;
+                            scatter_axis_display_unit_label[index] = true;
+                        } else {
+                            if value_axis_display_unit_label_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats dispUnitsLbl; keep at most one default unit label"
+                                )));
+                            }
+                            value_axis_display_unit_label_seen = true;
+                            value_axis_display_unit_label = true;
+                        }
                     }
                     "dropLines" => {
                         if !matches!(
@@ -10939,27 +11071,38 @@ fn parse_chart_xml(
             "chart part `{part}` enables dropLines on `{chart_type}`; use area, line, or stock charts, or remove dropLines"
         )));
     }
-    if display_units_seen && !value_axis_display_unit_seen {
-        return Err(Error::Reverse(format!(
-            "chart part `{part}` has dispUnits without a builtInUnit; add a supported built-in unit or remove dispUnits"
-        )));
-    }
-    if value_axis_display_unit.is_some()
-        && (chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut"))
-    {
-        return Err(Error::Reverse(format!(
-            "chart part `{part}` applies display units to `{chart_type}`, which has no single unambiguous value axis; use a category/value chart or remove dispUnits"
-        )));
-    }
-    if value_axis_display_unit.is_some() && value_axis_count != 1 {
-        return Err(Error::Reverse(format!(
-            "chart part `{part}` has display units with {value_axis_count} value axes; use a chart with exactly one primary value axis or remove dispUnits"
-        )));
-    }
-    if value_axis_display_unit_label_seen && !display_units_seen {
-        return Err(Error::Reverse(format!(
-            "chart part `{part}` has dispUnitsLbl without dispUnits; attach the label to a built-in value-axis display unit or remove it"
-        )));
+    if chart_type.starts_with("scatter") {
+        for index in 0..value_axis_count as usize {
+            if scatter_axis_display_units_seen[index] && scatter_axis_display_units[index].is_none()
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has dispUnits without a builtInUnit; add a supported built-in unit or remove dispUnits"
+                )));
+            }
+            if scatter_axis_display_unit_label_seen[index]
+                && !scatter_axis_display_units_seen[index]
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has dispUnitsLbl without dispUnits; attach the label to a built-in axis display unit or remove it"
+                )));
+            }
+        }
+    } else {
+        if display_units_seen && !value_axis_display_unit_seen {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has dispUnits without a builtInUnit; add a supported built-in unit or remove dispUnits"
+            )));
+        }
+        if value_axis_display_unit.is_some() && value_axis_count != 1 {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has display units with {value_axis_count} value axes; use a chart with exactly one primary value axis or remove dispUnits"
+            )));
+        }
+        if value_axis_display_unit_label_seen && !display_units_seen {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has dispUnitsLbl without dispUnits; attach the label to a built-in value-axis display unit or remove it"
+            )));
+        }
     }
     if series
         .iter()
@@ -11199,6 +11342,12 @@ fn parse_chart_xml(
         y_axis_log_base = scatter_axis_log_bases[y_axis_index];
         x_axis_reversed = scatter_axis_reversed[x_axis_index];
         y_axis_reversed = scatter_axis_reversed[y_axis_index];
+        x_axis_display_unit = scatter_axis_display_units[x_axis_index];
+        y_axis_display_unit = scatter_axis_display_units[y_axis_index];
+        x_axis_display_unit_label =
+            x_axis_display_unit.map(|_| scatter_axis_display_unit_label[x_axis_index]);
+        y_axis_display_unit_label =
+            y_axis_display_unit.map(|_| scatter_axis_display_unit_label[y_axis_index]);
         if x_axis_min
             .zip(x_axis_max)
             .is_some_and(|(minimum, maximum)| minimum >= maximum)
@@ -11365,6 +11514,10 @@ fn parse_chart_xml(
         value_axis_display_unit_label: value_axis_display_unit
             .map(|_| value_axis_display_unit_label)
             .filter(|visible| !visible),
+        x_axis_display_unit,
+        x_axis_display_unit_label: x_axis_display_unit_label.filter(|visible| !visible),
+        y_axis_display_unit,
+        y_axis_display_unit_label: y_axis_display_unit_label.filter(|visible| !visible),
         drop_lines: drop_lines.then_some(true),
         show_hidden_data: show_hidden_data.then_some(true),
         empty_cells_as: empty_cells_as.filter(|value| *value != "gap"),
@@ -14919,6 +15072,10 @@ struct WorksheetChart {
     x_axis_minor_unit: Option<f64>,
     value_axis_display_unit: Option<&'static str>,
     value_axis_display_unit_label: Option<bool>,
+    x_axis_display_unit: Option<&'static str>,
+    x_axis_display_unit_label: Option<bool>,
+    y_axis_display_unit: Option<&'static str>,
+    y_axis_display_unit_label: Option<bool>,
     drop_lines: Option<bool>,
     show_hidden_data: Option<bool>,
     empty_cells_as: Option<&'static str>,

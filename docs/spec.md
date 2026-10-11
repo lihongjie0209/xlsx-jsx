@@ -224,6 +224,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   pie, or doughnut). Reverse preserves non-default units and hidden labels,
   folds visible labels to the default, and rejects custom display-unit labels
   or layouts.
+- `Chart.xAxisDisplayUnit?: "hundreds" | "thousands" | "tenThousands" |
+  "hundredThousands" | "millions" | "tenMillions" | "hundredMillions" |
+  "billions" | "trillions"` and `Chart.yAxisDisplayUnit` independently scale
+  the horizontal X and vertical Y value-axis labels on scatter charts.
+  `xAxisDisplayUnitLabel?: boolean` / `yAxisDisplayUnitLabel?: boolean` control
+  each built-in label's visibility, require their matching unit, and default to
+  visible. These X/Y properties are scatter-only. Reverse maps them by axis
+  direction (top/bottom is X, left/right is Y), folds visible-label defaults,
+  and rejects custom display-unit labels/layouts.
 - `Chart.dropLines?: boolean` enables vertical projection lines from data points
   to the category axis on area, line, and stock charts. Omission or `false`
   keeps drop lines disabled; reverse preserves enabled lines and omits the
