@@ -12,8 +12,8 @@ use quick_xml::{
 };
 use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
-    ChartDataLabel, ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color,
-    ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
+    ChartDataLabel, ChartDataLabelPosition, ChartLegendPosition, ChartLine, ChartMarker, ChartType,
+    Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
     ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
     ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
     ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
@@ -28,9 +28,9 @@ use rust_xlsxwriter::{
 };
 use serde_json::Value;
 use xlsx_jsx::{
-    Error, IrEnvelope, Node, OutlineProperties, PrintRange, collapsed_outline_ranges,
-    format_a1_cell_reference, format_a1_range, format_print_range, parse_a1_cell_reference,
-    parse_a1_range, parse_print_range, runtime::evaluate_entry,
+    Error, IrEnvelope, Node, OutlineProperties, PrintRange, chart_data_label_position_is_supported,
+    collapsed_outline_ranges, format_a1_cell_reference, format_a1_range, format_print_range,
+    parse_a1_cell_reference, parse_a1_range, parse_print_range, runtime::evaluate_entry,
 };
 use zip::ZipArchive;
 
@@ -804,7 +804,17 @@ fn configure_chart_series_data_labels(
     let show_series_name =
         series.props.get("showSeriesName").and_then(Value::as_bool) == Some(true);
     let show_percentage = series.props.get("showPercentage").and_then(Value::as_bool) == Some(true);
-    if !(show_value || show_category_name || show_series_name || show_percentage) {
+    let position = series
+        .props
+        .get("labelPosition")
+        .and_then(Value::as_str)
+        .and_then(chart_data_label_position);
+    if !(show_value
+        || show_category_name
+        || show_series_name
+        || show_percentage
+        || position.is_some())
+    {
         return;
     }
     let mut data_label = ChartDataLabel::new();
@@ -820,7 +830,25 @@ fn configure_chart_series_data_labels(
     if show_percentage {
         data_label.show_percentage();
     }
+    if let Some(position) = position {
+        data_label.set_position(position);
+    }
     chart_series.set_data_label(&data_label);
+}
+
+fn chart_data_label_position(position: &str) -> Option<ChartDataLabelPosition> {
+    match position {
+        "center" => Some(ChartDataLabelPosition::Center),
+        "right" => Some(ChartDataLabelPosition::Right),
+        "left" => Some(ChartDataLabelPosition::Left),
+        "above" => Some(ChartDataLabelPosition::Above),
+        "below" => Some(ChartDataLabelPosition::Below),
+        "insideBase" => Some(ChartDataLabelPosition::InsideBase),
+        "insideEnd" => Some(ChartDataLabelPosition::InsideEnd),
+        "outsideEnd" => Some(ChartDataLabelPosition::OutsideEnd),
+        "bestFit" => Some(ChartDataLabelPosition::BestFit),
+        _ => None,
+    }
 }
 
 fn configure_chart_axis_number_formats(chart: &mut Chart, component: &Node) {
@@ -3952,6 +3980,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 let _ = write!(output, " {name}={{true}}");
             }
         }
+        if let Some(position) = &series.label_position {
+            let _ = write!(output, " labelPosition=\"{position}\"");
+        }
         output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
@@ -6841,6 +6872,7 @@ fn parse_chart_xml(
         "showCatName",
         "showSerName",
         "showPercent",
+        "dLblPos",
         "style",
         "txPr",
     ];
@@ -6980,7 +7012,7 @@ fn parse_chart_xml(
                 if stack.iter().any(|ancestor| ancestor == "dLbls")
                     && !matches!(
                         tag.as_str(),
-                        "showVal" | "showCatName" | "showSerName" | "showPercent"
+                        "showVal" | "showCatName" | "showSerName" | "showPercent" | "dLblPos"
                     )
                 {
                     return Err(Error::Reverse(format!(
@@ -8086,8 +8118,10 @@ fn parse_chart_xml(
                         show_category_name: None,
                         show_series_name: None,
                         show_percentage: None,
+                        label_position: None,
                         data_label_flags_seen: [false; 4],
                         data_labels_seen: false,
+                        data_label_position_seen: false,
                     }),
                     "dLbls" => {
                         if stack.last().is_none_or(|ancestor| ancestor != "ser") {
@@ -8155,6 +8189,48 @@ fn parse_chart_xml(
                         }
                         current.data_label_flags_seen[index] = true;
                         *target = enabled.then_some(true);
+                    }
+                    "dLblPos" => {
+                        if stack.last().is_none_or(|ancestor| ancestor != "dLbls")
+                            || !stack.iter().any(|ancestor| ancestor == "ser")
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has dLblPos outside series-level data labels; keep one position inside the series dLbls group"
+                            )));
+                        }
+                        let Some(raw_position) = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            })
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has dLblPos without a val; use a supported OOXML position"
+                            )));
+                        };
+                        let Some(position) = chart_data_label_position_from_ooxml(&raw_position)
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` uses unsupported dLblPos `{raw_position}`; use a supported label placement or remove the custom position"
+                            )));
+                        };
+                        let current = series.last_mut().expect("series context");
+                        if current.data_label_position_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats dLblPos for a series; retain one data-label position"
+                            )));
+                        }
+                        current.data_label_position_seen = true;
+                        current.label_position = Some(position.to_owned());
                     }
                     "marker" if stack.iter().any(|ancestor| ancestor == "ser") => {
                         if let Some(current) = series.last_mut() {
@@ -8483,7 +8559,17 @@ fn parse_chart_xml(
             "chart part `{part}` contains no data series; add at least one series"
         )));
     }
-    for item in &series {
+    for item in &mut series {
+        if item.label_position.as_deref() == chart_default_data_label_position(chart_type) {
+            item.label_position = None;
+        }
+        if let Some(position) = item.label_position.as_deref()
+            && !chart_data_label_position_is_supported(chart_type, position)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` uses label position `{position}` that is not supported for `{chart_type}` charts; choose a position supported by that chart type or remove the custom placement"
+            )));
+        }
         if item.show_series_name == Some(true)
             && item.show_value != Some(true)
             && item.show_category_name != Some(true)
@@ -9101,6 +9187,30 @@ fn resolve_radar_chart_type(
     }
 }
 
+fn chart_default_data_label_position(chart_type: &str) -> Option<&'static str> {
+    match chart_type {
+        "area" | "areaStacked" | "areaPercentStacked" | "radar" | "radarWithMarkers"
+        | "radarFilled" => Some("center"),
+        "column"
+        | "columnStacked"
+        | "columnPercentStacked"
+        | "bar"
+        | "barStacked"
+        | "barPercentStacked" => Some("outsideEnd"),
+        "line"
+        | "lineStacked"
+        | "linePercentStacked"
+        | "scatter"
+        | "scatterWithLines"
+        | "scatterWithLinesAndMarkers"
+        | "scatterWithSmoothLines"
+        | "scatterWithSmoothLinesAndMarkers"
+        | "stock" => Some("right"),
+        "pie" | "doughnut" => Some("bestFit"),
+        _ => None,
+    }
+}
+
 fn resolve_scatter_chart_type(
     chart_type: &'static str,
     scatter_style: Option<&'static str>,
@@ -9275,6 +9385,7 @@ fn is_supported_chart_attribute(
         ("showVal" | "showCatName" | "showSerName" | "showPercent", "val") => {
             matches!(value, "0" | "1" | "false" | "true")
         }
+        ("dLblPos", "val") => chart_data_label_position_from_ooxml(value).is_some(),
         ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
         ("delete", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("numFmt", "sourceLinked") => {
@@ -9312,6 +9423,21 @@ fn is_supported_chart_attribute(
         ("pageMargins", "l" | "r") => value == "0.7",
         ("pageMargins", "header" | "footer") => value == "0.3",
         _ => false,
+    }
+}
+
+fn chart_data_label_position_from_ooxml(value: &str) -> Option<&'static str> {
+    match value {
+        "ctr" => Some("center"),
+        "r" => Some("right"),
+        "l" => Some("left"),
+        "t" => Some("above"),
+        "b" => Some("below"),
+        "inBase" => Some("insideBase"),
+        "inEnd" => Some("insideEnd"),
+        "outEnd" => Some("outsideEnd"),
+        "bestFit" => Some("bestFit"),
+        _ => None,
     }
 }
 
@@ -11861,8 +11987,10 @@ struct WorksheetChartSeries {
     show_category_name: Option<bool>,
     show_series_name: Option<bool>,
     show_percentage: Option<bool>,
+    label_position: Option<String>,
     data_label_flags_seen: [bool; 4],
     data_labels_seen: bool,
+    data_label_position_seen: bool,
 }
 
 #[derive(Clone)]

@@ -676,7 +676,8 @@
             "showValue": { "type": "boolean" },
             "showCategoryName": { "type": "boolean" },
             "showSeriesName": { "type": "boolean" },
-            "showPercentage": { "type": "boolean" }
+            "showPercentage": { "type": "boolean" },
+            "labelPosition": { "enum": ["center", "right", "left", "above", "below", "insideBase", "insideEnd", "outsideEnd", "bestFit"] }
           },
           "additionalProperties": false
         },

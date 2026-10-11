@@ -206,10 +206,17 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `Series.showSeriesName?: boolean`, and
   `Series.showPercentage?: boolean` configure per-series data-label contents
   through `ChartDataLabel`. `showPercentage` is valid only for pie/doughnut
-  charts. The writer's default value-label behavior is retained when labels are
+  charts. `Series.labelPosition?: string` configures the label position using
+  `center`, `right`, `left`, `above`, `below`, `insideBase`, `insideEnd`,
+  `outsideEnd`, or `bestFit`. Line/scatter charts accept the first five;
+  column/bar charts accept `center`, `insideBase`, `insideEnd`, and `outsideEnd`;
+  pie/doughnut accept `center`, `insideEnd`, `outsideEnd`, and `bestFit`;
+  area/radar accept only `center`. Stock charts do not support this property.
+  The writer's chart-specific default positions are omitted from reverse output.
+  The writer's default value-label behavior is retained when labels are
   requested without another visible field; default false flags are omitted on
-  reverse. Numeric formats, custom text, positions, fonts, and point-specific
-  labels are not represented and are rejected with repair guidance.
+  reverse. Numeric formats, custom text, fonts, and point-specific labels are
+  not represented and are rejected with repair guidance.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed

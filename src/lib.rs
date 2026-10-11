@@ -2526,6 +2526,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "showCategoryName",
                 "showSeriesName",
                 "showPercentage",
+                "labelPosition",
             ],
             "Series",
         )?;
@@ -2623,7 +2624,59 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
             "Series.showPercentage is supported only for pie and doughnut charts; omit it or choose one of those chart types".into(),
         ));
     }
+    if let Some(value) = series.props.get("labelPosition") {
+        let Some(position) = value.as_str() else {
+            return Err(Error::Compile(
+                "Series.labelPosition must be a string; use a supported position name or omit it"
+                    .into(),
+            ));
+        };
+        let chart_type = chart
+            .props
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !chart_data_label_position_is_supported(chart_type, position) {
+            return Err(Error::Compile(format!(
+                "Series.labelPosition `{position}` is not supported for Chart.type `{chart_type}`; choose a position allowed for that chart type or omit labelPosition"
+            )));
+        }
+    }
     Ok(())
+}
+
+/// Returns whether a chart data-label position is valid for a chart type.
+#[must_use]
+pub fn chart_data_label_position_is_supported(chart_type: &str, position: &str) -> bool {
+    match chart_type {
+        "line"
+        | "lineStacked"
+        | "linePercentStacked"
+        | "scatter"
+        | "scatterWithLines"
+        | "scatterWithLinesAndMarkers"
+        | "scatterWithSmoothLines"
+        | "scatterWithSmoothLinesAndMarkers" => {
+            matches!(position, "center" | "right" | "left" | "above" | "below")
+        }
+        "column"
+        | "columnStacked"
+        | "columnPercentStacked"
+        | "bar"
+        | "barStacked"
+        | "barPercentStacked" => {
+            matches!(
+                position,
+                "center" | "insideBase" | "insideEnd" | "outsideEnd"
+            )
+        }
+        "pie" | "doughnut" => {
+            matches!(position, "center" | "insideEnd" | "outsideEnd" | "bestFit")
+        }
+        "area" | "areaStacked" | "areaPercentStacked" | "radar" | "radarWithMarkers"
+        | "radarFilled" => position == "center",
+        _ => false,
+    }
 }
 
 fn validate_stock_chart(chart: &Node) -> Result<()> {

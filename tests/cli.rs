@@ -3,7 +3,8 @@ use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition,
-    ChartAxisTickType, ChartDataLabel, ChartLine, ChartMarker, ChartType, Workbook as XlsxWorkbook,
+    ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition, ChartLine, ChartMarker, ChartType,
+    Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -150,6 +151,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("showCategoryName"))
         .stdout(predicate::str::contains("showSeriesName"))
         .stdout(predicate::str::contains("showPercentage"))
+        .stdout(predicate::str::contains("labelPosition"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1447,6 +1449,65 @@ fn reverses_external_series_data_label_options_without_a_manifest() {
 }
 
 #[test]
+fn reverses_external_series_data_label_positions_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-data-label-positions.xlsx");
+    let output_path = directory.path().join("external-data-label-positions.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+
+    let mut column = XlsxChart::new(ChartType::Column);
+    let mut column_label = ChartDataLabel::new();
+    column_label
+        .show_value()
+        .set_position(ChartDataLabelPosition::InsideEnd);
+    column
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_data_label(&column_label);
+    worksheet.insert_chart(0, 5, &column).unwrap();
+
+    let mut line = XlsxChart::new(ChartType::Line);
+    let mut line_label = ChartDataLabel::new();
+    line_label
+        .show_value()
+        .set_position(ChartDataLabelPosition::Above);
+    line.add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_data_label(&line_label);
+    worksheet.insert_chart(18, 5, &line).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("labelPosition=\"insideEnd\""));
+    assert!(source.contains("labelPosition=\"above\""));
+
+    let rebuilt_path = directory.path().join("rebuilt-data-label-positions.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let column_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    let line_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    assert!(column_xml.contains("<c:dLblPos val=\"inEnd\"/>"));
+    assert!(line_xml.contains("<c:dLblPos val=\"t\"/>"));
+}
+
+#[test]
 fn rejects_axis_crossings_on_scatter_charts_with_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("scatter-axis-crossing.tsx");
@@ -1489,6 +1550,29 @@ fn rejects_series_percentage_labels_on_non_pie_charts_with_guidance() {
         ))
         .stderr(predicate::str::contains(
             "omit it or choose one of those chart types",
+        ));
+}
+
+#[test]
+fn rejects_chart_data_label_positions_that_do_not_match_the_chart_type() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("unsupported-data-label-position.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" labelPosition="above" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Series.labelPosition `above` is not supported for Chart.type `column`",
+        ))
+        .stderr(predicate::str::contains(
+            "choose a position allowed for that chart type",
         ));
 }
 
