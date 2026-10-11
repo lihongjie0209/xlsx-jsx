@@ -446,7 +446,12 @@ fn spec_exposes_chart_data_table_font_properties() {
         .stdout(predicate::str::contains("fontColor"))
         .stdout(predicate::str::contains("fontName"))
         .stdout(predicate::str::contains("fillColor"))
-        .stdout(predicate::str::contains("fillTransparency"));
+        .stdout(predicate::str::contains("fillTransparency"))
+        .stdout(predicate::str::contains("lineColor"))
+        .stdout(predicate::str::contains("lineWidth"))
+        .stdout(predicate::str::contains("lineDash"))
+        .stdout(predicate::str::contains("lineTransparency"))
+        .stdout(predicate::str::contains("lineHidden"));
 }
 
 #[test]
@@ -3874,6 +3879,27 @@ fn rejects_chart_data_table_fill_transparency_without_color_with_guidance() {
 }
 
 #[test]
+fn rejects_chart_data_table_line_transparency_without_color_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("missing-data-table-line-color.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ChartDataTable } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /><ChartDataTable lineTransparency={35} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ChartDataTable.lineTransparency requires lineColor",
+        ))
+        .stderr(predicate::str::contains("add an RGB line color"));
+}
+
+#[test]
 fn rejects_invalid_chart_data_table_font_name_with_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-chart-data-table-font.tsx");
@@ -3897,7 +3923,7 @@ fn rejects_invalid_chart_data_table_font_name_with_guidance() {
 }
 
 #[test]
-fn reverse_rejects_custom_chart_data_table_formatting_with_guidance() {
+fn reverses_chart_data_table_line_formatting_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("formatted-chart-data-table.xlsx");
     let output_path = directory.path().join("formatted-chart-data-table.tsx");
@@ -3910,6 +3936,10 @@ fn reverse_rejects_custom_chart_data_table_formatting_with_guidance() {
         .set_values("Data!B2:B4");
     let mut data_table = XlsxChartDataTable::new();
     let mut line = ChartLine::new();
+    line.set_color("#123456")
+        .set_width(1.25)
+        .set_dash_type(ChartLineDashType::DashDot)
+        .set_transparency(25);
     data_table = data_table.set_format(&mut line);
     chart.set_data_table(&data_table);
     worksheet.insert_chart(0, 5, &chart).unwrap();
@@ -3919,13 +3949,75 @@ fn reverse_rejects_custom_chart_data_table_formatting_with_guidance() {
         .args(["reverse"])
         .arg(workbook_path)
         .args(["-o"])
-        .arg(output_path)
+        .arg(&output_path)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "unsupported `<ln>` data-table formatting",
-        ))
-        .stderr(predicate::str::contains("remove borders or extensions"));
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reverse source exists");
+    assert!(source.contains("lineColor=\"#123456\""), "{source}");
+    assert!(source.contains("lineWidth={1.25}"), "{source}");
+    assert!(source.contains("lineDash=\"dashDot\""), "{source}");
+    assert!(source.contains("lineTransparency={25}"), "{source}");
+    let rebuilt = directory
+        .path()
+        .join("formatted-chart-data-table-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
+    assert!(xml.contains("val=\"123456\""), "{xml}");
+    assert!(xml.contains("w=\"15875\""), "{xml}");
+    assert!(xml.contains("prstDash val=\"dashDot\""), "{xml}");
+    assert!(xml.contains("alpha val=\"75000\""), "{xml}");
+}
+
+#[test]
+fn reverses_hidden_chart_data_table_outline_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("hidden-data-table-outline.xlsx");
+    let source_path = directory.path().join("hidden-data-table-outline.tsx");
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-hidden-data-table-outline.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    let mut outline = ChartLine::new();
+    outline.set_hidden(true);
+    let data_table = XlsxChartDataTable::new().set_format(&mut outline);
+    chart.set_data_table(&data_table);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("lineHidden={true}"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<a:ln><a:noFill/></a:ln>"), "{xml}");
 }
 
 #[test]

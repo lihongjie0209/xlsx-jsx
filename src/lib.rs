@@ -4155,6 +4155,11 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     "fontName",
                     "fillColor",
                     "fillTransparency",
+                    "lineColor",
+                    "lineWidth",
+                    "lineDash",
+                    "lineTransparency",
+                    "lineHidden",
                 ],
                 "ChartDataTable",
             )?;
@@ -4317,6 +4322,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
 }
 
 fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
+    validate_chart_data_table_line_style(data_table)?;
     if let Some(value) = data_table.props.get("fillColor")
         && !value.as_str().is_some_and(is_opaque_rgb_color)
     {
@@ -4390,6 +4396,83 @@ fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
                 "ChartDataTable.fontName must contain 1–255 valid XML characters; use a font name without control characters".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_chart_data_table_line_style(data_table: &Node) -> Result<()> {
+    if data_table
+        .props
+        .get("lineColor")
+        .is_some_and(|value| !value.as_str().is_some_and(is_opaque_rgb_color))
+    {
+        return Err(Error::Compile(
+            "ChartDataTable.lineColor must be an opaque RGB color like #336699".into(),
+        ));
+    }
+    if data_table.props.contains_key("lineTransparency") {
+        if data_table
+            .props
+            .get("lineTransparency")
+            .is_some_and(|value| value.as_u64().is_none_or(|transparency| transparency > 100))
+        {
+            return Err(Error::Compile(
+                "ChartDataTable.lineTransparency must be an integer from 0 to 100".into(),
+            ));
+        }
+        if !data_table.props.contains_key("lineColor") {
+            return Err(Error::Compile(
+                "ChartDataTable.lineTransparency requires lineColor; add an RGB line color or remove transparency".into(),
+            ));
+        }
+    }
+    if data_table.props.get("lineWidth").is_some_and(|value| {
+        !value
+            .as_f64()
+            .is_some_and(|width| (0.25..=1584.0).contains(&width) && (width * 4.0).fract() == 0.0)
+    }) {
+        return Err(Error::Compile(
+            "ChartDataTable.lineWidth must be 0.25–1584 pt in quarter-point increments".into(),
+        ));
+    }
+    if let Some(dash) = data_table.props.get("lineDash") {
+        let supported = [
+            "solid",
+            "roundDot",
+            "squareDot",
+            "dash",
+            "dashDot",
+            "longDash",
+            "longDashDot",
+            "longDashDotDot",
+        ];
+        if dash.as_str().is_none_or(|dash| !supported.contains(&dash)) {
+            return Err(Error::Compile(
+                "ChartDataTable.lineDash must be solid, roundDot, squareDot, dash, dashDot, longDash, longDashDot, or longDashDotDot".into(),
+            ));
+        }
+    }
+    if data_table
+        .props
+        .get("lineHidden")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(Error::Compile(
+            "ChartDataTable.lineHidden must be a boolean".into(),
+        ));
+    }
+    if data_table.props.get("lineHidden").and_then(Value::as_bool) == Some(true)
+        && (data_table.props.contains_key("lineColor")
+            || data_table.props.contains_key("lineTransparency")
+            || data_table
+                .props
+                .get("lineDash")
+                .and_then(Value::as_str)
+                .is_some_and(|dash| dash != "solid"))
+    {
+        return Err(Error::Compile(
+            "Hidden data-table lines cannot combine color, transparency, or non-solid dash; remove those properties because the writer drops them".into(),
+        ));
     }
     Ok(())
 }

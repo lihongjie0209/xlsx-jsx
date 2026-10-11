@@ -191,8 +191,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   through `ChartDataTable::set_format()`. Optional `fillTransparency` is an
   integer percentage from 0 (opaque) through 100 (fully transparent) and
   requires `fillColor`; reverse preserves solid RGB alpha only when it is
-  representable in whole percentages. Other shape properties (including
-  borders, patterns, and gradients) remain rejected.
+  representable in whole percentages. `lineColor`, `lineWidth`, `lineDash`,
+  `lineTransparency`, and `lineHidden` describe the supported `ChartLine`
+  outline; widths use 0.25–1584 points in quarter-point increments, dashes use
+  the supported chart-line presets, and transparency (0–100) requires
+  `lineColor`. Hidden lines cannot combine with color, transparency, or a
+  non-solid dash. Reverse preserves this line subset and rejects patterns,
+  gradients, effects, and other shape content.
   `fontSize` (1–4000 points), `fontBold`, `fontItalic`, `fontUnderline`,
   `fontColor` (opaque `#RRGGBB`), and `fontName` (1–255 XML-safe characters)
   style data-table text through `ChartDataTable::set_font`; reverse preserves

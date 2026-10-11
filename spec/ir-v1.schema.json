@@ -1359,13 +1359,31 @@
             "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
             "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
-            "fillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 }
+            "fillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "lineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "lineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
+            "lineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
+            "lineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "lineHidden": { "type": "boolean" }
           },
-          "dependentRequired": { "fillTransparency": ["fillColor"] },
+          "dependentRequired": { "fillTransparency": ["fillColor"], "lineTransparency": ["lineColor"] },
           "additionalProperties": false
         },
         "children": { "type": "array", "maxItems": 0 }
       },
+      "allOf": [
+        {
+          "if": { "properties": { "props": { "properties": { "lineHidden": { "const": true } }, "required": ["lineHidden"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "props": {
+                "not": { "anyOf": [{ "required": ["lineColor"] }, { "required": ["lineTransparency"] }] },
+                "properties": { "lineDash": { "enum": ["solid"] } }
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "chartGridlineStyle": {

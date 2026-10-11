@@ -1485,18 +1485,8 @@ fn compile_chart(
             if let Some(value) = child.props.get("showLegendKeys").and_then(Value::as_bool) {
                 data_table = data_table.show_legend_keys(value);
             }
-            if let Some(color) = child.props.get("fillColor").and_then(Value::as_str) {
-                let mut fill = ChartSolidFill::new();
-                fill.set_color(color);
-                if let Some(transparency) = child
-                    .props
-                    .get("fillTransparency")
-                    .and_then(Value::as_u64)
-                    .and_then(|value| u8::try_from(value).ok())
-                {
-                    fill.set_transparency(transparency);
-                }
-                data_table = data_table.set_format(ChartFormat::new().set_solid_fill(&fill));
+            if let Some(mut format) = chart_shape_format(&child, "fillColor", "line") {
+                data_table = data_table.set_format(&mut format);
             }
             if [
                 "fontSize",
@@ -6241,6 +6231,23 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(transparency) = table.fill_transparency {
             let _ = write!(output, " fillTransparency={{{transparency}}}");
         }
+        if let Some(style) = &table.line_style {
+            if let Some(color) = &style.color {
+                let _ = write!(output, " lineColor={color:?}");
+            }
+            if let Some(width) = style.width {
+                let _ = write!(output, " lineWidth={{{width}}}");
+            }
+            if let Some(dash) = style.dash {
+                let _ = write!(output, " lineDash=\"{dash}\"");
+            }
+            if let Some(transparency) = style.transparency {
+                let _ = write!(output, " lineTransparency={{{transparency}}}");
+            }
+        }
+        if table.line_hidden {
+            output.push_str(" lineHidden={true}");
+        }
         output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
@@ -9817,6 +9824,7 @@ fn parse_chart_xml(
     let mut series = Vec::<WorksheetChartSeries>::new();
     let mut data_table: Option<WorksheetChartDataTable> = None;
     let mut data_table_sppr_seen = false;
+    let mut data_table_line_seen = false;
     let mut data_table_flags_seen = [false; 4];
     let mut data_table_last_flag = None;
     let mut current_error_bar: Option<usize> = None;
@@ -10991,7 +10999,10 @@ fn parse_chart_xml(
                 let data_table_shape_content = stack.iter().any(|ancestor| ancestor == "dTable")
                     && ((tag == "spPr" && stack.last().is_some_and(|parent| parent == "dTable"))
                         || (stack.iter().any(|ancestor| ancestor == "spPr")
-                            && matches!(tag.as_str(), "solidFill" | "srgbClr"))
+                            && matches!(
+                                tag.as_str(),
+                                "ln" | "solidFill" | "srgbClr" | "prstDash" | "noFill"
+                            ))
                         || (tag == "alpha"
                             && stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|ancestor| ancestor == "spPr")));
@@ -14544,6 +14555,14 @@ fn parse_chart_xml(
                             );
                         let in_chart_area_shape = area_sppr_context.is_some()
                             && stack.last().is_some_and(|parent| parent == "spPr");
+                        let in_data_table_shape = stack.iter().any(|item| item == "dTable")
+                            && stack.iter().any(|item| item == "spPr");
+                        if in_data_table_shape && std::mem::replace(&mut data_table_line_seen, true)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats data-table outline; keep one a:ln line"
+                            )));
+                        }
                         let in_legend_shape = stack.iter().any(|item| item == "legend")
                             && stack.iter().any(|item| item == "spPr");
                         if in_chart_area_shape {
@@ -14575,6 +14594,7 @@ fn parse_chart_xml(
                         }
                         if stack.last().is_none_or(|ancestor| ancestor != "spPr")
                             || (!in_gridlines
+                                && !in_data_table_shape
                                 && !in_legend_shape
                                 && !in_error_bars
                                 && !in_trendline_line
@@ -14596,7 +14616,8 @@ fn parse_chart_xml(
                                 || in_chart_area_shape
                                 || in_legend_shape
                                 || in_marker_line
-                                || in_drop_lines)
+                                || in_drop_lines
+                                || in_data_table_shape)
                                 && attribute.key.local_name().as_ref() != b"w"
                             {
                                 return Err(Error::Reverse(format!(
@@ -14621,7 +14642,22 @@ fn parse_chart_xml(
                                 );
                             }
                         }
-                        if in_legend_shape {
+                        if in_data_table_shape {
+                            let table = data_table.as_mut().ok_or_else(|| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has data-table outline outside dTable"
+                                ))
+                            })?;
+                            let style = table.line_style.get_or_insert_default();
+                            if let Some(width) = line_width {
+                                let emu = width.parse::<u32>().ok().filter(|v| *v > 0 && *v <= 20_116_800 && *v % 3175 == 0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a data-table line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments")))?;
+                                if style.width.replace(f64::from(emu) / 12700.0).is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats data-table line width; keep one supported width"
+                                    )));
+                                }
+                            }
+                        } else if in_legend_shape {
                             let style = legend_line_style.get_or_insert_default();
                             if let Some(width) = line_width {
                                 let emu = width.parse::<u32>().ok().filter(|v| *v > 0 && *v <= 20_116_800 && *v % 3175 == 0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a legend line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments")))?;
@@ -14847,7 +14883,8 @@ fn parse_chart_xml(
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|ancestor| ancestor == "dTable")
-                            && stack.iter().any(|ancestor| ancestor == "spPr") =>
+                            && stack.iter().any(|ancestor| ancestor == "spPr")
+                            && !stack.iter().any(|ancestor| ancestor == "ln") =>
                     {
                         let alpha = chart_element_val_attribute(
                             &event,
@@ -14969,7 +15006,22 @@ fn parse_chart_xml(
                                 "chart part `{part}` has non-RGB series line color; use an opaque six-digit RGB color"
                             )));
                         }
-                        if stack.iter().any(|item| item == "legend") {
+                        if stack.iter().any(|item| item == "dTable") {
+                            let table = data_table.as_mut().ok_or_else(|| {
+                                Error::Reverse(format!("chart part `{part}` has data-table outline color outside dTable"))
+                            })?;
+                            if table
+                                .line_style
+                                .get_or_insert_default()
+                                .color
+                                .replace(format!("#{color}").to_ascii_uppercase())
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats data-table outline color; keep one RGB color"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "legend") {
                             if legend_line_style
                                 .get_or_insert_default()
                                 .color
@@ -15146,7 +15198,22 @@ fn parse_chart_xml(
                                 "chart part `{part}` has line alpha not exactly representable by integer transparency; use 1% increments"
                             )));
                         }
-                        if stack.iter().any(|item| item == "legend") {
+                        if stack.iter().any(|item| item == "dTable") {
+                            let table = data_table.as_mut().ok_or_else(|| {
+                                Error::Reverse(format!("chart part `{part}` has data-table outline transparency outside dTable"))
+                            })?;
+                            if table
+                                .line_style
+                                .get_or_insert_default()
+                                .transparency
+                                .replace(100 - alpha / 1000)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats data-table outline transparency; keep one alpha"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "legend") {
                             if legend_line_style
                                 .get_or_insert_default()
                                 .transparency
@@ -15311,7 +15378,24 @@ fn parse_chart_xml(
                                 )));
                             }
                         };
-                        if stack.iter().any(|item| item == "legend") {
+                        if stack.iter().any(|item| item == "dTable") {
+                            let table = data_table.as_mut().ok_or_else(|| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has data-table outline dash outside dTable"
+                                ))
+                            })?;
+                            if table
+                                .line_style
+                                .get_or_insert_default()
+                                .dash
+                                .replace(dash)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats data-table outline dash; keep one preset dash"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "legend") {
                             if legend_line_style
                                 .get_or_insert_default()
                                 .dash
@@ -15398,6 +15482,21 @@ fn parse_chart_xml(
                             }
                         } else if let Some(current) = series.last_mut() {
                             current.line_dash = Some(dash);
+                        }
+                    }
+                    "noFill"
+                        if stack.last().is_some_and(|parent| parent == "ln")
+                            && stack.iter().any(|item| item == "dTable") =>
+                    {
+                        let table = data_table.as_mut().ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has hidden data-table outline outside dTable"
+                            ))
+                        })?;
+                        if std::mem::replace(&mut table.line_hidden, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats hidden data-table outline; keep one noFill"
+                            )));
                         }
                     }
                     "noFill"
@@ -16541,13 +16640,52 @@ fn parse_chart_xml(
             }
         }
     }
-    if data_table_sppr_seen
-        && data_table
-            .as_ref()
-            .is_none_or(|table| table.fill_color.is_none())
+    let data_table_has_supported_shape = data_table.as_ref().is_some_and(|table| {
+        table.fill_color.is_some()
+            || table.line_hidden
+            || table
+                .line_style
+                .as_ref()
+                .is_some_and(|style| !style.is_empty())
+    });
+    if data_table_sppr_seen && !data_table_has_supported_shape {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has data-table shape properties without a supported RGB fill or line; add one or remove the shape properties"
+        )));
+    }
+    if data_table_line_seen
+        && data_table.as_ref().is_some_and(|table| {
+            !table.line_hidden
+                && table
+                    .line_style
+                    .as_ref()
+                    .is_none_or(WorksheetChartGridlineStyle::is_empty)
+        })
     {
         return Err(Error::Reverse(format!(
-            "chart part `{part}` has data-table shape properties without one opaque RGB solid fill; add fillColor or remove the shape properties"
+            "chart part `{part}` has an empty data-table outline; specify a supported line property or remove the outline"
+        )));
+    }
+    if data_table.as_ref().is_some_and(|table| {
+        table
+            .line_style
+            .as_ref()
+            .is_some_and(|style| style.transparency.is_some() && style.color.is_none())
+    }) {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has data-table line transparency without an RGB color; add a line color or remove alpha"
+        )));
+    }
+    if data_table.as_ref().is_some_and(|table| {
+        table.line_hidden
+            && table.line_style.as_ref().is_some_and(|style| {
+                style.color.is_some()
+                    || style.transparency.is_some()
+                    || style.dash.is_some_and(|dash| dash != "solid")
+            })
+    }) {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` combines a hidden data-table line with visible formatting; remove noFill or remove color, non-solid dash, and transparency"
         )));
     }
     for (label, title, fill, line) in [
@@ -21289,6 +21427,8 @@ struct WorksheetChartDataTable {
     font_name: Option<String>,
     fill_color: Option<String>,
     fill_transparency: Option<u8>,
+    line_style: Option<WorksheetChartGridlineStyle>,
+    line_hidden: bool,
 }
 
 #[derive(Clone)]
