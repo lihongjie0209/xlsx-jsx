@@ -1928,6 +1928,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "name",
             "altText",
             "decorative",
+            "movement",
             "title",
             "titleFillColor",
             "titleFillTransparency",
@@ -2109,6 +2110,18 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         return Err(Error::Compile(
             "Chart.altText cannot be combined with Chart.decorative={true}; keep altText or decorative, not both".into(),
         ));
+    }
+    if let Some(value) = chart.props.get("movement") {
+        let Some(movement) = value.as_str() else {
+            return Err(Error::Compile(
+                "Chart.movement must be a string; use moveAndSize, moveOnly, or fixed".into(),
+            ));
+        };
+        if !matches!(movement, "moveAndSize" | "moveOnly" | "fixed") {
+            return Err(Error::Compile(format!(
+                "Chart.movement `{movement}` is unsupported; use moveAndSize, moveOnly, or fixed"
+            )));
+        }
     }
     let chart_type = chart
         .props

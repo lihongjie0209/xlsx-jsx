@@ -7,7 +7,8 @@ use rust_xlsxwriter::{
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
     ChartLineDashType, ChartMarker, ChartMarkerType, ChartPoint, ChartRange, ChartSolidFill,
-    ChartTrendline, ChartTrendlineType, ChartType, Image as XlsxImage, Workbook as XlsxWorkbook,
+    ChartTrendline, ChartTrendlineType, ChartType, Image as XlsxImage, ObjectMovement,
+    Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -1150,6 +1151,125 @@ fn reverses_external_decorative_chart_without_a_manifest() {
         .success();
     let drawing = read_zip_part_for_test(&rebuilt_path, "xl/drawings/drawing1.xml");
     assert!(drawing.contains("decorative"), "{drawing}");
+}
+
+#[test]
+fn chart_move_only_anchor_round_trips_through_dsl() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("move-only-chart.tsx");
+    let workbook_path = directory.path().join("move-only-chart.xlsx");
+    let reversed_path = directory.path().join("move-only-chart-reversed.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Row, Cell, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" movement="moveOnly"><Series values="Data!B2:B3" /></Chart><Row><Cell>Label</Cell><Cell>Value</Cell></Row><Row><Cell>A</Cell><Cell value={2} /></Row><Row><Cell>B</Cell><Cell value={3} /></Row></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&workbook_path)
+        .assert()
+        .success();
+    let drawing = read_zip_part_for_test(&workbook_path, "xl/drawings/drawing1.xml");
+    assert!(drawing.contains("editAs=\"oneCell\""), "{drawing}");
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&reversed_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(reversed_path).unwrap();
+    assert!(source.contains("movement=\"moveOnly\""), "{source}");
+}
+
+#[test]
+fn rejects_unknown_chart_movement_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("unknown-chart-movement.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" movement="locked"><Series values="Data!B2:B3" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.movement `locked` is unsupported",
+        ))
+        .stderr(predicate::str::contains("moveAndSize, moveOnly, or fixed"));
+}
+
+#[test]
+fn reverses_external_fixed_chart_anchor_without_a_manifest() {
+    assert_external_chart_movement_round_trip(
+        ObjectMovement::DontMoveOrSizeWithCells,
+        "fixed",
+        "absolute",
+    );
+}
+
+#[test]
+fn reverses_external_move_only_chart_anchor_without_a_manifest() {
+    assert_external_chart_movement_round_trip(
+        ObjectMovement::MoveButDontSizeWithCells,
+        "moveOnly",
+        "oneCell",
+    );
+}
+
+fn assert_external_chart_movement_round_trip(
+    movement: ObjectMovement,
+    expected_property: &str,
+    expected_edit_as: &str,
+) {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-movement.xlsx");
+    let source_path = directory.path().join("external-chart-movement.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-chart-movement.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_number(0, 0, 2).unwrap();
+    worksheet.write_number(1, 0, 3).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart.set_object_movement(movement);
+    chart.add_series().set_values("Data!A1:A2");
+    worksheet.insert_chart(0, 2, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(
+        source.contains(&format!("movement=\"{expected_property}\"")),
+        "{source}"
+    );
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let drawing = read_zip_part_for_test(&rebuilt_path, "xl/drawings/drawing1.xml");
+    assert!(
+        drawing.contains(&format!("editAs=\"{expected_edit_as}\"")),
+        "{drawing}"
+    );
 }
 
 #[test]

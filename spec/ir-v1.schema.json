@@ -501,6 +501,7 @@
             "name": { "type": "string", "minLength": 1, "maxLength": 255 },
             "altText": { "type": "string", "minLength": 1, "maxLength": 255 },
             "decorative": { "type": "boolean" },
+            "movement": { "enum": ["moveAndSize", "moveOnly", "fixed"] },
             "title": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },

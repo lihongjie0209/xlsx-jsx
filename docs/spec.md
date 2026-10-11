@@ -713,6 +713,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   ambiguous and suggests keeping either a description or the decorative flag.
   Reverse emits an explicit name because the writer otherwise assigns one
   automatically.
+- `Chart.movement?: "moveAndSize" | "moveOnly" | "fixed"` controls how a
+  chart responds to worksheet cell edits. The default is `moveAndSize` and is
+  omitted by reverse; `moveOnly` and `fixed` map to the two-cell anchor's
+  `editAs="oneCell"` and `editAs="absolute"` values respectively. Reverse
+  preserves these modes from external workbooks without a manifest. Explicit
+  `moveAndSize` is equivalent to omission. Other drawing anchor structures
+  remain unsupported.
 - Pie charts require exactly one `Series`; other chart types support one or more
   series. Series order, chart type, anchor, pixel size, and formulas survive
   reverse/recompile.

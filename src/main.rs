@@ -1200,6 +1200,15 @@ fn compile_chart(
     if component.props.get("decorative").and_then(Value::as_bool) == Some(true) {
         chart.set_decorative(true);
     }
+    if let Some(movement) = component.props.get("movement").and_then(Value::as_str) {
+        let movement = match movement {
+            "moveAndSize" => ObjectMovement::MoveAndSizeWithCells,
+            "moveOnly" => ObjectMovement::MoveButDontSizeWithCells,
+            "fixed" => ObjectMovement::DontMoveOrSizeWithCells,
+            _ => unreachable!("validated Chart.movement"),
+        };
+        chart.set_object_movement(movement);
+    }
     if let Some(title) = component.props.get("title").and_then(Value::as_str) {
         chart.title().set_name(title);
     }
@@ -5885,9 +5894,13 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
     } else {
         ""
     };
+    let movement = chart
+        .movement
+        .map(|value| format!(" movement=\"{value}\""))
+        .unwrap_or_default();
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -5895,6 +5908,7 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         chart.name,
         alt_text,
         decorative,
+        movement,
         chart
             .title
             .as_ref()
@@ -9642,11 +9656,16 @@ fn parse_chart_xml(
     const DEFAULT_COLUMN_PIXELS: u32 = 64;
     const DEFAULT_ROW_PIXELS: u32 = 20;
     let legend_font = parse_chart_legend_font(xml, part)?;
-    if anchor.edit_as.is_some() {
-        return Err(Error::Reverse(format!(
-            "chart drawing in `{part}` has a non-default editAs anchor mode; remove custom movement semantics"
-        )));
-    }
+    let movement = match anchor.edit_as.as_deref() {
+        None | Some("twoCell") => None,
+        Some("oneCell") => Some("moveOnly"),
+        Some("absolute") => Some("fixed"),
+        Some(value) => {
+            return Err(Error::Reverse(format!(
+                "chart drawing in `{part}` has unsupported editAs value `{value}`; use the default two-cell behavior, `oneCell`, or `absolute`"
+            )));
+        }
+    };
     if anchor.decorative
         && anchor
             .alt_text
@@ -17613,6 +17632,7 @@ fn parse_chart_xml(
         style: chart_style,
         alt_text: anchor.alt_text,
         decorative: anchor.decorative.then_some(true),
+        movement,
         data_table,
         series,
     })
@@ -21993,6 +22013,7 @@ struct WorksheetChart {
     style: Option<u8>,
     alt_text: Option<String>,
     decorative: Option<bool>,
+    movement: Option<&'static str>,
     data_table: Option<WorksheetChartDataTable>,
     series: Vec<WorksheetChartSeries>,
 }
