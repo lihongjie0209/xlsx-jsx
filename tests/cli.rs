@@ -100,6 +100,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("borderDiagonalType"))
         .stdout(predicate::str::contains("altTextTitle"))
         .stdout(predicate::str::contains("unique"))
+        .stdout(predicate::str::contains("upBarColor"))
+        .stdout(predicate::str::contains("downBarColor"))
         .stdout(predicate::str::contains("checkbox"));
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command.args(["spec", "--format", "json"]);
@@ -2685,6 +2687,81 @@ fn reverses_external_stock_chart_without_a_manifest() {
     assert!(source.contains("<Chart type=\"stock\""), "{source}");
     assert!(source.contains("dropLines={true}"), "{source}");
     assert_eq!(source.matches("<Series ").count(), 3, "{source}");
+}
+
+#[test]
+fn reverses_and_rebuilds_external_stock_up_down_bar_fills_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-stock-bars.xlsx");
+    let reversed_path = directory.path().join("external-stock-bars.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-stock-bars.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Stock);
+    for range in ["Data!B2:B4", "Data!C2:C4", "Data!D2:D4", "Data!E2:E4"] {
+        chart
+            .add_series()
+            .set_categories("Data!A2:A4")
+            .set_values(range)
+            .set_format(ChartLine::new().set_hidden(true))
+            .set_marker(ChartMarker::new().set_none());
+    }
+    chart
+        .set_high_low_lines(true)
+        .set_up_down_bars(true)
+        .set_up_bar_format(ChartSolidFill::new().set_color("#00AA00"))
+        .set_down_bar_format(ChartSolidFill::new().set_color("#CC0000"));
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&reversed_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed_path).expect("reversed JSX exists");
+    assert!(source.contains("upBarColor=\"#00AA00\""), "{source}");
+    assert!(source.contains("downBarColor=\"#CC0000\""), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        xml.contains("<c:upBars><c:spPr><a:solidFill><a:srgbClr val=\"00AA00\""),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<c:downBars><c:spPr><a:solidFill><a:srgbClr val=\"CC0000\""),
+        "{xml}"
+    );
+}
+
+#[test]
+fn rejects_stock_bar_colors_without_four_series_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("stock-bar-color-hlc.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="stock" cell="D2" upBarColor="#00AA00"><Series values="Data!B2:B4" categories="Data!A2:A4" /><Series values="Data!C2:C4" categories="Data!A2:A4" /><Series values="Data!D2:D4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("require exactly four Series"))
+        .stderr(predicate::str::contains("OHLC"));
 }
 
 #[test]

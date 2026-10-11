@@ -1929,6 +1929,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "altText",
             "decorative",
             "movement",
+            "upBarColor",
+            "downBarColor",
             "title",
             "titleFillColor",
             "titleFillTransparency",
@@ -2174,6 +2176,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     if chart_type == "stock" {
         validate_stock_chart(chart)?;
     }
+    validate_stock_up_down_bar_formats(chart, chart_type)?;
     if matches!(chart_type, "pie" | "doughnut")
         && chart
             .children
@@ -2185,6 +2188,35 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         return Err(Error::Compile(
             "pie and doughnut Charts accept exactly one Series; split the data into separate charts or choose area, column, bar, or line".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_stock_up_down_bar_formats(chart: &Node, chart_type: &str) -> Result<()> {
+    let has_colors =
+        chart.props.contains_key("upBarColor") || chart.props.contains_key("downBarColor");
+    if !has_colors {
+        return Ok(());
+    }
+    if chart_type != "stock" {
+        return Err(Error::Compile(
+            "Chart.upBarColor and downBarColor are supported only on four-series OHLC stock charts; use type=\"stock\" with Open, High, Low, Close series or remove these properties".into(),
+        ));
+    }
+    let series_count = chart
+        .children
+        .iter()
+        .filter(|value| value.get("type").and_then(Value::as_str) == Some("Series"))
+        .count();
+    if series_count != 4 {
+        return Err(Error::Compile(
+            "Chart.upBarColor and downBarColor require exactly four Series (Open, High, Low, Close) for an OHLC stock chart; add the fourth Series or remove the bar colors".into(),
+        ));
+    }
+    for property in ["upBarColor", "downBarColor"] {
+        if let Some(value) = chart.props.get(property) {
+            validate_rgb_color(value, &format!("Chart.{property}"), 0, 0)?;
+        }
     }
     Ok(())
 }

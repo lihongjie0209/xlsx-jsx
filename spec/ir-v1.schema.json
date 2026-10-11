@@ -502,6 +502,8 @@
             "altText": { "type": "string", "minLength": 1, "maxLength": 255 },
             "decorative": { "type": "boolean" },
             "movement": { "enum": ["moveAndSize", "moveOnly", "fixed"] },
+            "upBarColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "downBarColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "title": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
@@ -785,6 +787,25 @@
         }
       },
       "allOf": [
+        {
+          "if": {
+            "properties": {
+              "props": {
+                "anyOf": [
+                  { "required": ["upBarColor"] },
+                  { "required": ["downBarColor"] }
+                ]
+              }
+            },
+            "required": ["props"]
+          },
+          "then": {
+            "properties": {
+              "props": { "properties": { "type": { "const": "stock" } } },
+              "children": { "minItems": 4 }
+            }
+          }
+        },
         {
           "not": {
             "properties": {

@@ -1187,6 +1187,12 @@ fn compile_chart(
             == 4
         {
             chart.set_up_down_bars(true);
+            if let Some(color) = component.props.get("upBarColor").and_then(Value::as_str) {
+                chart.set_up_bar_format(ChartSolidFill::new().set_color(color));
+            }
+            if let Some(color) = component.props.get("downBarColor").and_then(Value::as_str) {
+                chart.set_down_bar_format(ChartSolidFill::new().set_color(color));
+            }
         }
     }
     configure_chart_visual_properties(&mut chart, component);
@@ -5898,6 +5904,19 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         .movement
         .map(|value| format!(" movement=\"{value}\""))
         .unwrap_or_default();
+    let movement = format!(
+        "{movement}{}{}",
+        chart
+            .up_bar_color
+            .as_ref()
+            .map(|color| format!(" upBarColor=\"{color}\""))
+            .unwrap_or_default(),
+        chart
+            .down_bar_color
+            .as_ref()
+            .map(|color| format!(" downBarColor=\"{color}\""))
+            .unwrap_or_default()
+    );
     let _ = writeln!(
         output,
         "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
@@ -9958,6 +9977,12 @@ fn parse_chart_xml(
     let mut chart_overlap: Option<i8> = None;
     let mut stock_high_low_lines = false;
     let mut stock_up_down_bars = false;
+    let mut up_bar_color: Option<String> = None;
+    let mut down_bar_color: Option<String> = None;
+    let mut up_bar_sppr_seen = false;
+    let mut down_bar_sppr_seen = false;
+    let mut up_bar_fill_seen = false;
+    let mut down_bar_fill_seen = false;
     let mut chart_group_marker_enabled = false;
     let mut series = Vec::<WorksheetChartSeries>::new();
     let mut data_table: Option<WorksheetChartDataTable> = None;
@@ -10752,6 +10777,20 @@ fn parse_chart_xml(
                     )));
                 }
                 if tag == "spPr" {
+                    if stack.last().is_some_and(|ancestor| ancestor == "upBars")
+                        && std::mem::replace(&mut up_bar_sppr_seen, true)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats OHLC up-bar shape properties; keep one opaque RGB solid fill"
+                        )));
+                    }
+                    if stack.last().is_some_and(|ancestor| ancestor == "downBars")
+                        && std::mem::replace(&mut down_bar_sppr_seen, true)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats OHLC down-bar shape properties; keep one opaque RGB solid fill"
+                        )));
+                    }
                     if stack.last().is_some_and(|ancestor| ancestor == "dTable")
                         && std::mem::replace(&mut data_table_sppr_seen, true)
                     {
@@ -10932,6 +10971,15 @@ fn parse_chart_xml(
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has unsupported drop-line content `<{tag}>`; keep only RGB color, width, preset dash, transparency, or noFill"
+                    )));
+                }
+                if stack
+                    .iter()
+                    .any(|ancestor| matches!(ancestor.as_str(), "upBars" | "downBars"))
+                    && !matches!(tag.as_str(), "spPr" | "solidFill" | "srgbClr")
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported OHLC up/down bar formatting `<{tag}>`; keep one opaque RGB solid fill and remove transparency, outlines, patterns, or effects"
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "legend")
@@ -14222,6 +14270,52 @@ fn parse_chart_xml(
                         }
                     }
                     "solidFill"
+                        if stack.last().is_some_and(|parent| parent == "spPr")
+                            && (stack.iter().any(|ancestor| ancestor == "upBars")
+                                || stack.iter().any(|ancestor| ancestor == "downBars")) =>
+                    {
+                        let seen = if stack.iter().any(|ancestor| ancestor == "upBars") {
+                            &mut up_bar_fill_seen
+                        } else {
+                            &mut down_bar_fill_seen
+                        };
+                        if std::mem::replace(seen, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats an OHLC up/down bar solid fill; keep one RGB value"
+                            )));
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && (stack.iter().any(|ancestor| ancestor == "upBars")
+                                || stack.iter().any(|ancestor| ancestor == "downBars")) =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "OHLC bar fill",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB OHLC bar fill; use one opaque six-digit RGB color"
+                            )));
+                        }
+                        let target = if stack.iter().any(|ancestor| ancestor == "upBars") {
+                            &mut up_bar_color
+                        } else {
+                            &mut down_bar_color
+                        };
+                        if target
+                            .replace(format!("#{color}").to_ascii_uppercase())
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats an OHLC up/down bar fill color; keep one RGB value"
+                            )));
+                        }
+                    }
+                    "solidFill"
                         if chart_area_sppr_context(&stack).is_some()
                             && !stack.iter().any(|ancestor| ancestor == "ln") =>
                     {
@@ -14722,7 +14816,14 @@ fn parse_chart_xml(
                                     .is_some_and(|ancestor| ancestor == "trendlineLbl")
                                 || matches!(
                                     stack.last().map(String::as_str),
-                                    Some("chartSpace" | "plotArea" | "legend" | "dTable")
+                                    Some(
+                                        "chartSpace"
+                                            | "plotArea"
+                                            | "legend"
+                                            | "dTable"
+                                            | "upBars"
+                                            | "downBars",
+                                    )
                                 )
                                 || (stack.iter().any(|ancestor| ancestor == "dPt")
                                     && matches!(
@@ -17093,6 +17194,13 @@ fn parse_chart_xml(
             )));
         }
     }
+    if (up_bar_color.is_some() || down_bar_color.is_some())
+        && (chart_type != "stock" || !stock_up_down_bars)
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has up/down bar formatting without a four-series OHLC stock chart; use four ordered Open/High/Low/Close series or remove the bar shapes"
+        )));
+    }
     if matches!(chart_type, "pie" | "doughnut") && series.len() != 1 {
         return Err(Error::Reverse(format!(
             "chart part `{part}` has {} series in a pie or doughnut chart; use exactly one data series or split it into separate charts",
@@ -17633,6 +17741,8 @@ fn parse_chart_xml(
         alt_text: anchor.alt_text,
         decorative: anchor.decorative.then_some(true),
         movement,
+        up_bar_color,
+        down_bar_color,
         data_table,
         series,
     })
@@ -22014,6 +22124,8 @@ struct WorksheetChart {
     alt_text: Option<String>,
     decorative: Option<bool>,
     movement: Option<&'static str>,
+    up_bar_color: Option<String>,
+    down_bar_color: Option<String>,
     data_table: Option<WorksheetChartDataTable>,
     series: Vec<WorksheetChartSeries>,
 }

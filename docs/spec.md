@@ -720,6 +720,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   preserves these modes from external workbooks without a manifest. Explicit
   `moveAndSize` is equivalent to omission. Other drawing anchor structures
   remain unsupported.
+- Four-series OHLC stock charts may set `Chart.upBarColor?: "#RRGGBB"` and
+  `Chart.downBarColor?: "#RRGGBB"` to customize rising/falling bar fills. Each
+  color is opaque RGB and maps to `Chart::set_up_bar_format()` /
+  `set_down_bar_format()` with a solid fill. These properties require
+  `type="stock"` and exactly four `Series`; they are invalid on three-series
+  HLC stock charts. Reverse preserves only explicit RGB solid fills on the
+  matching `upBars` / `downBars` shape and rejects transparency, outlines,
+  patterns, gradients, or other shape metadata.
 - Pie charts require exactly one `Series`; other chart types support one or more
   series. Series order, chart type, anchor, pixel size, and formulas survive
   reverse/recompile.
