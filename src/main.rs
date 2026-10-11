@@ -11,23 +11,23 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use rust_xlsxwriter::{
-    Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
-    ChartDataLabel, ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartLineDashType,
-    ChartMarker, ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType,
-    ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
-    ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
-    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
-    ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
-    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
-    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
-    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
-    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
-    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
-    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
-    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
-    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
-    Workbook,
+    Chart, ChartAxisCrossing, ChartAxisDisplayUnitType, ChartAxisLabelAlignment,
+    ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
+    ChartDataTable as XlsxChartDataTable, ChartErrorBars, ChartErrorBarsDirection,
+    ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartLineDashType, ChartMarker,
+    ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType,
+    Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
+    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
+    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
+    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
+    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
+    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
+    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
+    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
+    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
+    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
+    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
+    TableColumn, TableStyle, Url, Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -747,6 +747,7 @@ fn compile_chart(
     configure_chart_axis_bounds(&mut chart, component);
     configure_chart_axis_log_base(&mut chart, component);
     configure_chart_value_axis_reversed(&mut chart, component);
+    configure_chart_value_axis_display_units(&mut chart, component);
     configure_chart_category_axis_settings(&mut chart, component)?;
     configure_chart_axis_units(&mut chart, component);
     configure_chart_gridlines(&mut chart, component);
@@ -1199,6 +1200,47 @@ fn configure_chart_axis_log_base(chart: &mut Chart, component: &Node) {
         chart.y_axis()
     };
     value_axis.set_log_base(u16::try_from(base).expect("validated Chart.yAxisLogBase"));
+}
+
+fn configure_chart_value_axis_display_units(chart: &mut Chart, component: &Node) {
+    let Some(unit) = component
+        .props
+        .get("valueAxisDisplayUnit")
+        .and_then(Value::as_str)
+    else {
+        return;
+    };
+    let unit = match unit {
+        "hundreds" => ChartAxisDisplayUnitType::Hundreds,
+        "thousands" => ChartAxisDisplayUnitType::Thousands,
+        "tenThousands" => ChartAxisDisplayUnitType::TenThousands,
+        "hundredThousands" => ChartAxisDisplayUnitType::HundredThousands,
+        "millions" => ChartAxisDisplayUnitType::Millions,
+        "tenMillions" => ChartAxisDisplayUnitType::TenMillions,
+        "hundredMillions" => ChartAxisDisplayUnitType::HundredMillions,
+        "billions" => ChartAxisDisplayUnitType::Billions,
+        "trillions" => ChartAxisDisplayUnitType::Trillions,
+        _ => unreachable!("validated Chart.valueAxisDisplayUnit"),
+    };
+    let value_axis = if component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|chart_type| chart_type.starts_with("bar"))
+    {
+        chart.x_axis()
+    } else {
+        chart.y_axis()
+    };
+    value_axis.set_display_unit_type(unit);
+    if component
+        .props
+        .get("valueAxisDisplayUnitLabel")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        value_axis.set_display_units_visible(false);
+    }
 }
 
 fn configure_chart_value_axis_reversed(chart: &mut Chart, component: &Node) {
@@ -4469,6 +4511,12 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if let Some(value) = chart.category_axis_label_alignment {
         let _ = write!(properties, " categoryAxisLabelAlignment=\"{value}\"");
     }
+    if let Some(value) = chart.value_axis_display_unit {
+        let _ = write!(properties, " valueAxisDisplayUnit=\"{value}\"");
+    }
+    if chart.value_axis_display_unit_label == Some(false) {
+        properties.push_str(" valueAxisDisplayUnitLabel={false}");
+    }
     if chart.category_axis_on_tick_marks == Some(true) {
         properties.push_str(" categoryAxisOnTickMarks={true}");
     }
@@ -7345,6 +7393,9 @@ fn parse_chart_xml(
         "lblAlgn",
         "lblOffset",
         "crossBetween",
+        "dispUnits",
+        "builtInUnit",
+        "dispUnitsLbl",
         "majorTickMark",
         "minorTickMark",
         "valAx",
@@ -7397,6 +7448,7 @@ fn parse_chart_xml(
     let mut stack = Vec::<String>::new();
     let mut chart_type: Option<&'static str> = None;
     let mut chart_axis_count = 0_u8;
+    let mut value_axis_count = 0_u8;
     let mut chart_grouping_seen = false;
     let mut chart_gap: Option<u16> = None;
     let mut chart_overlap: Option<i8> = None;
@@ -7440,6 +7492,11 @@ fn parse_chart_xml(
     let mut y_axis_minor_unit = None;
     let mut y_axis_major_unit_seen = false;
     let mut y_axis_minor_unit_seen = false;
+    let mut value_axis_display_unit: Option<&'static str> = None;
+    let mut value_axis_display_unit_seen = false;
+    let mut value_axis_display_unit_label_seen = false;
+    let mut value_axis_display_unit_label = false;
+    let mut display_units_seen = false;
     let mut current_axis_position: Option<&'static str> = None;
     let mut horizontal_major_gridlines = false;
     let mut vertical_major_gridlines = false;
@@ -7532,6 +7589,18 @@ fn parse_chart_xml(
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has a formula or unsupported structure in the chart title; use one static unformatted title string"
+                    )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "dispUnitsLbl") && tag != "layout" {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has custom display-unit label text or formatting; retain only the writer's default label layout"
+                    )));
+                }
+                if stack.last().is_some_and(|parent| parent == "dispUnits")
+                    && !matches!(tag.as_str(), "builtInUnit" | "dispUnitsLbl")
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported display-unit content `<{tag}>`; retain one builtInUnit and an optional default label"
                     )));
                 }
                 if !allowed_tags.contains(&tag.as_str()) {
@@ -7817,6 +7886,9 @@ fn parse_chart_xml(
                             )));
                         }
                         chart_axis_count += 1;
+                        if tag == "valAx" {
+                            value_axis_count += 1;
+                        }
                         if chart_axis_count > 2 {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has secondary or duplicate axes that this DSL cannot preserve; keep only the two primary axes"
@@ -7824,6 +7896,66 @@ fn parse_chart_xml(
                         }
                         current_axis_position = None;
                         current_axis_hidden_declared = false;
+                    }
+                    "dispUnits" => {
+                        if stack.last().is_none_or(|parent| parent != "valAx") || display_units_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or misplaced dispUnits; keep one built-in display unit directly on the primary value axis"
+                            )));
+                        }
+                        display_units_seen = true;
+                    }
+                    "builtInUnit" => {
+                        if stack.last().is_none_or(|parent| parent != "dispUnits")
+                            || value_axis_display_unit_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or misplaced builtInUnit; keep one built-in unit inside dispUnits"
+                            )));
+                        }
+                        let raw = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "builtInUnit",
+                        )?;
+                        let unit = match raw.as_str() {
+                            "hundreds" => "hundreds",
+                            "thousands" => "thousands",
+                            "tenThousands" => "tenThousands",
+                            "hundredThousands" => "hundredThousands",
+                            "millions" => "millions",
+                            "tenMillions" => "tenMillions",
+                            "hundredMillions" => "hundredMillions",
+                            "billions" => "billions",
+                            "trillions" => "trillions",
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported builtInUnit `{raw}`; use a built-in unit from hundreds through trillions"
+                                )));
+                            }
+                        };
+                        value_axis_display_unit_seen = true;
+                        value_axis_display_unit = Some(unit);
+                    }
+                    "dispUnitsLbl" => {
+                        if stack.last().is_none_or(|parent| parent != "dispUnits")
+                            || value_axis_display_unit_label_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or misplaced dispUnitsLbl; keep at most one default unit label"
+                            )));
+                        }
+                        value_axis_display_unit_label_seen = true;
+                        value_axis_display_unit_label = true;
+                    }
+                    "layout" if stack.last().is_some_and(|parent| parent == "dispUnitsLbl") => {
+                        if !is_empty {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a custom display-unit label layout; remove the layout or use the writer's default label placement"
+                            )));
+                        }
                     }
                     "axPos" => {
                         current_axis_position = event
@@ -9899,6 +10031,28 @@ fn parse_chart_xml(
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
+    if display_units_seen && !value_axis_display_unit_seen {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has dispUnits without a builtInUnit; add a supported built-in unit or remove dispUnits"
+        )));
+    }
+    if value_axis_display_unit.is_some()
+        && (chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut"))
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` applies display units to `{chart_type}`, which has no single unambiguous value axis; use a category/value chart or remove dispUnits"
+        )));
+    }
+    if value_axis_display_unit.is_some() && value_axis_count != 1 {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has display units with {value_axis_count} value axes; use a chart with exactly one primary value axis or remove dispUnits"
+        )));
+    }
+    if value_axis_display_unit_label_seen && !display_units_seen {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has dispUnitsLbl without dispUnits; attach the label to a built-in value-axis display unit or remove it"
+        )));
+    }
     if series
         .iter()
         .any(|item| item.invert_if_negative == Some(true))
@@ -10214,6 +10368,10 @@ fn parse_chart_xml(
         vertical_axis_hidden: vertical_axis_hidden.then_some(true),
         y_axis_major_unit,
         y_axis_minor_unit,
+        value_axis_display_unit,
+        value_axis_display_unit_label: value_axis_display_unit
+            .map(|_| value_axis_display_unit_label)
+            .filter(|visible| !visible),
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
             != default_chart_major_gridlines(chart_type, true))
         .then_some(horizontal_major_gridlines),
@@ -11028,6 +11186,18 @@ fn is_supported_chart_attribute(
         ("lblAlgn", "val") => matches!(value, "ctr" | "l" | "r"),
         ("lblOffset", "val") => value == "100",
         ("crossBetween", "val") => matches!(value, "between" | "midCat"),
+        ("builtInUnit", "val") => matches!(
+            value,
+            "hundreds"
+                | "thousands"
+                | "tenThousands"
+                | "hundredThousands"
+                | "millions"
+                | "tenMillions"
+                | "hundredMillions"
+                | "billions"
+                | "trillions"
+        ),
         ("style", "val") => value
             .parse::<u8>()
             .is_ok_and(|style| (1..=48).contains(&style)),
@@ -13644,6 +13814,8 @@ struct WorksheetChart {
     category_axis_tick_interval: Option<u16>,
     y_axis_major_unit: Option<f64>,
     y_axis_minor_unit: Option<f64>,
+    value_axis_display_unit: Option<&'static str>,
+    value_axis_display_unit_label: Option<bool>,
     horizontal_axis_major_gridlines: Option<bool>,
     horizontal_axis_minor_gridlines: Option<bool>,
     vertical_axis_major_gridlines: Option<bool>,

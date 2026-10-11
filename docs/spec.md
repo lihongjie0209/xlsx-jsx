@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.68
+Version: 1.69
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -184,6 +184,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   automatic interval. These properties are not valid for scatter, pie, or
   doughnut charts. Reverse preserves `<valAx><majorUnit>/<minorUnit>` values and
   rejects intervals on category/date axes instead of dropping them.
+- `Chart.valueAxisDisplayUnit?: "hundreds" | "thousands" | "tenThousands" |
+  "hundredThousands" | "millions" | "tenMillions" | "hundredMillions" |
+  "billions" | "trillions"` scales the primary value-axis labels using the
+  corresponding built-in unit. `Chart.valueAxisDisplayUnitLabel?: boolean`
+  controls whether Excel displays the unit label; it requires
+  `valueAxisDisplayUnit`, and omission defaults to visible. These properties
+  are available only on charts with one unambiguous value axis (not scatter,
+  pie, or doughnut). Reverse preserves non-default units and hidden labels,
+  folds visible labels to the default, and rejects custom display-unit labels
+  or layouts.
 - `Chart.yAxisLogBase?: integer` enables a logarithmic value axis with a base
   from 2 through 1000. Omission leaves the value axis linear. This property is
   available only when the chart has one unambiguous value axis; scatter, pie,

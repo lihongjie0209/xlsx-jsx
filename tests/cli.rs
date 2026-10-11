@@ -2,8 +2,8 @@ use assert_cmd::Command;
 use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
-    Chart as XlsxChart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition,
-    ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
+    Chart as XlsxChart, ChartAxisCrossing, ChartAxisDisplayUnitType, ChartAxisLabelAlignment,
+    ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
     ChartDataTable as XlsxChartDataTable, ChartErrorBars, ChartErrorBarsDirection,
     ChartErrorBarsType, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartTrendline,
     ChartTrendlineType, ChartType, Workbook as XlsxWorkbook,
@@ -140,6 +140,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisMin"))
         .stdout(predicate::str::contains("yAxisMax"))
         .stdout(predicate::str::contains("yAxisLogBase"))
+        .stdout(predicate::str::contains("valueAxisDisplayUnit"))
+        .stdout(predicate::str::contains("valueAxisDisplayUnitLabel"))
         .stdout(predicate::str::contains("valueAxisReversed"))
         .stdout(predicate::str::contains("categoryAxisLabelInterval"))
         .stdout(predicate::str::contains("categoryAxisTickInterval"))
@@ -2736,6 +2738,140 @@ fn reverses_external_hidden_chart_axes_without_a_manifest() {
     let second_chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
     assert!(first_chart_xml.contains("<c:delete val=\"1\"/>"));
     assert!(second_chart_xml.contains("<c:delete val=\"1\"/>"));
+}
+
+#[test]
+fn reverses_external_value_axis_display_units_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-display-units.xlsx");
+    let output_path = directory.path().join("external-axis-display-units.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-axis-display-units.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .y_axis()
+        .set_display_unit_type(ChartAxisDisplayUnitType::Millions)
+        .set_display_units_visible(false);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    let mut default_label_chart = XlsxChart::new(ChartType::Column);
+    default_label_chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    default_label_chart
+        .y_axis()
+        .set_display_unit_type(ChartAxisDisplayUnitType::Thousands);
+    worksheet.insert_chart(18, 5, &default_label_chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("valueAxisDisplayUnit=\"millions\""));
+    assert!(source.contains("valueAxisDisplayUnitLabel={false}"));
+    assert!(source.contains("valueAxisDisplayUnit=\"thousands\""));
+    assert!(!source.contains("valueAxisDisplayUnitLabel={true}"));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:builtInUnit val=\"millions\"/>"));
+    assert!(!xml.contains("<c:dispUnitsLbl"));
+    let default_label_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    assert!(default_label_xml.contains("<c:dispUnitsLbl><c:layout/></c:dispUnitsLbl>"));
+}
+
+#[test]
+fn rejects_value_axis_display_units_for_scatter_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-display-unit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" valueAxisDisplayUnit="millions"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not supported for scatter"))
+        .stderr(predicate::str::contains("single unambiguous value axis"));
+}
+
+#[test]
+fn requires_a_value_axis_display_unit_when_configuring_its_label() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-display-label-without-unit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" valueAxisDisplayUnitLabel={false}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "valueAxisDisplayUnitLabel requires valueAxisDisplayUnit",
+        ))
+        .stderr(predicate::str::contains("add a built-in unit"));
+}
+
+#[test]
+fn rejects_custom_value_axis_display_unit_layouts_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("custom-axis-display-layout.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .y_axis()
+        .set_display_unit_type(ChartAxisDisplayUnitType::Thousands);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    rewrite_part(&workbook_path, "xl/charts/chart1.xml", |mut xml| {
+        xml = xml.replace(
+            "<c:dispUnitsLbl><c:layout/></c:dispUnitsLbl>",
+            "<c:dispUnitsLbl><c:layout><c:manualLayout/></c:layout></c:dispUnitsLbl>",
+        );
+        xml
+    });
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(directory.path().join("custom-axis-display-layout.tsx"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("custom display-unit label layout"))
+        .stderr(predicate::str::contains("writer's default label placement"));
 }
 
 #[test]

@@ -1899,6 +1899,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisMin",
             "yAxisMax",
             "yAxisLogBase",
+            "valueAxisDisplayUnit",
+            "valueAxisDisplayUnitLabel",
             "valueAxisReversed",
             "categoryAxisLabelInterval",
             "categoryAxisTickInterval",
@@ -1947,6 +1949,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     validate_doughnut_hole_size(chart, chart_type)?;
     validate_chart_slice_angle(chart, chart_type)?;
     validate_chart_visual_properties(chart, chart_type)?;
+    validate_chart_value_axis_display_units(chart, chart_type)?;
     let cell = chart
         .props
         .get("cell")
@@ -2214,6 +2217,52 @@ fn validate_chart_value_axis_reversed(chart: &Node, chart_type: &str) -> Result<
         ));
     }
     Ok(())
+}
+
+fn validate_chart_value_axis_display_units(chart: &Node, chart_type: &str) -> Result<()> {
+    let unit = chart.props.get("valueAxisDisplayUnit");
+    let label = chart.props.get("valueAxisDisplayUnitLabel");
+    if let Some(label) = label {
+        if !label.is_boolean() {
+            return Err(Error::Compile(
+                "Chart.valueAxisDisplayUnitLabel must be a boolean; use true/false or omit it for the writer default".into(),
+            ));
+        }
+        if unit.is_none() {
+            return Err(Error::Compile(
+                "Chart.valueAxisDisplayUnitLabel requires valueAxisDisplayUnit; add a built-in unit or remove the label setting".into(),
+            ));
+        }
+    }
+    let Some(unit) = unit else {
+        return Ok(());
+    };
+    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+        return Err(Error::Compile(
+            "Chart.valueAxisDisplayUnit is not supported for scatter, pie, or doughnut charts because they have no single unambiguous value axis; use an area/bar/column/line/radar/stock chart or omit the display unit".into(),
+        ));
+    }
+    if !unit.as_str().is_some_and(is_chart_value_axis_display_unit) {
+        return Err(Error::Compile(
+            "Chart.valueAxisDisplayUnit must be a built-in unit: hundreds, thousands, tenThousands, hundredThousands, millions, tenMillions, hundredMillions, billions, or trillions".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_chart_value_axis_display_unit(value: &str) -> bool {
+    matches!(
+        value,
+        "hundreds"
+            | "thousands"
+            | "tenThousands"
+            | "hundredThousands"
+            | "millions"
+            | "tenMillions"
+            | "hundredMillions"
+            | "billions"
+            | "trillions"
+    )
 }
 
 fn validate_chart_category_axis_intervals(chart: &Node, chart_type: &str) -> Result<()> {

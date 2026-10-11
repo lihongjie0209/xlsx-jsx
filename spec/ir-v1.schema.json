@@ -517,6 +517,8 @@
             "verticalAxisHidden": { "type": "boolean" },
             "yAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
+            "valueAxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
+            "valueAxisDisplayUnitLabel": { "type": "boolean" },
             "horizontalAxisMajorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
             "horizontalAxisMinorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
             "verticalAxisMajorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
@@ -545,6 +547,10 @@
         }
       },
       "allOf": [
+        {
+          "if": { "properties": { "props": { "required": ["valueAxisDisplayUnitLabel"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "required": ["valueAxisDisplayUnit"] } } }
+        },
         {
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["pie", "doughnut"] } }, "required": ["type"] } }, "required": ["props"] },
           "then": {
@@ -577,6 +583,8 @@
                     { "required": ["verticalAxisHidden"] },
                     { "required": ["yAxisMajorUnit"] },
                     { "required": ["yAxisMinorUnit"] },
+                    { "required": ["valueAxisDisplayUnit"] },
+                    { "required": ["valueAxisDisplayUnitLabel"] },
                     { "required": ["horizontalAxisMajorGridlines"] },
                     { "required": ["horizontalAxisMinorGridlines"] },
                     { "required": ["verticalAxisMajorGridlines"] },
@@ -612,6 +620,8 @@
                     { "required": ["valueAxisReversed"] },
                     { "required": ["yAxisMajorUnit"] },
                     { "required": ["yAxisMinorUnit"] },
+                    { "required": ["valueAxisDisplayUnit"] },
+                    { "required": ["valueAxisDisplayUnitLabel"] },
                     { "required": ["categoryAxisLabelInterval"] },
                     { "required": ["categoryAxisTickInterval"] }
                   ]
