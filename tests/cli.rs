@@ -453,7 +453,9 @@ fn spec_exposes_chart_area_outline_properties() {
         .assert()
         .success()
         .stdout(predicate::str::contains("chartAreaLineColor"))
-        .stdout(predicate::str::contains("plotAreaLineTransparency"));
+        .stdout(predicate::str::contains("plotAreaLineTransparency"))
+        .stdout(predicate::str::contains("chartAreaFillTransparency"))
+        .stdout(predicate::str::contains("plotAreaFillTransparency"));
 }
 
 #[test]
@@ -1040,6 +1042,108 @@ fn reverses_external_chart_and_plot_area_rgb_fills_without_a_manifest() {
 }
 
 #[test]
+fn reverses_and_rebuilds_chart_area_fill_transparency_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-area-fill-transparency.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_string(0, 0, "Quarter").unwrap();
+    worksheet.write_string(1, 0, "Q1").unwrap();
+    worksheet.write_string(2, 0, "Q2").unwrap();
+    worksheet.write_string(0, 1, "Revenue").unwrap();
+    worksheet.write_number(1, 1, 10).unwrap();
+    worksheet.write_number(2, 1, 20).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3");
+    chart.chart_area().set_format(
+        ChartFormat::new().set_solid_fill(
+            ChartSolidFill::new()
+                .set_color("#F1F2F3")
+                .set_transparency(35),
+        ),
+    );
+    chart.plot_area().set_format(
+        ChartFormat::new().set_solid_fill(
+            ChartSolidFill::new()
+                .set_color("#A1B2C3")
+                .set_transparency(70),
+        ),
+    );
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    let reversed = directory.path().join("chart-area-fill-transparency.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(
+        source.contains("chartAreaFillColor=\"#F1F2F3\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("chartAreaFillTransparency={35}"),
+        "{source}"
+    );
+    assert!(source.contains("plotAreaFillColor=\"#A1B2C3\""), "{source}");
+    assert!(source.contains("plotAreaFillTransparency={70}"), "{source}");
+
+    let rebuilt = directory
+        .path()
+        .join("chart-area-fill-transparency-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
+    assert!(xml.contains("<a:alpha val=\"65000\"/>"), "{xml}");
+    assert!(xml.contains("<a:alpha val=\"30000\"/>"), "{xml}");
+    let reversed_again = directory
+        .path()
+        .join("chart-area-fill-transparency-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&reversed_again)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(reversed_again).expect("round-trip source exists"),
+        source
+    );
+
+    let inexact_alpha = directory.path().join("inexact-fill-alpha.xlsx");
+    std::fs::copy(&input, &inexact_alpha).expect("external chart package is copied");
+    rewrite_part(&inexact_alpha, "xl/charts/chart1.xml", |xml| {
+        xml.replacen("<a:alpha val=\"65000\"/>", "<a:alpha val=\"65001\"/>", 1)
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&inexact_alpha)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "chartArea fill alpha not exactly representable by whole-percent transparency",
+        ))
+        .stderr(predicate::str::contains("use increments of 1%"));
+}
+
+#[test]
 fn reverses_and_rebuilds_external_chart_area_outlines_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("chart-area-outlines.xlsx");
@@ -1543,6 +1647,28 @@ fn validate_rejects_chart_area_line_transparency_without_color() {
         .stderr(predicate::str::contains(
             "Chart.chartAreaLineTransparency requires Chart.chartAreaLineColor",
         ));
+}
+
+#[test]
+fn validate_rejects_chart_area_fill_transparency_without_color() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-area-fill-transparency.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" chartAreaFillTransparency={25}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("input source is written");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.chartAreaFillTransparency requires chartAreaFillColor",
+        ))
+        .stderr(predicate::str::contains("add chartAreaFillColor"));
 }
 
 #[test]

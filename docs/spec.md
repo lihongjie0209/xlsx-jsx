@@ -239,12 +239,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   explicit chart-title `<c:overlay val="1"/>` and folds false to omission.
   Axis-title overlays are not represented and are rejected when enabled.
 - `Chart.chartAreaFillColor?: "#RRGGBB"` and
-  `Chart.plotAreaFillColor?: "#RRGGBB"` set opaque RGB solid fills through
+  `Chart.plotAreaFillColor?: "#RRGGBB"` set RGB solid fills through
   `ChartArea::set_format()` and `ChartPlotArea::set_format()`. Both properties
   are optional, independent, and valid for every chart type. Reverse preserves
   chart-space and plot-area fills without a manifest. Pattern/gradient fills,
-  transparency, theme/indexed colors, no-fill overrides, and unsupported area
-  properties are rejected rather than discarded.
+  theme/indexed colors, no-fill overrides, and unsupported area properties are
+  rejected rather than discarded. `chartAreaFillTransparency?` and
+  `plotAreaFillTransparency?` are integer percentages from 0 (opaque) through
+  100 (fully transparent); each requires its corresponding fill color. Reverse
+  preserves only solid RGB color alpha representable in whole percentages.
 - `Chart.chartAreaLineColor`, `chartAreaLineWidth`, `chartAreaLineDash`, and
   `chartAreaLineTransparency` format the chart-area outline; the corresponding
   `plotAreaLine*` properties format the plot-area outline. Colors are opaque

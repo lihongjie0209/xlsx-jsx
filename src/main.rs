@@ -2333,7 +2333,18 @@ fn chart_shape_format(
     let mut chart_format = ChartFormat::new();
     let mut has_format = false;
     if let Some(color) = component.props.get(fill_color).and_then(Value::as_str) {
-        chart_format.set_solid_fill(ChartSolidFill::new().set_color(color));
+        let transparency_key = fill_color.replace("Color", "Transparency");
+        let mut fill = ChartSolidFill::new();
+        fill.set_color(color);
+        if let Some(transparency) = component
+            .props
+            .get(&transparency_key)
+            .and_then(Value::as_u64)
+            .and_then(|value| u8::try_from(value).ok())
+        {
+            fill.set_transparency(transparency);
+        }
+        chart_format.set_solid_fill(&fill);
         has_format = true;
     }
 
@@ -5206,7 +5217,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -5251,9 +5262,17 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .map(|value| format!(" chartAreaFillColor={value:?}"))
             .unwrap_or_default(),
         chart
+            .chart_area_fill_transparency
+            .map(|value| format!(" chartAreaFillTransparency={{{value}}}"))
+            .unwrap_or_default(),
+        chart
             .plot_area_fill_color
             .as_ref()
             .map(|value| format!(" plotAreaFillColor={value:?}"))
+            .unwrap_or_default(),
+        chart
+            .plot_area_fill_transparency
+            .map(|value| format!(" plotAreaFillTransparency={{{value}}}"))
             .unwrap_or_default(),
         chart
             .plot_area_layout
@@ -9170,7 +9189,9 @@ fn parse_chart_xml(
     let mut chart_style = None;
     let mut chart_style_seen = false;
     let mut chart_area_fill_color: Option<String> = None;
+    let mut chart_area_fill_transparency: Option<u8> = None;
     let mut plot_area_fill_color: Option<String> = None;
+    let mut plot_area_fill_transparency: Option<u8> = None;
     let mut chart_area_line: Option<WorksheetChartGridlineStyle> = None;
     let mut plot_area_line: Option<WorksheetChartGridlineStyle> = None;
     let mut plot_area_layout: Option<[f64; 4]> = None;
@@ -9732,7 +9753,8 @@ fn parse_chart_xml(
                 let supported_area_shape_tag = matches!(tag.as_str(), "solidFill" | "srgbClr")
                     || tag == "ln" && stack.last().is_some_and(|parent| parent == "spPr")
                     || matches!(tag.as_str(), "alpha" | "prstDash")
-                        && stack.iter().any(|ancestor| ancestor == "ln");
+                        && stack.iter().any(|ancestor| ancestor == "ln")
+                    || tag == "alpha" && stack.last().is_some_and(|parent| parent == "srgbClr");
                 if area_sppr_context.is_some() && !supported_area_shape_tag {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has unsupported chart-area formatting `<{tag}>`; retain an opaque RGB solid fill and supported RGB outline, and remove other effects"
@@ -12986,7 +13008,7 @@ fn parse_chart_xml(
                             chart_element_val_attribute(&event, part, reader.decoder(), "srgbClr")?;
                         if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a non-RGB {area} fill; use an opaque six-digit RGB color"
+                                "chart part `{part}` has a non-RGB {area} fill; use a six-digit RGB color and represent opacity with fill transparency"
                             )));
                         }
                         let target = if area == "chartArea" {
@@ -13758,6 +13780,40 @@ fn parse_chart_xml(
                             }
                         } else if let Some(current) = series.last_mut() {
                             current.line_transparency = Some(100 - alpha / 1000);
+                        }
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && area_sppr_context.is_some()
+                            && !stack.iter().any(|item| item == "ln") =>
+                    {
+                        let area = area_sppr_context.expect("area fill context was checked");
+                        let alpha = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "alpha",
+                        )?
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|alpha| *alpha <= 100_000 && alpha % 1000 == 0)
+                        .ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has {area} fill alpha not exactly representable by whole-percent transparency; use increments of 1%"
+                        )))?;
+                        let target = if area == "chartArea" {
+                            &mut chart_area_fill_transparency
+                        } else {
+                            &mut plot_area_fill_transparency
+                        };
+                        let transparency = u8::try_from(100 - alpha / 1000).map_err(|error| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has invalid {area} fill alpha: {error}"
+                            ))
+                        })?;
+                        if target.replace(transparency).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats {area} fill transparency; keep one alpha value"
+                            )));
                         }
                     }
                     "prstDash" if stack.last().is_some_and(|parent| parent == "ln") => {
@@ -14794,23 +14850,30 @@ fn parse_chart_xml(
         // OOXML's absent holeSize default is 10; the pinned writer emits 50.
         hole_size = Some(10);
     }
-    for (area, present, color, line) in [
+    for (area, present, color, fill_transparency, line) in [
         (
             "chartArea",
             chart_area_sppr_seen,
             chart_area_fill_color.as_ref(),
+            chart_area_fill_transparency,
             chart_area_line.as_ref(),
         ),
         (
             "plotArea",
             plot_area_sppr_seen,
             plot_area_fill_color.as_ref(),
+            plot_area_fill_transparency,
             plot_area_line.as_ref(),
         ),
     ] {
         if present && color.is_none() && line.is_none() {
             return Err(Error::Reverse(format!(
-                "chart part `{part}` has {area} shape properties without a supported opaque RGB fill or outline; add one or remove the shape properties"
+                "chart part `{part}` has {area} shape properties without a supported RGB solid fill or outline; add one or remove the shape properties"
+            )));
+        }
+        if fill_transparency.is_some() && color.is_none() {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has {area} fill transparency without an RGB fill color; add {area} fill color or remove alpha"
             )));
         }
         if (area == "chartArea" && chart_area_line_seen
@@ -15018,8 +15081,10 @@ fn parse_chart_xml(
         y_axis_label_font,
         title_overlay,
         chart_area_fill_color,
+        chart_area_fill_transparency,
         chart_area_line,
         plot_area_fill_color,
+        plot_area_fill_transparency,
         plot_area_line,
         plot_area_layout,
         legend_layout,
@@ -19143,8 +19208,10 @@ struct WorksheetChart {
     y_axis_label_font: WorksheetChartAxisFont,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
+    chart_area_fill_transparency: Option<u8>,
     chart_area_line: Option<WorksheetChartGridlineStyle>,
     plot_area_fill_color: Option<String>,
+    plot_area_fill_transparency: Option<u8>,
     plot_area_line: Option<WorksheetChartGridlineStyle>,
     plot_area_layout: Option<[f64; 4]>,
     legend_layout: Option<[f64; 4]>,

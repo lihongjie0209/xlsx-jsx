@@ -2006,11 +2006,13 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleFontUnderline",
             "titleFontRotation",
             "chartAreaFillColor",
+            "chartAreaFillTransparency",
             "chartAreaLineColor",
             "chartAreaLineWidth",
             "chartAreaLineDash",
             "chartAreaLineTransparency",
             "plotAreaFillColor",
+            "plotAreaFillTransparency",
             "plotAreaLineColor",
             "plotAreaLineWidth",
             "plotAreaLineDash",
@@ -2122,6 +2124,23 @@ fn validate_chart_visual_properties(chart: &Node, chart_type: &str) -> Result<()
             return Err(Error::Compile(format!(
                 "Chart.{property} must match `#RRGGBB`; use exactly six hexadecimal digits after `#`"
             )));
+        }
+    }
+    for (transparency_property, color_property) in [
+        ("chartAreaFillTransparency", "chartAreaFillColor"),
+        ("plotAreaFillTransparency", "plotAreaFillColor"),
+    ] {
+        if let Some(value) = chart.props.get(transparency_property) {
+            if value.as_u64().is_none_or(|value| value > 100) {
+                return Err(Error::Compile(format!(
+                    "Chart.{transparency_property} must be an integer from 0 through 100; use a whole percentage"
+                )));
+            }
+            if !chart.props.contains_key(color_property) {
+                return Err(Error::Compile(format!(
+                    "Chart.{transparency_property} requires {color_property}; add {color_property} or remove fill transparency"
+                )));
+            }
         }
     }
     for property in ["plotAreaLayout", "legendLayout"] {
