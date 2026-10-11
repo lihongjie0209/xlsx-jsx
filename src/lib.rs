@@ -1951,6 +1951,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleFontName",
             "titleFontPitchFamily",
             "titleFontCharset",
+            "titleFontUnderline",
             "chartAreaFillColor",
             "plotAreaFillColor",
             "plotAreaLayout",
@@ -2250,7 +2251,7 @@ fn validate_chart_title_font_properties(chart: &Node) -> Result<()> {
                 .into(),
         ));
     }
-    for property in ["titleFontBold", "titleFontItalic"] {
+    for property in ["titleFontBold", "titleFontItalic", "titleFontUnderline"] {
         if let Some(value) = chart.props.get(property)
             && !value.is_boolean()
         {

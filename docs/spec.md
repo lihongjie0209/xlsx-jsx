@@ -166,7 +166,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   DrawingML hundredths-of-a-point size. `titleFontBold?: boolean`,
   `titleFontItalic?: boolean`, and `titleFontColor?: "#RRGGBB"` model explicit
   bold (including `false`, which disables Excel's default bold title), italic,
-  and opaque RGB run color. `titleFontName?: string` sets the DrawingML Latin
+  and opaque RGB run color. `titleFontUnderline?: boolean` sets single
+  underline on the title run; false is the default and is folded to omission.
+  Font properties preserve explicit run/default-run values only when
+  consistent.
+  `titleFontName?: string` sets the DrawingML Latin
   typeface; `titleFontPitchFamily?: integer` preserves its optional byte
   metadata (0–255), and `titleFontCharset?: integer` preserves the OOXML
   signed-byte charset value supported by the writer (0–127). All title font properties

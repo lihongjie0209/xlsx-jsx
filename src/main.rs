@@ -784,6 +784,7 @@ fn compile_chart(
         || component.props.contains_key("titleFontName")
         || component.props.contains_key("titleFontPitchFamily")
         || component.props.contains_key("titleFontCharset")
+        || component.props.contains_key("titleFontUnderline")
     {
         let mut font = rust_xlsxwriter::ChartFont::new();
         if let Some(size) = component.props.get("titleFontSize").and_then(Value::as_f64) {
@@ -809,6 +810,14 @@ fn compile_chart(
             == Some(true)
         {
             font.set_italic();
+        }
+        if component
+            .props
+            .get("titleFontUnderline")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            font.set_underline();
         }
         if let Some(color) = component
             .props
@@ -5140,6 +5149,9 @@ fn append_chart_title_font_properties(properties: &mut String, chart: &Worksheet
     if let Some(charset) = chart.title_font_charset {
         let _ = write!(properties, " titleFontCharset={{{charset}}}");
     }
+    if chart.title_font_underline == Some(true) {
+        properties.push_str(" titleFontUnderline={true}");
+    }
 }
 
 fn append_chart_axis_value_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -8200,6 +8212,7 @@ fn parse_chart_xml(
     let mut title_font_name: Option<String> = None;
     let mut title_font_pitch_family: Option<u8> = None;
     let mut title_font_charset: Option<u8> = None;
+    let mut title_font_underline: Option<bool> = None;
     let mut title_font_latin_seen = false;
     let mut title_overlay = false;
     let mut title_overlay_seen = false;
@@ -8370,7 +8383,7 @@ fn parse_chart_xml(
                     && stack.iter().any(|ancestor| ancestor == "title")
                 {
                     if chart_title_target != Some("title") {
-                        for key in ["b", "i"] {
+                        for key in ["b", "i", "u"] {
                             if chart_xml_attribute(&event, key, reader.decoder())?.is_some() {
                                 return Err(Error::Reverse(format!(
                                     "chart part `{part}` has unsupported `{tag}@{key}` formatting on an axis or series title; only Chart title font properties are modeled"
@@ -8390,6 +8403,24 @@ fn parse_chart_xml(
                             }
                             *target = Some(parsed);
                         }
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "u", reader.decoder())? {
+                        let parsed = match value.as_str() {
+                            "sng" => true,
+                            "none" => false,
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported title font underline value `{value}`; use single underline or remove the formatting"
+                                )));
+                            }
+                        };
+                        let target = &mut title_font_underline;
+                        if target.is_some_and(|previous| previous != parsed) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent default/run title font `u` values; make them identical"
+                            )));
+                        }
+                        *target = Some(parsed);
                     }
                     let size = event
                         .attributes()
@@ -12606,6 +12637,7 @@ fn parse_chart_xml(
         title_font_name,
         title_font_pitch_family,
         title_font_charset,
+        title_font_underline,
         title_overlay,
         chart_area_fill_color,
         plot_area_fill_color,
@@ -13277,7 +13309,9 @@ fn audit_chart_attributes(
                     ("sz", value) => value
                         .parse::<u32>()
                         .is_ok_and(|size| (100..=400_000).contains(&size)),
-                    ("b" | "i", "0" | "1" | "true" | "false") | ("baseline", "0") => true,
+                    ("b" | "i", "0" | "1" | "true" | "false")
+                    | ("u", "sng" | "none")
+                    | ("baseline", "0") => true,
                     _ => false,
                 }
             } else if tag == "latin" {
@@ -16391,6 +16425,7 @@ struct WorksheetChart {
     title_font_name: Option<String>,
     title_font_pitch_family: Option<u8>,
     title_font_charset: Option<u8>,
+    title_font_underline: Option<bool>,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     plot_area_fill_color: Option<String>,

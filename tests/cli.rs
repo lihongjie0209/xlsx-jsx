@@ -241,7 +241,8 @@ fn spec_exposes_chart_title_font_properties() {
         .stdout(predicate::str::contains("titleFontColor"))
         .stdout(predicate::str::contains("titleFontName"))
         .stdout(predicate::str::contains("titleFontPitchFamily"))
-        .stdout(predicate::str::contains("titleFontCharset"));
+        .stdout(predicate::str::contains("titleFontCharset"))
+        .stdout(predicate::str::contains("titleFontUnderline"));
 }
 
 #[test]
@@ -1007,7 +1008,7 @@ fn chart_title_font_styling_round_trips_without_a_manifest() {
     let input = directory.path().join("chart-title-font-size.tsx");
     std::fs::write(
         &input,
-        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontSize={16} titleFontBold={false} titleFontItalic={true} titleFontColor="#336699" titleFontName="Aptos" titleFontPitchFamily={34} titleFontCharset={127}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontSize={16} titleFontBold={false} titleFontItalic={true} titleFontUnderline={true} titleFontColor="#336699" titleFontName="Aptos" titleFontPitchFamily={34} titleFontCharset={127}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
     )
     .expect("source writes");
     let external = directory.path().join("chart-title-font-size.xlsx");
@@ -1032,6 +1033,7 @@ fn chart_title_font_styling_round_trips_without_a_manifest() {
     assert!(source.contains("titleFontSize={16}"), "{source}");
     assert!(source.contains("titleFontBold={false}"), "{source}");
     assert!(source.contains("titleFontItalic={true}"), "{source}");
+    assert!(source.contains("titleFontUnderline={true}"), "{source}");
     assert!(source.contains("titleFontColor=\"#336699\""), "{source}");
     assert!(source.contains("titleFontName=\"Aptos\""), "{source}");
     assert!(source.contains("titleFontPitchFamily={34}"), "{source}");
@@ -1074,6 +1076,27 @@ fn rejects_chart_title_font_size_without_a_title() {
         .failure()
         .stderr(predicate::str::contains(
             "Chart.titleFontSize requires Chart.title",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn rejects_chart_title_underline_without_a_title() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("title-underline-without-title.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" titleFontUnderline={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.titleFontUnderline requires Chart.title",
         ))
         .stderr(predicate::str::contains("suggestion:"));
 }
