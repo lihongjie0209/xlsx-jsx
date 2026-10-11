@@ -14577,16 +14577,23 @@ fn external_icon_set_thresholds_round_trip_without_manifest() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One end-to-end fixture covers reverse, rebuild, and malformed gte.
 fn external_x14_icon_sets_round_trip_without_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("x14-icon-set.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
     let worksheet = workbook.add_worksheet();
+    let x14_only_rule = rust_xlsxwriter::ConditionalFormatIconSet::new()
+        .set_icon_type(rust_xlsxwriter::ConditionalFormatIconType::ThreeStars);
+    worksheet
+        .add_conditional_format(0, 1, 9, 1, &x14_only_rule)
+        .expect("preceding x14-only icon set writes");
     let custom_icons = [
         rust_xlsxwriter::ConditionalFormatCustomIcon::new()
             .set_rule(rust_xlsxwriter::ConditionalFormatType::Percent, 0),
         rust_xlsxwriter::ConditionalFormatCustomIcon::new()
             .set_rule(rust_xlsxwriter::ConditionalFormatType::Percentile, 50)
+            .set_greater_than(true)
             .set_icon_type(
                 rust_xlsxwriter::ConditionalFormatIconType::FourHistograms,
                 2,
@@ -14604,14 +14611,16 @@ fn external_x14_icon_sets_round_trip_without_manifest() {
     worksheet
         .add_conditional_format(0, 0, 9, 0, &custom_rule)
         .expect("custom icon set writes");
-    let x14_only_rule = rust_xlsxwriter::ConditionalFormatIconSet::new()
-        .set_icon_type(rust_xlsxwriter::ConditionalFormatIconType::ThreeStars);
-    worksheet
-        .add_conditional_format(0, 1, 9, 1, &x14_only_rule)
-        .expect("x14-only icon set writes");
     workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<x14:cfvo type=\"percentile\"><xm:f>50</xm:f></x14:cfvo>",
+            "<x14:cfvo type=\"percentile\" gte=\"0\"><xm:f>50</xm:f></x14:cfvo>",
+        )
+    });
     let worksheet_xml = read_zip_part_for_test(&input, "xl/worksheets/sheet1.xml");
     assert!(worksheet_xml.contains("<x14:cfIcon iconSet=\"4Rating\" iconId=\"2\"/>"));
+    assert!(worksheet_xml.contains("<x14:cfvo type=\"percentile\" gte=\"0\">"));
 
     let reversed = directory.path().join("x14-icon-set.tsx");
     Command::cargo_bin("xlsx-jsx")
@@ -14628,6 +14637,7 @@ fn external_x14_icon_sets_round_trip_without_manifest() {
         "{source}"
     );
     assert!(source.contains("noIcon: true"), "{source}");
+    assert!(source.contains("greaterThan: true"), "{source}");
     assert!(source.contains("MAX(A1:A10)"), "{source}");
     assert!(source.contains("iconType=\"threeStars\""), "{source}");
 
@@ -14640,6 +14650,29 @@ fn external_x14_icon_sets_round_trip_without_manifest() {
         .arg(&output)
         .assert()
         .success();
+    let rebuilt_xml = read_zip_part_for_test(&output, "xl/worksheets/sheet1.xml");
+    assert!(
+        rebuilt_xml.contains("<x14:cfvo type=\"percentile\" gte=\"0\">"),
+        "{rebuilt_xml}"
+    );
+
+    let invalid_gte = directory.path().join("x14-icon-set-invalid-gte.xlsx");
+    std::fs::copy(&input, &invalid_gte).expect("invalid gte workbook copies");
+    rewrite_part(&invalid_gte, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<x14:cfvo type=\"percentile\" gte=\"0\">",
+            "<x14:cfvo type=\"percentile\" gte=\"2\">",
+        )
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&invalid_gte)
+        .args(["-o"])
+        .arg(directory.path().join("x14-icon-set-invalid-gte.tsx"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("gte must be 0 or 1"));
 
     let invalid_no_icon = directory.path().join("x14-icon-set-invalid-no-icon.xlsx");
     std::fs::copy(&input, &invalid_no_icon).expect("noIcon test workbook copies");

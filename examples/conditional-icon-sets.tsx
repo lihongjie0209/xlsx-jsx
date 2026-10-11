@@ -16,7 +16,7 @@ export default <Workbook>
       iconType="threeArrows"
       icons={[
         { type: "percent", value: 0 },
-        { type: "percentile", value: 50, iconType: "fourHistograms", iconIndex: 2 },
+        { type: "percentile", value: 50, greaterThan: true, iconType: "fourHistograms", iconIndex: 2 },
         { type: "formula", value: "MAX(C2:C5)", noIcon: true },
       ]}
     />

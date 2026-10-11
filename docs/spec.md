@@ -1060,9 +1060,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `percentile`, or `formula`, a matching numeric or formula `value`, and
   optional `greaterThan` (default false for classic icon sets). The first
   threshold is fixed by the writer at percent 0 and must be specified as such.
-  When an x14-only type or custom icon choice is used, `greaterThan: true` is
-  invalid because the pinned writer omits it from x14 `cfvo`; its IR validator
-  reports this before generation. Items may also set
+  `greaterThan` is preserved for classic and x14 `cfvo` thresholds. The pinned
+  writer omits the `gte` attribute from x14 thresholds, so the compiler
+  normalizes those generated XML elements before returning the XLSX. Items may also set
   `iconType` and `iconIndex` to choose an icon from a built-in set, or `noIcon`
   to suppress the icon; those choices are mutually exclusive. Classic icon-set
   rules are read directly; custom icon assignments and `noIcon` are preserved

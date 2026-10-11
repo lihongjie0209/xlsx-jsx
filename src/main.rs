@@ -37,7 +37,10 @@ use xlsx_jsx::{
     format_a1_cell_reference, format_a1_range, format_print_range, parse_a1_cell_reference,
     parse_a1_range, parse_print_range, runtime::evaluate_entry,
 };
-use zip::ZipArchive;
+use zip::{
+    ZipArchive,
+    write::{SimpleFileOptions, ZipWriter},
+};
 
 const FORMAT_PROPERTY_NAMES: &[&str] = &[
     "bold",
@@ -510,7 +513,355 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         path: path.to_path_buf(),
         source: std::io::Error::other(error.to_string()),
     })?;
+    let x14_icon_gte = collect_x14_icon_gte_targets(ir)?;
+    if !x14_icon_gte.is_empty() {
+        normalize_x14_icon_gte(path, &x14_icon_gte)?;
+    }
     Ok(())
+}
+
+fn collect_x14_icon_gte_targets(
+    ir: &IrEnvelope,
+) -> xlsx_jsx::Result<HashMap<String, HashMap<u32, Vec<usize>>>> {
+    let mut targets = HashMap::new();
+    let mut worksheet_part = 0_u32;
+    for value in &ir.workbook.children {
+        let sheet: Node = serde_json::from_value(value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if sheet.r#type != "Worksheet" {
+            continue;
+        }
+        worksheet_part += 1;
+        let mut priority = 0_u32;
+        for child_value in &sheet.children {
+            let child: Node = serde_json::from_value(child_value.clone())
+                .map_err(|error| Error::Compile(error.to_string()))?;
+            if child.r#type != "ConditionalFormat" {
+                continue;
+            }
+            if child.props.get("type").and_then(Value::as_str) != Some("iconSet") {
+                continue;
+            }
+            let Some(icons) = child.props.get("icons").and_then(Value::as_array) else {
+                continue;
+            };
+            let icon_type = child
+                .props
+                .get("iconType")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let classic_icon_types = [
+                "threeArrows",
+                "threeArrowsGray",
+                "threeFlags",
+                "threeTrafficLights1",
+                "threeTrafficLights2",
+                "threeSigns",
+                "threeSymbols",
+                "threeSymbols2",
+                "fourArrows",
+                "fourArrowsGray",
+                "fourRedToBlack",
+                "fourRating",
+                "fourTrafficLights",
+                "fiveArrows",
+                "fiveArrowsGray",
+                "fiveRating",
+            ];
+            let has_custom_icons = icons.iter().any(|icon| {
+                icon.as_object().is_some_and(|icon| {
+                    ["iconType", "iconIndex", "noIcon"]
+                        .iter()
+                        .any(|key| icon.contains_key(*key))
+                })
+            });
+            if !has_custom_icons && classic_icon_types.contains(&icon_type) {
+                continue;
+            }
+            priority += 1;
+            let greater_than_indices = icons
+                .iter()
+                .enumerate()
+                .filter_map(|(index, icon)| {
+                    icon.as_object()
+                        .and_then(|icon| icon.get("greaterThan"))
+                        .and_then(Value::as_bool)
+                        .filter(|greater_than| *greater_than)
+                        .map(|_| index)
+                })
+                .collect::<Vec<_>>();
+            if !greater_than_indices.is_empty() {
+                targets
+                    .entry(format!("xl/worksheets/sheet{worksheet_part}.xml"))
+                    .or_insert_with(HashMap::new)
+                    .insert(priority, greater_than_indices);
+            }
+        }
+    }
+    Ok(targets)
+}
+
+fn normalize_x14_icon_gte(
+    path: &std::path::Path,
+    targets_by_part: &HashMap<String, HashMap<u32, Vec<usize>>>,
+) -> xlsx_jsx::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(std::ffi::OsStr::to_str)
+        .unwrap_or("workbook.xlsx");
+    let (temporary_path, temporary_file) = (0_u32..100)
+        .find_map(|attempt| {
+            let candidate = parent.join(format!(
+                ".{file_name}.xlsx-jsx-{}-{attempt}.tmp",
+                std::process::id()
+            ));
+            std::fs::OpenOptions::new()
+                .write(true)
+                .read(true)
+                .create_new(true)
+                .open(&candidate)
+                .ok()
+                .map(|file| (candidate, file))
+        })
+        .ok_or_else(|| Error::Compile("cannot create a temporary XLSX normalization file beside the output; close conflicting processes or remove stale `.xlsx-jsx-*.tmp` files".into()))?;
+
+    let rewrite_result = rewrite_xlsx_with_x14_gte(path, temporary_file, targets_by_part);
+    if let Err(error) = rewrite_result {
+        let _ = std::fs::remove_file(&temporary_path);
+        return Err(error);
+    }
+
+    #[cfg(windows)]
+    std::fs::remove_file(path).map_err(|source| Error::Output {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    std::fs::rename(&temporary_path, path).map_err(|source| {
+        let _ = std::fs::remove_file(&temporary_path);
+        Error::Output {
+            path: path.to_path_buf(),
+            source,
+        }
+    })?;
+    Ok(())
+}
+
+fn rewrite_xlsx_with_x14_gte(
+    path: &std::path::Path,
+    temporary_file: std::fs::File,
+    targets_by_part: &HashMap<String, HashMap<u32, Vec<usize>>>,
+) -> xlsx_jsx::Result<()> {
+    let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let mut archive = ZipArchive::new(source_file)
+        .map_err(|error| Error::Compile(format!("cannot read generated XLSX package: {error}")))?;
+    let mut writer = ZipWriter::new(temporary_file);
+    let mut patched_parts = std::collections::HashSet::new();
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).map_err(|error| {
+            Error::Compile(format!("cannot read generated XLSX entry {index}: {error}"))
+        })?;
+        if entry.is_dir() {
+            continue;
+        }
+        let name = entry.name().to_owned();
+        let compression = entry.compression();
+        let last_modified = entry.last_modified().unwrap_or_default();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes).map_err(|error| {
+            Error::Compile(format!(
+                "cannot read generated XLSX entry `{name}`: {error}"
+            ))
+        })?;
+        if let Some(targets) = targets_by_part.get(&name) {
+            let xml = String::from_utf8(bytes).map_err(|error| {
+                Error::Compile(format!(
+                    "generated worksheet `{name}` is not UTF-8 XML: {error}"
+                ))
+            })?;
+            bytes = patch_x14_icon_gte(&xml, targets, &name)?.into_bytes();
+            patched_parts.insert(name.clone());
+        }
+        writer
+            .start_file(
+                &name,
+                SimpleFileOptions::default()
+                    .compression_method(compression)
+                    .last_modified_time(last_modified),
+            )
+            .map_err(|error| {
+                Error::Compile(format!(
+                    "cannot rewrite generated XLSX entry `{name}`: {error}"
+                ))
+            })?;
+        std::io::Write::write_all(&mut writer, &bytes).map_err(|error| {
+            Error::Compile(format!(
+                "cannot write generated XLSX entry `{name}`: {error}"
+            ))
+        })?;
+    }
+    let missing_parts = targets_by_part
+        .keys()
+        .filter(|part| !patched_parts.contains(*part))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_parts.is_empty() {
+        return Err(Error::Compile(format!(
+            "generated XLSX is missing worksheet part `{}` required to preserve x14 icon thresholds; repair the workbook sheet order",
+            missing_parts[0]
+        )));
+    }
+    let output_file = writer.finish().map_err(|error| {
+        Error::Compile(format!("cannot finalize normalized XLSX package: {error}"))
+    })?;
+    output_file.sync_all().map_err(|source| Error::Output {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    drop(output_file);
+    drop(archive);
+    Ok(())
+}
+
+// This event loop preserves XML token order while tracking rule-local threshold indices.
+#[allow(clippy::too_many_lines)]
+fn patch_x14_icon_gte(
+    xml: &str,
+    targets_by_priority: &HashMap<u32, Vec<usize>>,
+    part: &str,
+) -> xlsx_jsx::Result<String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut writer = XmlWriter::new(Vec::with_capacity(xml.len()));
+    let mut priority = None;
+    let mut threshold_index = 0_usize;
+    let mut patched = std::collections::HashSet::new();
+    loop {
+        let event = reader
+            .read_event()
+            .map_err(|error| Error::Compile(format!("generated worksheet `{part}` has invalid XML while normalizing icon thresholds: {error}")))?;
+        match event {
+            Event::Start(ref start) if start.name().as_ref() == b"x14:cfRule" => {
+                let raw_priority = start
+                    .attributes()
+                    .with_checks(false)
+                    .find_map(|attribute| {
+                        let attribute = attribute.ok()?;
+                        (attribute.key.local_name().as_ref() == b"priority")
+                            .then(|| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                            })
+                            .flatten()
+                    })
+                    .ok_or_else(|| Error::Compile(format!(
+                        "generated x14 icon rule in `{part}` has no priority; update the pinned writer adapter"
+                    )))?;
+                priority = Some(raw_priority.parse::<u32>().map_err(|error| {
+                    Error::Compile(format!("generated x14 icon rule in `{part}` has invalid priority `{raw_priority}`: {error}"))
+                })?);
+                threshold_index = 0;
+                writer.write_event(event).map_err(|error| {
+                    Error::Compile(format!("cannot normalize worksheet `{part}`: {error}"))
+                })?;
+                continue;
+            }
+            Event::Start(ref start) if start.name().as_ref() == b"x14:cfvo" => {
+                let Some(rule_priority) = priority else {
+                    return Err(Error::Compile(format!(
+                        "generated x14 icon threshold in `{part}` is outside an x14 cfRule"
+                    )));
+                };
+                let current_index = threshold_index;
+                threshold_index += 1;
+                if targets_by_priority
+                    .get(&rule_priority)
+                    .is_some_and(|indices| indices.contains(&current_index))
+                {
+                    let has_gte = start.attributes().with_checks(false).any(|attribute| {
+                        attribute
+                            .is_ok_and(|attribute| attribute.key.local_name().as_ref() == b"gte")
+                    });
+                    if !has_gte {
+                        let mut normalized = start.to_owned();
+                        normalized.push_attribute(("gte", "0"));
+                        writer
+                            .write_event(Event::Start(normalized))
+                            .map_err(|error| {
+                                Error::Compile(format!(
+                                    "cannot normalize worksheet `{part}`: {error}"
+                                ))
+                            })?;
+                        patched.insert((rule_priority, current_index));
+                        continue;
+                    }
+                    patched.insert((rule_priority, current_index));
+                }
+            }
+            Event::Empty(ref start) if start.name().as_ref() == b"x14:cfvo" => {
+                let Some(rule_priority) = priority else {
+                    return Err(Error::Compile(format!(
+                        "generated x14 icon threshold in `{part}` is outside an x14 cfRule"
+                    )));
+                };
+                let current_index = threshold_index;
+                threshold_index += 1;
+                if targets_by_priority
+                    .get(&rule_priority)
+                    .is_some_and(|indices| indices.contains(&current_index))
+                {
+                    let has_gte = start.attributes().with_checks(false).any(|attribute| {
+                        attribute
+                            .is_ok_and(|attribute| attribute.key.local_name().as_ref() == b"gte")
+                    });
+                    if has_gte {
+                        patched.insert((rule_priority, current_index));
+                    } else {
+                        let mut normalized = start.to_owned();
+                        normalized.push_attribute(("gte", "0"));
+                        writer
+                            .write_event(Event::Empty(normalized))
+                            .map_err(|error| {
+                                Error::Compile(format!(
+                                    "cannot normalize worksheet `{part}`: {error}"
+                                ))
+                            })?;
+                        patched.insert((rule_priority, current_index));
+                        continue;
+                    }
+                }
+            }
+            Event::End(ref end) if end.name().as_ref() == b"x14:cfRule" => {
+                priority = None;
+                threshold_index = 0;
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+        writer.write_event(event).map_err(|error| {
+            Error::Compile(format!("cannot normalize worksheet `{part}`: {error}"))
+        })?;
+    }
+    for (rule_priority, indices) in targets_by_priority {
+        for index in indices {
+            if !patched.contains(&(*rule_priority, *index)) {
+                return Err(Error::Compile(format!(
+                    "pinned writer did not emit x14 icon threshold {index} for conditional-format priority {rule_priority} in `{part}`; retain the threshold order and repair the icon-set definition"
+                )));
+            }
+        }
+    }
+    String::from_utf8(writer.into_inner()).map_err(|error| {
+        Error::Compile(format!(
+            "normalized worksheet `{part}` is not UTF-8 XML: {error}"
+        ))
+    })
 }
 
 fn compile_table(
@@ -22482,7 +22833,7 @@ fn merge_x14_data_bars(
                             }
                         }
                     }
-                    b"x14:cfvo" => {
+                    b"x14:cfvo" if current.is_some() => {
                         let attributes =
                             conditional_attributes(&event, &["type"], part, reader.decoder())?;
                         let kind = match attributes
@@ -22822,7 +23173,15 @@ fn merge_x14_icon_sets(
                 }
                 b"x14:cfvo" if in_supported_extension && current.is_some() => {
                     let attributes =
-                        conditional_attributes(&event, &["type"], part, reader.decoder())?;
+                        conditional_attributes(&event, &["type", "gte"], part, reader.decoder())?;
+                    if attributes
+                        .get("gte")
+                        .is_some_and(|value| !matches!(value.as_str(), "0" | "1"))
+                    {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` x14 iconSet threshold gte must be 0 or 1; repair the threshold boundary"
+                        )));
+                    }
                     let kind = match attributes
                         .get("type")
                         .map(String::as_str)
@@ -22841,6 +23200,7 @@ fn merge_x14_icon_sets(
                     if let Some(rule) = current.as_mut() {
                         rule.thresholds.push(IconThresholdProperties {
                             kind: kind.to_owned(),
+                            greater_than: attributes.get("gte").is_some_and(|value| value == "0"),
                             ..Default::default()
                         });
                     }

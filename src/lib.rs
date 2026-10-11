@@ -7490,11 +7490,6 @@ fn validate_icon_set_conditional_format(format: &Node) -> Result<()> {
             if index == 0 && value.as_bool() == Some(true) {
                 return Err(Error::Compile("ConditionalFormat.icons[0].greaterThan cannot be true because the writer forces the first threshold to percent 0 with the default inclusive boundary".into()));
             }
-            if x14_only && value.as_bool() == Some(true) {
-                return Err(Error::Compile(format!(
-                    "ConditionalFormat.icons[{index}].greaterThan cannot be true when iconType `{icon_type}` or custom icon choices require an x14-only rule; the pinned writer does not serialize greaterThan in x14 cfvo elements, so remove the flag or use a classic icon set without custom icons"
-                )));
-            }
         }
         let custom_icon_type = properties.get("iconType");
         let icon_index = properties.get("iconIndex");
@@ -10657,7 +10652,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_greater_than_when_icon_set_is_x14_only() {
+    fn accepts_greater_than_when_icon_set_is_x14_only() {
         let input = workbook(vec![worksheet(
             "Icons",
             vec![serde_json::json!({
@@ -10675,14 +10670,9 @@ mod tests {
                 "children":[]
             })],
         )]);
-        let error = input
+        input
             .validate()
-            .expect_err("x14 cfvo output omits greaterThan");
-        assert!(
-            error
-                .to_string()
-                .contains("does not serialize greaterThan in x14 cfvo")
-        );
+            .expect("compiler normalizes x14 cfvo greaterThan after writing");
     }
 
     #[test]

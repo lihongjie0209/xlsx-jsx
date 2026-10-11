@@ -1651,8 +1651,7 @@
                 "properties": {
                   "reverse": { "const": false },
                   "showIconsOnly": { "const": false },
-                  "stopIfTrue": { "const": false },
-                  "icons": { "items": { "properties": { "greaterThan": { "const": false } } } }
+                  "stopIfTrue": { "const": false }
                 }
               }
             },
@@ -1675,8 +1674,7 @@
                 "properties": {
                   "reverse": { "const": false },
                   "showIconsOnly": { "const": false },
-                  "stopIfTrue": { "const": false },
-                  "icons": { "items": { "properties": { "greaterThan": { "const": false } } } }
+                  "stopIfTrue": { "const": false }
                 }
               }
             },
