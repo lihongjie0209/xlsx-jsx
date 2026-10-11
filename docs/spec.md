@@ -853,14 +853,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   edge borders and their RGB colors, and `borderDiagonalType`; `format` applies a differential style to data
   cells and is preserved as table-column metadata. `headerFormat` styles the
   worksheet header cell and reverses canonically as ordinary `Cell` formatting.
-  `headerFormat?` additionally accepts `fontName`, `fontSize` (points, 1–409),
-  `fontFamily` (OOXML values 0–5), and `fontCharset` (byte, 0–255); it is
-  serialized as ordinary header-cell formatting and reverses canonically as
-  `Cell` formatting. The pinned writer does not serialize those four font
-  metadata fields in data-cell differential formats, so `format` rejects them
-  with a suggestion to move them to `headerFormat` or the header `Cell`.
-  Other table-specific format properties (including theme `fontScheme`) are
-  rejected until the differential-style reader can preserve them losslessly.
+  `headerFormat` accepts the same supported formatting properties as `Cell`,
+  including font name/size/family/charset, alignment, wrapping, rotation,
+  protection flags, number format, fills, and borders. It is serialized as
+  ordinary header-cell formatting and reverses canonically as `Cell` formatting.
+  The pinned writer does not serialize font name/size/family/charset in
+  data-cell differential formats, so `format` rejects them with a suggestion to
+  move them to `headerFormat` or the header `Cell`. Other table-specific format
+  properties (including theme `fontScheme`) are rejected until the
+  differential-style reader can preserve them losslessly.
   Differential styles cannot encode
   false overrides, so emphasis properties are additive and must be true.
   `fillColor` is the solid-fill shorthand and is mutually exclusive with pattern

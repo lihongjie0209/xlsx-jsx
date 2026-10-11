@@ -364,7 +364,11 @@
                 }
               ]
             },
-            "headerFormat": { "$ref": "#/$defs/tableColumnFormat" }
+            "headerFormat": {
+              "allOf": [{ "$ref": "#/$defs/formatProps" }],
+              "minProperties": 1,
+              "unevaluatedProperties": false
+            }
           },
           "allOf": [
             {

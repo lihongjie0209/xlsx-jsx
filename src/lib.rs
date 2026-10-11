@@ -6239,6 +6239,28 @@ fn validate_table_column_format(value: &Value, property: &str, index: usize) -> 
             "TableColumn.{property} cannot be empty; add a supported style property"
         )));
     }
+    if property == "headerFormat" {
+        if let Some(key) = format
+            .keys()
+            .find(|key| !FORMAT_PROPERTIES.contains(&key.as_str()))
+        {
+            return Err(Error::Compile(format!(
+                "TableColumn.headerFormat.{key} is not supported; use one of the supported Cell format properties"
+            )));
+        }
+        let cell = Node {
+            r#type: "Cell".into(),
+            props: format.clone(),
+            children: Vec::new(),
+        };
+        return validate_format_component(
+            &cell,
+            "TableColumn.headerFormat",
+            0,
+            index,
+            &format!("table column {}", index + 1),
+        );
+    }
     for (key, value) in format {
         validate_table_column_format_property(key, value, property, index)?;
     }
@@ -11385,6 +11407,58 @@ mod tests {
         }))]);
 
         assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn accepts_cell_style_properties_in_table_header_format() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[
+                    {"type":"TableColumn","props":{"headerFormat":{
+                        "bold":true,
+                        "horizontalAlign":"center",
+                        "verticalAlign":"center",
+                        "wrapText":true,
+                        "textRotation":30,
+                        "numberFormat":"0.00",
+                        "fillColor":"#D9EAF7",
+                        "borderBottom":"thin",
+                        "borderBottomColor":"#4472C4",
+                        "quotePrefix":true
+                    }},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Amount"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":[12]}]}
+            ]
+        })]);
+
+        input
+            .validate()
+            .expect("headerFormat is serialized using the ordinary Cell style writer");
+    }
+
+    #[test]
+    fn rejects_unknown_table_header_format_property_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[
+                    {"type":"TableColumn","props":{"headerFormat":{"unknownStyle":true}},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Amount"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":[12]}]}
+            ]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("headerFormat must reject properties outside the Cell style subset");
+
+        assert!(error.to_string().contains("unknownStyle"), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains("supported Cell format properties"),
+            "{error}"
+        );
     }
 
     #[test]

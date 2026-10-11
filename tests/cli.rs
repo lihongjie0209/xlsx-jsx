@@ -11431,10 +11431,44 @@ fn jsx_table_column_header_format_compiles_and_reverses_as_cell_format() {
         .args(["-o"])
         .arg(&reversed);
     command.assert().success();
-    let source = std::fs::read_to_string(reversed).expect("reversed JSX exists");
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
     assert!(
-        source.contains("<Cell bold={true} fontSize={11}>{\"Product\"}"),
+        source.contains("<Cell bold={true}")
+            && source.contains("fontSize={11}")
+            && source.contains("{\"Product\"}"),
         "{source}"
+    );
+    assert!(
+        source.contains("horizontalAlign={\"center\"}")
+            && source.contains("verticalAlign={\"center\"}")
+            && source.contains("wrapText={true}")
+            && source.contains("fillColor={\"#D9EAF7\"}")
+            && source.contains("borderBottom={\"thin\"}")
+            && source.contains("borderBottomColor={\"#4472C4\"}"),
+        "headerFormat should reverse as full ordinary Cell formatting: {source}"
+    );
+
+    let rebuilt = directory.path().join("table-header-format-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second_reverse = directory.path().join("table-header-format-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&second_reverse)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(second_reverse).expect("second reverse source exists"),
+        source
     );
 }
 
