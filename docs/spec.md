@@ -110,11 +110,19 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   2 through 72. `Series.markerFillColor?: "#RRGGBB"` and
   `markerFillTransparency?: integer` add a solid RGB marker fill and optional
   whole-percent alpha (0–100); transparency requires the fill color. Marker
-  format properties require an active marker and cannot accompany
-  `markerType="none"`. Omission preserves each chart type's writer default.
-  Marker symbol, size, and fill overrides are only valid for line, radar, and
-  scatter charts. Pattern/gradient fills and marker outlines remain unsupported
-  and are rejected during reverse rather than discarded.
+  outlines use `markerLineColor?: "#RRGGBB"`, `markerLineWidth?: number`,
+  `markerLineDash?: "solid" | "roundDot" | "squareDot" | "dash" |
+  "dashDot" | "longDash" | "longDashDot" | "longDashDotDot"`,
+  `markerLineTransparency?: integer`, and `markerLineHidden?: boolean`.
+  Marker line widths are points in exact 0.25-point increments from 0.25 to
+  1584; transparency is a whole percentage from 0 through 100 and requires a
+  color. A hidden marker line may specify width, but cannot specify a color,
+  non-solid dash, or transparency because the writer emits no-fill. Marker
+  line and fill formatting require an active marker and cannot accompany
+  `markerType="none"`. Omission preserves writer defaults. Marker symbol,
+  size, fill, and line overrides are only valid for line, radar, and scatter
+  charts. Pattern/gradient fills and line effects remain unsupported and are
+  rejected during reverse rather than discarded.
 - `Series.lineColor?: "#RRGGBB"`, `lineWidth?: number`, `lineDash?: "solid" |
   "roundDot" | "squareDot" | "dash" | "dashDot" | "longDash" |
   "longDashDot" | "longDashDotDot"`, `lineTransparency?: number`, and

@@ -16,6 +16,10 @@ export default <Workbook>
         markerSize={8}
         markerFillColor="#4472C4"
         markerFillTransparency={25}
+        markerLineColor="#336699"
+        markerLineWidth={1.5}
+        markerLineDash="dashDot"
+        markerLineTransparency={25}
       />
     </Chart>
   </Worksheet>

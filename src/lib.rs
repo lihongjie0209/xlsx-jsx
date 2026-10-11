@@ -4027,6 +4027,11 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "markerSize",
                 "markerFillColor",
                 "markerFillTransparency",
+                "markerLineColor",
+                "markerLineWidth",
+                "markerLineDash",
+                "markerLineTransparency",
+                "markerLineHidden",
                 "lineColor",
                 "lineWidth",
                 "lineDash",
@@ -4848,8 +4853,18 @@ fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize
         .and_then(Value::as_str)
         .unwrap_or_default();
     let marker_type = series.props.get("markerType");
-    let has_marker_format = series.props.contains_key("markerFillColor")
+    let has_marker_fill = series.props.contains_key("markerFillColor")
         || series.props.contains_key("markerFillTransparency");
+    let has_marker_line = [
+        "markerLineColor",
+        "markerLineWidth",
+        "markerLineDash",
+        "markerLineTransparency",
+        "markerLineHidden",
+    ]
+    .iter()
+    .any(|key| series.props.contains_key(*key));
+    let has_marker_format = has_marker_fill || has_marker_line;
     if let Some(value) = marker_type {
         let Some(marker_type) = value.as_str() else {
             return Err(Error::Compile(format!(
@@ -4895,14 +4910,15 @@ fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize
             "Series.markerFillTransparency must be an integer from 0 through 100; use whole-percent transparency".into(),
         ));
     }
-    if has_marker_format && !series.props.contains_key("markerFillColor") {
+    if has_marker_fill && !series.props.contains_key("markerFillColor") {
         return Err(Error::Compile(
             "Series.markerFillTransparency requires markerFillColor; add an opaque #RRGGBB color or remove transparency".into(),
         ));
     }
+    validate_chart_series_marker_line(series)?;
     if has_marker_format && marker_type.and_then(Value::as_str) == Some("none") {
         return Err(Error::Compile(
-            "Series.markerFillColor cannot be used with markerType=\"none\"; choose a visible marker type or remove marker fill properties".into(),
+            "Marker fill and line properties cannot be used with markerType=\"none\"; choose a visible marker type or remove marker formatting".into(),
         ));
     }
     if (marker_type.is_some() || series.props.contains_key("markerSize") || has_marker_format)
@@ -4922,9 +4938,78 @@ fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize
         )
     {
         return Err(Error::Compile(format!(
-            "Chart Series {} markerType/markerSize are supported only for line, radar, and scatter charts; remove the marker properties or change Chart.type",
+            "Chart Series {} marker shape, size, fill, and line formatting are supported only for line, radar, and scatter charts; remove marker properties or change Chart.type",
             series_index + 1
         )));
+    }
+    Ok(())
+}
+
+fn validate_chart_series_marker_line(series: &Node) -> Result<()> {
+    if let Some(value) = series.props.get("markerLineColor") {
+        validate_rgb_color(value, "Series.markerLineColor", 0, 0)?;
+    }
+    if let Some(value) = series.props.get("markerLineWidth") {
+        let Some(width) = value.as_f64() else {
+            return Err(Error::Compile("Series.markerLineWidth must be a number from 0.25 through 1584 in exact 0.25-point increments".into()));
+        };
+        if !width.is_finite()
+            || !(0.25..=1584.0).contains(&width)
+            || (width * 4.0 - (width * 4.0).round()).abs() > f64::EPSILON
+        {
+            return Err(Error::Compile("Series.markerLineWidth must be a number from 0.25 through 1584 in exact 0.25-point increments".into()));
+        }
+    }
+    if let Some(value) = series.props.get("markerLineDash")
+        && !value.as_str().is_some_and(|dash| {
+            [
+                "solid",
+                "roundDot",
+                "squareDot",
+                "dash",
+                "dashDot",
+                "longDash",
+                "longDashDot",
+                "longDashDotDot",
+            ]
+            .contains(&dash)
+        })
+    {
+        return Err(Error::Compile("Series.markerLineDash is unsupported; use solid, roundDot, squareDot, dash, dashDot, longDash, longDashDot, or longDashDotDot".into()));
+    }
+    if let Some(value) = series.props.get("markerLineTransparency")
+        && value.as_u64().is_none_or(|transparency| transparency > 100)
+    {
+        return Err(Error::Compile(
+            "Series.markerLineTransparency must be an integer from 0 through 100; use whole-percent transparency".into(),
+        ));
+    }
+    if series.props.contains_key("markerLineTransparency")
+        && !series.props.contains_key("markerLineColor")
+    {
+        return Err(Error::Compile("Series.markerLineTransparency requires markerLineColor because transparency is serialized with the RGB line color; add markerLineColor or remove markerLineTransparency".into()));
+    }
+    if let Some(value) = series.props.get("markerLineHidden")
+        && !value.is_boolean()
+    {
+        return Err(Error::Compile(
+            "Series.markerLineHidden must be a boolean; use true or false".into(),
+        ));
+    }
+    if series
+        .props
+        .get("markerLineHidden")
+        .and_then(Value::as_bool)
+        == Some(true)
+        && (series.props.contains_key("markerLineColor")
+            || series
+                .props
+                .get("markerLineDash")
+                .and_then(Value::as_str)
+                .is_some_and(|dash| dash != "solid")
+            || series.props.contains_key("markerLineTransparency"))
+    {
+        return Err(Error::Compile("A hidden marker line cannot combine markerLineColor, non-solid markerLineDash, or markerLineTransparency because the writer emits no-fill; remove those properties".into()));
     }
     Ok(())
 }
@@ -9535,6 +9620,68 @@ mod tests {
                     "markerType":"circle",
                     "markerFillColor":"#4472C4",
                     "markerFillTransparency":25
+                },"children":[]}]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_chart_series_marker_outline_properties() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"line","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3",
+                    "markerType":"circle",
+                    "markerLineColor":"#336699",
+                    "markerLineWidth":1.5,
+                    "markerLineDash":"dashDot",
+                    "markerLineTransparency":25
+                },"children":[]}]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn rejects_hidden_marker_line_color_with_repair_guidance() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"line","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3",
+                    "markerType":"circle",
+                    "markerLineHidden":true,
+                    "markerLineColor":"#336699"
+                },"children":[]}]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("hidden marker line drops its color");
+        assert!(error.to_string().contains("markerLineColor"), "{error}");
+        assert!(error.to_string().contains("remove"), "{error}");
+    }
+
+    #[test]
+    fn accepts_hidden_marker_line_width_without_color() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"line","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3",
+                    "markerType":"circle",
+                    "markerLineWidth":1.5,
+                    "markerLineHidden":true
                 },"children":[]}]
             })],
         )]);

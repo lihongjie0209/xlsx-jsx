@@ -1813,6 +1813,11 @@ fn configure_chart_series_marker(chart_series: &mut rust_xlsxwriter::ChartSeries
         "markerSize",
         "markerFillColor",
         "markerFillTransparency",
+        "markerLineColor",
+        "markerLineWidth",
+        "markerLineDash",
+        "markerLineTransparency",
+        "markerLineHidden",
     ]
     .iter()
     .any(|property| series.props.contains_key(*property))
@@ -1845,6 +1850,15 @@ fn configure_chart_series_marker(chart_series: &mut rust_xlsxwriter::ChartSeries
     if let Some(size) = series.props.get("markerSize").and_then(Value::as_u64) {
         marker.set_size(u8::try_from(size).expect("validated Series.markerSize"));
     }
+    if let Some(mut format) = chart_marker_format(series) {
+        marker.set_format(&mut format);
+    }
+    chart_series.set_marker(&marker);
+}
+
+fn chart_marker_format(series: &Node) -> Option<ChartFormat> {
+    let mut format = ChartFormat::new();
+    let mut has_format = false;
     if let Some(color) = series.props.get("markerFillColor").and_then(Value::as_str) {
         let mut fill = ChartSolidFill::new();
         fill.set_color(color);
@@ -1857,11 +1871,49 @@ fn configure_chart_series_marker(chart_series: &mut rust_xlsxwriter::ChartSeries
                 u8::try_from(transparency).expect("validated Series.markerFillTransparency"),
             );
         }
-        let mut format = ChartFormat::new();
         format.set_solid_fill(&fill);
-        marker.set_format(&mut format);
+        has_format = true;
     }
-    chart_series.set_marker(&marker);
+    let has_line = [
+        "markerLineColor",
+        "markerLineWidth",
+        "markerLineDash",
+        "markerLineTransparency",
+        "markerLineHidden",
+    ]
+    .iter()
+    .any(|property| series.props.contains_key(*property));
+    if has_line {
+        let mut line = ChartLine::new();
+        if let Some(color) = series.props.get("markerLineColor").and_then(Value::as_str) {
+            line.set_color(color);
+        }
+        if let Some(width) = series.props.get("markerLineWidth").and_then(Value::as_f64) {
+            line.set_width(width);
+        }
+        if let Some(dash) = series.props.get("markerLineDash").and_then(Value::as_str) {
+            line.set_dash_type(chart_line_dash_type(dash));
+        }
+        if let Some(transparency) = series
+            .props
+            .get("markerLineTransparency")
+            .and_then(Value::as_u64)
+        {
+            line.set_transparency(
+                u8::try_from(transparency).expect("validated markerLineTransparency"),
+            );
+        }
+        if let Some(hidden) = series
+            .props
+            .get("markerLineHidden")
+            .and_then(Value::as_bool)
+        {
+            line.set_hidden(hidden);
+        }
+        format.set_line(&line);
+        has_format = true;
+    }
+    if has_format { Some(format) } else { None }
 }
 
 fn configure_chart_series_error_bars(
@@ -5918,6 +5970,21 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         }
         if let Some(transparency) = series.marker_fill_transparency {
             let _ = write!(output, " markerFillTransparency={{{transparency}}}");
+        }
+        if let Some(color) = &series.marker_line_color {
+            let _ = write!(output, " markerLineColor={color:?}");
+        }
+        if let Some(width) = series.marker_line_width {
+            let _ = write!(output, " markerLineWidth={{{width}}}");
+        }
+        if let Some(dash) = series.marker_line_dash {
+            let _ = write!(output, " markerLineDash=\"{dash}\"");
+        }
+        if let Some(transparency) = series.marker_line_transparency {
+            let _ = write!(output, " markerLineTransparency={{{transparency}}}");
+        }
+        if series.marker_line_hidden == Some(true) {
+            output.push_str(" markerLineHidden={true}");
         }
         if let Some(color) = &series.line_color {
             let _ = write!(output, " lineColor={color:?}");
@@ -10586,6 +10653,25 @@ fn parse_chart_xml(
                         "chart part `{part}` has custom display-unit label text or formatting; retain only the writer's default label layout"
                     )));
                 }
+                if stack.iter().any(|ancestor| ancestor == "marker")
+                    && !stack.iter().any(|ancestor| ancestor == "dPt")
+                    && !matches!(
+                        tag.as_str(),
+                        "symbol"
+                            | "size"
+                            | "spPr"
+                            | "solidFill"
+                            | "srgbClr"
+                            | "alpha"
+                            | "ln"
+                            | "noFill"
+                            | "prstDash"
+                    )
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported marker-outline child `<{tag}>`; remove line effects/end caps and keep only RGB color, width, preset dash, transparency, or noFill"
+                    )));
+                }
                 if stack.iter().any(|ancestor| ancestor == "dropLines") {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has custom drop-line formatting or content; remove spPr and keep only an empty dropLines element"
@@ -10810,11 +10896,19 @@ fn parse_chart_xml(
                     && !stack.iter().any(|ancestor| ancestor == "dPt")
                     && !matches!(
                         tag.as_str(),
-                        "symbol" | "size" | "spPr" | "solidFill" | "srgbClr" | "alpha"
+                        "symbol"
+                            | "size"
+                            | "spPr"
+                            | "solidFill"
+                            | "srgbClr"
+                            | "alpha"
+                            | "ln"
+                            | "noFill"
+                            | "prstDash"
                     )
                 {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported `<{tag}>` marker formatting; only one RGB solid fill with whole-percent transparency is represented, so remove marker outlines, gradients, patterns, or extensions"
+                        "chart part `{part}` has unsupported `<{tag}>` marker formatting; only RGB solid fill and ChartLine outline properties are represented, so remove gradients, patterns, line effects, or extensions"
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "dPt")
@@ -13068,6 +13162,12 @@ fn parse_chart_xml(
                         marker_fill_color: None,
                         marker_fill_transparency: None,
                         marker_fill_seen: false,
+                        marker_line_color: None,
+                        marker_line_width: None,
+                        marker_line_dash: None,
+                        marker_line_transparency: None,
+                        marker_line_hidden: None,
+                        marker_line_seen: false,
                         smooth: None,
                         invert_if_negative: None,
                         line_hidden: None,
@@ -13797,6 +13897,7 @@ fn parse_chart_xml(
                     "srgbClr"
                         if stack.last().is_some_and(|parent| parent == "solidFill")
                             && stack.iter().any(|ancestor| ancestor == "marker")
+                            && !stack.iter().any(|ancestor| ancestor == "ln")
                             && !stack.iter().any(|ancestor| ancestor == "dPt") =>
                     {
                         let color = chart_element_val_attribute(
@@ -14339,6 +14440,8 @@ fn parse_chart_xml(
                         let in_trendline_line = stack.iter().any(|item| item == "trendline")
                             && stack.iter().any(|item| item == "spPr")
                             && !stack.iter().any(|item| item == "trendlineLbl");
+                        let in_marker_line = stack.iter().any(|item| item == "marker")
+                            && !stack.iter().any(|item| item == "dPt");
                         let in_error_bars = stack.iter().any(|ancestor| ancestor == "errBars");
                         let in_gridlines = stack.iter().any(|ancestor| {
                             matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
@@ -14347,6 +14450,7 @@ fn parse_chart_xml(
                             || (!in_gridlines
                                 && !in_error_bars
                                 && !in_trendline_line
+                                && !in_marker_line
                                 && !in_title_shape
                                 && !in_chart_area_shape
                                 && !stack.iter().any(|ancestor| ancestor == "ser"))
@@ -14359,7 +14463,7 @@ fn parse_chart_xml(
                         for attribute in event.attributes().with_checks(false) {
                             let attribute =
                                 attribute.map_err(|error| Error::Reverse(error.to_string()))?;
-                            if (in_title_shape || in_chart_area_shape)
+                            if (in_title_shape || in_chart_area_shape || in_marker_line)
                                 && attribute.key.local_name().as_ref() != b"w"
                             {
                                 return Err(Error::Reverse(format!(
@@ -14419,6 +14523,22 @@ fn parse_chart_xml(
                                     style.width = Some(width);
                                 }
                             }
+                        } else if in_marker_line {
+                            let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has marker outline outside a series; put marker formatting inside a Series"
+                            )))?;
+                            if std::mem::replace(&mut current.marker_line_seen, true) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats marker outline; keep one a:ln line"
+                                )));
+                            }
+                            current.marker_line_hidden = Some(false);
+                            if let Some(width) = line_width {
+                                let width_emu = width.parse::<u32>().ok().filter(|width| *width > 0 && *width <= 20_116_800 && *width % 3175 == 0).ok_or_else(|| Error::Reverse(format!(
+                                    "chart part `{part}` has a marker outline width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments"
+                                )))?;
+                                current.marker_line_width = Some(f64::from(width_emu) / 12700.0);
+                            }
                         } else if in_gridlines {
                             let index = chart_gridline_index(
                                 current_axis_position.expect("gridline axis position validated"),
@@ -14473,6 +14593,34 @@ fn parse_chart_xml(
                                 }
                                 current.line_width = Some(f64::from(width_emu) / 12700.0);
                             }
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|item| item == "marker")
+                            && stack.iter().any(|item| item == "ln")
+                            && !stack.iter().any(|item| item == "dPt") =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "marker outline",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB marker outline; use one six-digit #RRGGBB color"
+                            )));
+                        }
+                        let current = series.last_mut().expect("marker line is inside a series");
+                        if current
+                            .marker_line_color
+                            .replace(format!("#{color}").to_ascii_uppercase())
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats marker outline RGB color; keep one color"
+                            )));
                         }
                     }
                     "srgbClr"
@@ -14733,6 +14881,7 @@ fn parse_chart_xml(
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|item| item == "marker")
+                            && !stack.iter().any(|item| item == "ln")
                             && !stack.iter().any(|item| item == "dPt") =>
                     {
                         let alpha = chart_element_val_attribute(&event, part, reader.decoder(), "marker fill alpha")?
@@ -14752,6 +14901,29 @@ fn parse_chart_xml(
                         {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats marker fill transparency; keep one alpha value"
+                            )));
+                        }
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|item| item == "marker")
+                            && stack.iter().any(|item| item == "ln")
+                            && !stack.iter().any(|item| item == "dPt") =>
+                    {
+                        let alpha = chart_element_val_attribute(&event, part, reader.decoder(), "marker outline alpha")?
+                            .parse::<u32>().ok()
+                            .filter(|alpha| *alpha <= 100_000 && alpha % 1000 == 0)
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has marker outline alpha not exactly representable by whole-percent transparency; use increments of 1%"
+                            )))?;
+                        let current = series.last_mut().expect("marker line is inside a series");
+                        if current
+                            .marker_line_transparency
+                            .replace(100 - alpha / 1000)
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats marker outline transparency; keep one alpha value"
                             )));
                         }
                     }
@@ -14918,7 +15090,17 @@ fn parse_chart_xml(
                                 )));
                             }
                         };
-                        if stack.iter().any(|item| item == "title")
+                        if stack.iter().any(|item| item == "marker")
+                            && !stack.iter().any(|item| item == "dPt")
+                        {
+                            let current =
+                                series.last_mut().expect("marker line is inside a series");
+                            if current.marker_line_dash.replace(dash).is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats marker outline dash; keep one preset dash"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
                             && matches!(
                                 chart_title_target,
@@ -14973,6 +15155,18 @@ fn parse_chart_xml(
                             }
                         } else if let Some(current) = series.last_mut() {
                             current.line_dash = Some(dash);
+                        }
+                    }
+                    "noFill"
+                        if stack.last().is_some_and(|parent| parent == "ln")
+                            && stack.iter().any(|item| item == "marker")
+                            && !stack.iter().any(|item| item == "dPt") =>
+                    {
+                        let current = series.last_mut().expect("marker line is inside a series");
+                        if current.marker_line_hidden.replace(true) == Some(true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats hidden marker line fill; keep one noFill"
+                            )));
                         }
                     }
                     "noFill" => {
@@ -15703,6 +15897,27 @@ fn parse_chart_xml(
                 "chart part `{part}` applies a fill to a marker whose symbol is none; choose a visible marker symbol or remove the fill"
             )));
         }
+        if item.marker_line_transparency.is_some() && item.marker_line_color.is_none() {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has marker outline transparency without an RGB line color; add markerLineColor or remove the alpha"
+            )));
+        }
+        if item.marker_line_hidden == Some(true)
+            && (item.marker_line_color.is_some()
+                || item.marker_line_transparency.is_some()
+                || item.marker_line_dash.is_some_and(|dash| dash != "solid"))
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` combines a hidden marker outline with visible line properties; remove color, transparency, and non-solid dash or remove noFill"
+            )));
+        }
+        if item.marker_type == Some("none")
+            && (item.marker_line_seen || item.marker_line_color.is_some())
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` formats an outline for a marker whose symbol is none; choose a visible marker symbol or remove marker line formatting"
+            )));
+        }
     }
     for style in &mut gridline_styles {
         if style
@@ -15733,6 +15948,11 @@ fn parse_chart_xml(
             item.marker_size.is_some()
                 || item.marker_type.is_some()
                 || item.marker_fill_color.is_some()
+                || item.marker_line_color.is_some()
+                || item.marker_line_width.is_some()
+                || item.marker_line_dash.is_some()
+                || item.marker_line_transparency.is_some()
+                || item.marker_line_hidden.is_some()
                 || (chart_type != "stock" && item.marker.is_some())
         })
     {
@@ -20781,6 +21001,12 @@ struct WorksheetChartSeries {
     marker_fill_color: Option<String>,
     marker_fill_transparency: Option<u32>,
     marker_fill_seen: bool,
+    marker_line_color: Option<String>,
+    marker_line_width: Option<f64>,
+    marker_line_dash: Option<&'static str>,
+    marker_line_transparency: Option<u32>,
+    marker_line_hidden: Option<bool>,
+    marker_line_seen: bool,
     smooth: Option<bool>,
     invert_if_negative: Option<bool>,
     line_hidden: Option<bool>,

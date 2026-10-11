@@ -45,6 +45,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("lineColor"))
         .stdout(predicate::str::contains("markerFillColor"))
         .stdout(predicate::str::contains("markerFillTransparency"))
+        .stdout(predicate::str::contains("markerLineColor"))
+        .stdout(predicate::str::contains("markerLineWidth"))
         .stdout(predicate::str::contains("wrapText"))
         .stdout(predicate::str::contains("shrinkToFit"))
         .stdout(predicate::str::contains("rowSpan"))
@@ -3983,6 +3985,120 @@ fn reverses_and_rebuilds_external_chart_marker_solid_fill_without_a_manifest() {
 }
 
 #[test]
+fn reverses_and_rebuilds_external_chart_marker_outline_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-marker-line.xlsx");
+    let output_path = directory.path().join("external-marker-line.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-marker-line.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut line = ChartLine::new();
+    line.set_color("#336699")
+        .set_width(1.5)
+        .set_dash_type(ChartLineDashType::DashDot)
+        .set_transparency(25);
+    let mut marker = ChartMarker::new();
+    marker
+        .set_type(ChartMarkerType::Circle)
+        .set_size(8)
+        .set_format(&mut line);
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_marker(&marker);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("markerLineColor=\"#336699\""));
+    assert!(source.contains("markerLineWidth={1.5}"));
+    assert!(source.contains("markerLineDash=\"dashDot\""));
+    assert!(source.contains("markerLineTransparency={25}"));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<a:srgbClr val=\"336699\">"));
+    assert!(chart_xml.contains("<a:alpha val=\"75000\"/>"));
+    assert!(chart_xml.contains("<a:prstDash val=\"dashDot\"/>"));
+
+    let roundtrip_path = directory.path().join("roundtrip-marker-line.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(&roundtrip_path)
+        .assert()
+        .success();
+    let roundtrip = std::fs::read_to_string(roundtrip_path).expect("roundtrip JSX exists");
+    assert_eq!(roundtrip, source);
+}
+
+#[test]
+fn reverses_hidden_external_chart_marker_outline_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-marker-line-hidden.xlsx");
+    let output_path = directory.path().join("external-marker-line-hidden.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut line = ChartLine::new();
+    line.set_width(1.5).set_hidden(true);
+    let mut marker = ChartMarker::new();
+    marker
+        .set_type(ChartMarkerType::Circle)
+        .set_format(&mut line);
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_marker(&marker);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("markerLineWidth={1.5}"));
+    assert!(source.contains("markerLineHidden={true}"));
+
+    let rebuilt_path = directory.path().join("rebuilt-marker-line-hidden.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<a:ln w=\"19050\"><a:noFill/></a:ln>"));
+}
+
+#[test]
 fn reverses_and_rebuilds_external_chart_legend_overlay_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("external-chart-legend-overlay.xlsx");
@@ -5244,6 +5360,9 @@ fn reverse_rejects_custom_chart_series_marker_formatting_with_guidance() {
         .set_marker(&marker);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
+    rewrite_part(&workbook_path, "xl/charts/chart1.xml", |xml| {
+        xml.replace("</a:ln>", "<a:headEnd type=\"triangle\"/></a:ln>")
+    });
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["reverse"])
@@ -5253,9 +5372,9 @@ fn reverse_rejects_custom_chart_series_marker_formatting_with_guidance() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "unsupported `<ln>` marker formatting",
+            "unsupported marker-outline child `<headEnd>`",
         ))
-        .stderr(predicate::str::contains("remove marker outlines"));
+        .stderr(predicate::str::contains("remove line effects/end caps"));
 }
 
 #[test]
