@@ -182,6 +182,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisCrossing"))
         .stdout(predicate::str::contains("chartAreaFillColor"))
         .stdout(predicate::str::contains("plotAreaFillColor"))
+        .stdout(predicate::str::contains("plotAreaLayout"))
+        .stdout(predicate::str::contains("legendLayout"))
         .stdout(predicate::str::contains("showValue"))
         .stdout(predicate::str::contains("showCategoryName"))
         .stdout(predicate::str::contains("showSeriesName"))
@@ -776,6 +778,11 @@ fn reverses_external_plot_area_manual_layout_and_rebuilds_it() {
             .set_offset(0.2, 0.3)
             .set_dimensions(0.7, 0.5),
     );
+    chart.legend().set_layout(
+        &rust_xlsxwriter::ChartLayout::new()
+            .set_offset(0.1, 0.2)
+            .set_dimensions(0.3, 0.4),
+    );
     worksheet.insert_chart(0, 3, &chart).unwrap();
     workbook.save(&input).unwrap();
 
@@ -791,6 +798,10 @@ fn reverses_external_plot_area_manual_layout_and_rebuilds_it() {
     let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
     assert!(
         source.contains("plotAreaLayout={{x: 0.2, y: 0.3, width: 0.7, height: 0.5}}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("legendLayout={{x: 0.1, y: 0.2, width: 0.3, height: 0.4}}"),
         "{source}"
     );
 
@@ -832,6 +843,87 @@ fn validates_plot_area_layout_requires_complete_fractional_dimensions() {
         .failure()
         .stderr(predicate::str::contains(
             "plotAreaLayout requires exactly x, y, width, and height",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn reverses_external_legend_manual_layout_and_rebuilds_it() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("legend-layout.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_string(0, 0, "Quarter").unwrap();
+    worksheet.write_string(1, 0, "Q1").unwrap();
+    worksheet.write_string(2, 0, "Q2").unwrap();
+    worksheet.write_number(1, 1, 10).unwrap();
+    worksheet.write_number(2, 1, 20).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3");
+    chart.legend().set_layout(
+        &rust_xlsxwriter::ChartLayout::new()
+            .set_offset(0.2, 0.3)
+            .set_dimensions(0.4, 0.5),
+    );
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    let reversed = directory.path().join("legend-layout.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(
+        source.contains("legendLayout={{x: 0.2, y: 0.3, width: 0.4, height: 0.5}}"),
+        "{source}"
+    );
+
+    let rebuilt = directory.path().join("legend-layout-roundtrip.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second = directory.path().join("legend-layout-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(rebuilt)
+        .args(["-o"])
+        .arg(&second)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read_to_string(second).unwrap(), source);
+}
+
+#[test]
+fn rejects_legend_layout_when_legend_is_hidden() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("hidden-legend-layout.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" showLegend={false} legendLayout={{x: 0.2, y: 0.3, width: 0.4, height: 0.5}}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.legendLayout requires a visible legend",
         ))
         .stderr(predicate::str::contains("suggestion:"));
 }

@@ -180,6 +180,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   or percentages (for example `x: 0.2`). The writer emits an inner layout with
   edge positioning. Reverse preserves only that exact OOXML layout form and
   rejects factor modes, outer layouts, missing values, and extra layout data.
+- `Chart.legendLayout?: { x, y, width, height }` manually positions and sizes a
+  visible legend with complete finite relative fractions in `(0, 1]`. Unlike
+  `plotAreaLayout`, the writer's legend layout uses the default outer target;
+  x/y use edge mode and width/height use the default fractional mode. Reverse
+  accepts that target when omitted or explicitly `outer`, and rejects inner
+  targets, alternate modes, incomplete values, and extra layout data. It can be
+  combined with `legendPosition` and `legendOverlay`; hiding the legend is not
+  allowed.
 - `Chart.autoTitleDeleted?: boolean` controls Excel's automatic chart title when
   a chart has a single named series. Omission/false allows Excel to show its
   default automatic title; true suppresses it via `ChartTitle::set_hidden()`.
@@ -395,7 +403,7 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   when true. Omission/false keeps the legend outside the plot area. The property
   requires the legend to remain visible (`showLegend` must not be false). Reverse
   preserves an enabled `<c:overlay val="1"/>` and folds an explicit false to the
-  default; custom legend positioning/layout is outside this property.
+  default; custom legend formatting remains outside this property.
 - `Chart.legendDeletedEntries?: number[]` hides selected legend entries by
   zero-based chart entry index (for pie/doughnut, the point index). Indices must
   be unique integers from 0 through 1,048,575 and require a visible legend.

@@ -1949,6 +1949,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "legendOverlay",
             "legendDeletedEntries",
             "legendPosition",
+            "legendLayout",
             "holeSize",
             "firstSliceAngle",
             "style",
@@ -2053,13 +2054,20 @@ fn validate_chart_visual_properties(chart: &Node, chart_type: &str) -> Result<()
             )));
         }
     }
-    if let Some(layout) = chart.props.get("plotAreaLayout") {
+    for property in ["plotAreaLayout", "legendLayout"] {
+        let Some(layout) = chart.props.get(property) else {
+            continue;
+        };
         let Some(layout) = layout.as_object() else {
-            return Err(Error::Compile("Chart.plotAreaLayout must be an object with x, y, width, and height fractions; provide all four values".into()));
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be an object with x, y, width, and height fractions; provide all four values"
+            )));
         };
         let expected = ["x", "y", "width", "height"];
         if layout.len() != expected.len() || expected.iter().any(|key| !layout.contains_key(*key)) {
-            return Err(Error::Compile("Chart.plotAreaLayout requires exactly x, y, width, and height; provide all four fractions and remove extra keys".into()));
+            return Err(Error::Compile(format!(
+                "Chart.{property} requires exactly x, y, width, and height; provide all four fractions and remove extra keys"
+            )));
         }
         for key in expected {
             if !layout
@@ -2068,7 +2076,7 @@ fn validate_chart_visual_properties(chart: &Node, chart_type: &str) -> Result<()
                 .is_some_and(|value| value.is_finite() && value > 0.0 && value <= 1.0)
             {
                 return Err(Error::Compile(format!(
-                    "Chart.plotAreaLayout.{key} must be a finite fraction in (0, 1]; use a positive relative chart dimension, not pixels or a percentage"
+                    "Chart.{property}.{key} must be a finite fraction in (0, 1]; use a positive relative chart dimension, not pixels or a percentage"
                 )));
             }
         }
@@ -2949,6 +2957,16 @@ fn validate_chart_legend(chart: &Node) -> Result<()> {
     {
         return Err(Error::Compile(
             "Chart cannot set legendPosition when showLegend={false}; remove legendPosition or show the legend".into(),
+        ));
+    }
+    if chart
+        .props
+        .get("showLegend")
+        .is_some_and(|value| value.as_bool() == Some(false))
+        && chart.props.contains_key("legendLayout")
+    {
+        return Err(Error::Compile(
+            "Chart.legendLayout requires a visible legend; remove legendLayout or set showLegend={true}".into(),
         ));
     }
     if chart

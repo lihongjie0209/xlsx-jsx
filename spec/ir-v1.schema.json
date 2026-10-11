@@ -563,6 +563,17 @@
             "legendOverlay": { "type": "boolean" },
             "legendDeletedEntries": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0, "maximum": 1048575 } },
             "legendPosition": { "enum": ["right", "left", "top", "bottom", "topRight"] },
+            "legendLayout": {
+              "type": "object",
+              "required": ["x", "y", "width", "height"],
+              "properties": {
+                "x": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                "y": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+              },
+              "additionalProperties": false
+            },
             "holeSize": { "type": "integer", "minimum": 10, "maximum": 90 },
             "firstSliceAngle": { "type": "integer", "minimum": 0, "maximum": 360 },
             "style": { "type": "integer", "minimum": 1, "maximum": 48 },
@@ -714,6 +725,7 @@
                 "required": ["showLegend"],
                 "anyOf": [
                   { "required": ["legendPosition"] },
+                  { "required": ["legendLayout"] },
                   {
                     "properties": {
                       "legendDeletedEntries": { "minItems": 1 }
