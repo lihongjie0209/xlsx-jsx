@@ -324,8 +324,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   axis crosses each `ChartAxis` handle. They map to OOXML `crosses` values
   `autoZero`, `min`, and `max`; omission and `automatic` use the default and
   are folded on reverse. The names follow rust_xlsxwriter's x/y axis handles,
-  including its bar-chart axis swap. Numeric `crossesAt` values and crossing
-  metadata on secondary, date, or ambiguous axes are rejected with repair guidance.
+  including its bar-chart axis swap. Scatter charts support both properties:
+  reverse maps the crossing on the left/right value axis to `xAxisCrossing` and
+  the crossing on the bottom/top value axis to `yAxisCrossing`. Numeric
+  `crossesAt` values and crossing metadata on secondary, date, or ambiguous
+  axes are rejected with repair guidance.
 - `Series.showValue?: boolean`, `Series.showCategoryName?: boolean`,
   `Series.showSeriesName?: boolean`, and
   `Series.showPercentage?: boolean` configure per-series data-label contents

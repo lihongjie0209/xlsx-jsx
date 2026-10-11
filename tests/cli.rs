@@ -3158,12 +3158,12 @@ fn reverse_rejects_custom_chart_error_bar_ranges_with_repair_guidance() {
 }
 
 #[test]
-fn rejects_axis_crossings_on_scatter_charts_with_guidance() {
+fn validates_scatter_axis_crossings() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("scatter-axis-crossing.tsx");
     std::fs::write(
         &input,
-        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisCrossing="min"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisCrossing="min" yAxisCrossing="max"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
     )
     .expect("source writes");
     Command::cargo_bin("xlsx-jsx")
@@ -3171,13 +3171,50 @@ fn rejects_axis_crossings_on_scatter_charts_with_guidance() {
         .args(["validate"])
         .arg(input)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "xAxisCrossing is supported only for area, column, bar, and line charts",
-        ))
-        .stderr(predicate::str::contains(
-            "omit it or choose one of those chart types",
-        ));
+        .success();
+}
+
+#[test]
+fn reverses_and_rebuilds_external_scatter_axis_crossings_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-crossings.xlsx");
+    let output_path = directory.path().join("external-scatter-crossings.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.x_axis().set_crossing(ChartAxisCrossing::Min);
+    chart.y_axis().set_crossing(ChartAxisCrossing::Max);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("xAxisCrossing=\"min\""), "{source}");
+    assert!(source.contains("yAxisCrossing=\"max\""), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-crossings.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:crosses val=\"min\"/>"), "{xml}");
+    assert!(xml.contains("<c:crosses val=\"max\"/>"), "{xml}");
 }
 
 #[test]

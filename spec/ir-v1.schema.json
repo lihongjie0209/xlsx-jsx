@@ -631,7 +631,7 @@
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },
           "then": {
             "properties": {
-              "props": { "not": { "anyOf": [{ "required": ["categoryAxisLabelAlignment"] }, { "required": ["categoryAxisOnTickMarks"] }, { "required": ["categoryAxisType"] }, { "required": ["categoryAxisMajorTimeUnit"] }, { "required": ["categoryAxisMinorTimeUnit"] }, { "required": ["categoryAxisMinDate"] }, { "required": ["categoryAxisMaxDate"] }, { "required": ["xAxisCrossing"] }, { "required": ["yAxisCrossing"] }] } }
+              "props": { "not": { "anyOf": [{ "required": ["categoryAxisLabelAlignment"] }, { "required": ["categoryAxisOnTickMarks"] }, { "required": ["categoryAxisType"] }, { "required": ["categoryAxisMajorTimeUnit"] }, { "required": ["categoryAxisMinorTimeUnit"] }, { "required": ["categoryAxisMinDate"] }, { "required": ["categoryAxisMaxDate"] }] } }
             }
           }
         },

@@ -8735,10 +8735,10 @@ fn parse_chart_xml(
                                 | "line"
                                 | "lineStacked"
                                 | "linePercentStacked"
-                        );
+                        ) || chart_type.starts_with("scatter");
                         if !supported_family && crossing != "automatic" {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` custom axis crossings are supported only for area, column, bar, and line charts; remove the override or use one of those chart types"
+                                "chart part `{part}` custom axis crossings are supported only for area, column, bar, line, and scatter charts; remove the override or use one of those chart types"
                             )));
                         }
                         if axis_tag == "dateAx" && crossing != "automatic" {
@@ -8747,11 +8747,23 @@ fn parse_chart_xml(
                             )));
                         }
                         if supported_family {
-                            let is_bar = chart_type.starts_with("bar");
-                            let horizontal_handle = match axis_tag.as_str() {
-                                "valAx" => !is_bar,
-                                "catAx" | "dateAx" => is_bar,
-                                _ => unreachable!("axis element was matched above"),
+                            let horizontal_handle = if chart_type.starts_with("scatter") {
+                                match current_axis_position {
+                                    Some("l" | "r") => true,
+                                    Some("b" | "t") => false,
+                                    _ => {
+                                        return Err(Error::Reverse(format!(
+                                            "chart part `{part}` has a scatter-axis crossing without a horizontal or vertical axis position; restore bottom/top or left/right axPos"
+                                        )));
+                                    }
+                                }
+                            } else {
+                                let is_bar = chart_type.starts_with("bar");
+                                match axis_tag.as_str() {
+                                    "valAx" => !is_bar,
+                                    "catAx" | "dateAx" => is_bar,
+                                    _ => unreachable!("axis element was matched above"),
+                                }
                             };
                             let (seen, target) = if horizontal_handle {
                                 (&mut x_axis_crossing_seen, &mut x_axis_crossing)
@@ -9393,11 +9405,11 @@ fn parse_chart_xml(
                                     .is_some_and(|value| value.starts_with("scatter"))
                                 {
                                     match current_axis_position {
-                                        Some("b") => true,
-                                        Some("l") => false,
+                                        Some("b" | "t") => true,
+                                        Some("l" | "r") => false,
                                         _ => {
                                             return Err(Error::Reverse(format!(
-                                                "chart part `{part}` has a scatter axis number format without a bottom horizontal or left vertical position; restore the primary axis positions"
+                                                "chart part `{part}` has a scatter axis number format without a horizontal or vertical axis position; restore a top/bottom or left/right axPos"
                                             )));
                                         }
                                     }
@@ -9735,11 +9747,11 @@ fn parse_chart_xml(
                             .is_some_and(|value| value.starts_with("scatter"))
                         {
                             match current_axis_position {
-                                Some("b") => true,
-                                Some("l") => false,
+                                Some("b" | "t") => true,
+                                Some("l" | "r") => false,
                                 _ => {
                                     return Err(Error::Reverse(format!(
-                                        "chart part `{part}` has a scatter-axis interval without a bottom horizontal or left vertical position; restore the primary axis positions"
+                                        "chart part `{part}` has a scatter-axis interval without a horizontal or vertical axis position; restore a top/bottom or left/right axPos"
                                     )));
                                 }
                             }
@@ -11061,15 +11073,21 @@ fn parse_chart_xml(
         )));
     }
     if chart_type.starts_with("scatter") {
-        let x_axis_index = scatter_axis_positions
+        let horizontal_axis_indices = scatter_axis_positions
             .iter()
-            .position(|position| *position == Some("b"));
-        let y_axis_index = scatter_axis_positions
+            .enumerate()
+            .filter_map(|(index, position)| matches!(position, Some("b" | "t")).then_some(index))
+            .collect::<Vec<_>>();
+        let vertical_axis_indices = scatter_axis_positions
             .iter()
-            .position(|position| *position == Some("l"));
+            .enumerate()
+            .filter_map(|(index, position)| matches!(position, Some("l" | "r")).then_some(index))
+            .collect::<Vec<_>>();
+        let x_axis_index = (horizontal_axis_indices.len() == 1).then(|| horizontal_axis_indices[0]);
+        let y_axis_index = (vertical_axis_indices.len() == 1).then(|| vertical_axis_indices[0]);
         let (Some(x_axis_index), Some(y_axis_index)) = (x_axis_index, y_axis_index) else {
             return Err(Error::Reverse(format!(
-                "chart part `{part}` scatter chart must have one horizontal bottom value axis and one vertical left value axis; restore the primary axis positions"
+                "chart part `{part}` scatter chart must have one horizontal top/bottom value axis and one vertical left/right value axis; restore the primary axis positions"
             )));
         };
         if value_axis_count != 2 {

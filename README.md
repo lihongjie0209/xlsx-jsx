@@ -87,6 +87,7 @@ xlsx-jsx spec --format json
 | Scatter axis intervals | yes | yes | `xAxisMajorUnit` / `xAxisMinorUnit` and `yAxisMajorUnit` / `yAxisMinorUnit` preserve major and minor tick spacing on both value axes |
 | Scatter axis number formats | yes | yes | `xAxisNumberFormat` and `yAxisNumberFormat` apply independently to the horizontal and vertical value axes |
 | Scatter logarithmic axes | yes | yes | `xAxisLogBase` / `yAxisLogBase` independently apply valid base-2–1000 logarithmic scales to scatter X/Y axes |
+| Scatter axis crossing | yes | yes | `xAxisCrossing` / `yAxisCrossing` preserve min/max/automatic crossing positions; reverse resolves top/bottom and left/right axes by orientation |
 | Chart legend overlay | yes | yes | `legendOverlay={true}` draws a visible legend over the plot area; it cannot be combined with `showLegend={false}` |
 | Chart legend entry visibility | yes | yes | `legendDeletedEntries={[1, 3]}` hides zero-based legend entries (pie/doughnut point indices); duplicate indices and hidden legends are rejected |
 | Chart series and trendline legend entries | yes | yes | `Series` / `Trendline deleteFromLegend={true}` hides the corresponding entry; chart-level indices reverse to these properties when unambiguous |

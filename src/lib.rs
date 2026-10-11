@@ -2053,9 +2053,10 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
                 | "line"
                 | "lineStacked"
                 | "linePercentStacked"
-        ) {
+        ) && !chart_type.starts_with("scatter")
+        {
             return Err(Error::Compile(format!(
-                "Chart.{property} is supported only for area, column, bar, and line charts; omit it or choose one of those chart types"
+                "Chart.{property} is supported only for area, column, bar, line, and scatter charts; omit it or choose one of those chart types"
             )));
         }
         if !value
