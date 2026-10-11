@@ -167,6 +167,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("ChartDataTable"))
         .stdout(predicate::str::contains("markerType"))
         .stdout(predicate::str::contains("markerSize"))
+        .stdout(predicate::str::contains("pointColors"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1940,6 +1941,191 @@ fn reverses_external_chart_series_line_style_and_rebuilds_it() {
     assert!(xml.contains("<a:ln w=\"28575\">"));
     assert!(xml.contains("<a:srgbClr val=\"336699\"><a:alpha val=\"70000\"/></a:srgbClr>"));
     assert!(xml.contains("<a:prstDash val=\"dashDot\"/>"));
+}
+
+#[test]
+fn reverses_external_chart_data_point_colors_and_rebuilds_them() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-point-colors.xlsx");
+    let source_path = directory.path().join("external-chart-point-colors.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-chart-point-colors.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Pie);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A5")
+        .set_values("Data!B2:B5")
+        .set_point_colors(&["#FF0000", "#00AA00", "#336699", "#F0A020"]);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains(
+        "pointColors={{0: \"#FF0000\", 1: \"#00AA00\", 2: \"#336699\", 3: \"#F0A020\"}}"
+    ));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:dPt><c:idx val=\"0\"/><c:spPr><a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill></c:spPr></c:dPt>"));
+    assert!(xml.contains("<c:dPt><c:idx val=\"3\"/><c:spPr><a:solidFill><a:srgbClr val=\"F0A020\"/></a:solidFill></c:spPr></c:dPt>"));
+}
+
+#[test]
+fn reverses_sparse_external_chart_point_colors_without_shifting_indices() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("sparse-chart-points.xlsx");
+    let source_path = directory.path().join("sparse-chart-points.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Pie);
+    let points = [
+        rust_xlsxwriter::ChartPoint::new()
+            .set_format(rust_xlsxwriter::ChartSolidFill::new().set_color("#FF0000")),
+        rust_xlsxwriter::ChartPoint::new(),
+        rust_xlsxwriter::ChartPoint::new(),
+        rust_xlsxwriter::ChartPoint::new()
+            .set_format(rust_xlsxwriter::ChartSolidFill::new().set_color("#336699")),
+    ];
+    chart
+        .add_series()
+        .set_categories("Data!A2:A5")
+        .set_values("Data!B2:B5")
+        .set_points(&points);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("pointColors={{0: \"#FF0000\", 3: \"#336699\"}}"));
+}
+
+#[test]
+fn reverses_line_chart_point_fill_without_mistaking_it_for_a_series_marker() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("line-chart-point-fill.xlsx");
+    let source_path = directory.path().join("line-chart-point-fill.tsx");
+    let rebuilt_path = directory.path().join("line-chart-point-fill-rebuilt.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    let points = [
+        rust_xlsxwriter::ChartPoint::new(),
+        rust_xlsxwriter::ChartPoint::new()
+            .set_format(rust_xlsxwriter::ChartSolidFill::new().set_color("#FF0000")),
+        rust_xlsxwriter::ChartPoint::new(),
+    ];
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_points(&points);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("pointColors={{1: \"#FF0000\"}}"));
+    assert!(!source.contains("markerType="));
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:dPt><c:idx val=\"1\"/><c:marker><c:spPr><a:solidFill><a:srgbClr val=\"FF0000\"/></a:solidFill></c:spPr></c:marker></c:dPt>"));
+}
+
+#[test]
+fn rejects_invalid_chart_point_color_index_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-point-color-index.tsx");
+    std::fs::write(&input, r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="pie" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" pointColors={{"01": "#FF0000"}} /></Chart></Worksheet></Workbook>;"##).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("canonical zero-based point index"));
+}
+
+#[test]
+fn rejects_chart_point_color_index_beyond_series_range() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("point-color-out-of-range.tsx");
+    std::fs::write(&input, r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="pie" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" pointColors={{3: "#FF0000"}} /></Chart></Worksheet></Workbook>;"##).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "exceeds the Series.values point count 3",
+        ));
+}
+
+#[test]
+fn reverse_rejects_transparent_chart_point_fill_instead_of_dropping_alpha() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("transparent-chart-point.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Pie);
+    let points = [rust_xlsxwriter::ChartPoint::new().set_format(
+        rust_xlsxwriter::ChartSolidFill::new()
+            .set_color("#FF0000")
+            .set_transparency(30),
+    )];
+    chart
+        .add_series()
+        .set_categories("Data!A2:A2")
+        .set_values("Data!B2:B2")
+        .set_points(&points);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported `<alpha>` point formatting",
+        ))
+        .stderr(predicate::str::contains("opaque RGB solid fills"));
 }
 
 #[test]

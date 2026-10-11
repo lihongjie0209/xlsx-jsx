@@ -14,10 +14,10 @@ use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
     ChartDataLabel, ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartMarker,
-    ChartMarkerType, ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
-    ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
-    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
-    ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
+    ChartMarkerType, ChartPoint, ChartSolidFill, ChartType, Color, ConditionalFormat2ColorScale,
+    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
+    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
+    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
     ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
     ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
     ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
@@ -829,6 +829,7 @@ fn compile_chart(
         configure_chart_series_data_labels(chart_series, &series);
         configure_chart_series_marker(chart_series, &series);
         configure_chart_series_line(chart_series, &series);
+        configure_chart_series_point_colors(chart_series, &series);
         configure_chart_series_error_bars(chart_series, &series)?;
         if component.props.get("type").and_then(Value::as_str) == Some("stock") {
             chart_series
@@ -840,6 +841,29 @@ fn compile_chart(
         .insert_chart(row, column, &chart)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+}
+
+fn configure_chart_series_point_colors(
+    chart_series: &mut rust_xlsxwriter::ChartSeries,
+    series: &Node,
+) {
+    let Some(colors) = series.props.get("pointColors").and_then(Value::as_object) else {
+        return;
+    };
+    let Some(max_index) = colors
+        .keys()
+        .filter_map(|key| key.parse::<usize>().ok())
+        .max()
+    else {
+        return;
+    };
+    let mut points = vec![ChartPoint::new(); max_index + 1];
+    for (index, color) in colors {
+        let index = index.parse::<usize>().expect("validated point color index");
+        let color = color.as_str().expect("validated point color");
+        points[index] = ChartPoint::new().set_format(ChartSolidFill::new().set_color(color));
+    }
+    chart_series.set_points(&points);
 }
 
 fn configure_chart_series_line(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
@@ -4208,6 +4232,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if series.line_hidden == Some(true) {
             output.push_str(" lineHidden={true}");
         }
+        if !series.point_colors.is_empty() {
+            output.push_str(" pointColors={{");
+            for (index, (point, color)) in series.point_colors.iter().enumerate() {
+                if index > 0 {
+                    output.push_str(", ");
+                }
+                let _ = write!(output, "{point}: {color:?}");
+            }
+            output.push_str("}}");
+        }
         for (name, enabled) in [
             ("showValue", series.show_value),
             ("showCategoryName", series.show_category_name),
@@ -7104,6 +7138,7 @@ fn parse_chart_xml(
         "f",
         "ptCount",
         "pt",
+        "dPt",
         "v",
         "cat",
         "xVal",
@@ -7193,6 +7228,8 @@ fn parse_chart_xml(
     let mut data_table_flags_seen = [false; 4];
     let mut data_table_last_flag = None;
     let mut current_error_bar: Option<usize> = None;
+    let mut point_index: Option<usize> = None;
+    let mut point_color: Option<String> = None;
     let mut formula_target: Option<&'static str> = None;
     let mut title_source_open = false;
     let mut category_source_open = false;
@@ -7375,10 +7412,29 @@ fn parse_chart_xml(
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "marker")
+                    && !stack.iter().any(|ancestor| ancestor == "dPt")
                     && !matches!(tag.as_str(), "symbol" | "size")
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has unsupported `<{tag}>` marker formatting; marker fill and line styles are not represented, so remove custom marker formatting"
+                    )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "dPt")
+                    && !matches!(
+                        tag.as_str(),
+                        "idx" | "spPr" | "solidFill" | "srgbClr" | "marker"
+                    )
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported `<{tag}>` point formatting; retain only opaque RGB solid fills"
+                    )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "marker")
+                    && stack.iter().any(|ancestor| ancestor == "dPt")
+                    && !matches!(tag.as_str(), "spPr" | "solidFill" | "srgbClr")
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has custom per-point marker formatting; retain only the point's RGB fill"
                     )));
                 }
                 if matches!(tag.as_str(), "symbol" | "size")
@@ -7389,6 +7445,30 @@ fn parse_chart_xml(
                     )));
                 }
                 match tag.as_str() {
+                    "dPt" => {
+                        if stack.last().is_none_or(|parent| parent != "ser") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a data point outside a series; repair the `<dPt>` structure"
+                            )));
+                        }
+                        if is_empty {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an empty data-point override; retain an indexed point with one opaque RGB solid fill"
+                            )));
+                        }
+                        point_index = None;
+                        point_color = None;
+                    }
+                    "idx" if stack.last().is_some_and(|parent| parent == "dPt") => {
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "idx")?;
+                        let index = raw.parse::<usize>().ok().filter(|index| *index <= 1_048_575 && index.to_string() == raw).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has invalid data-point index `{raw}`; use a canonical index from 0 through 1,048,575")))?;
+                        if point_index.replace(index).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a data-point index; retain one index per `<dPt>`"
+                            )));
+                        }
+                    }
                     "dTable" => {
                         if stack.last().is_none_or(|parent| parent != "plotArea")
                             || data_table.is_some()
@@ -8577,6 +8657,7 @@ fn parse_chart_xml(
                         line_width: None,
                         line_dash: None,
                         line_transparency: None,
+                        point_colors: BTreeMap::new(),
                         show_value: None,
                         show_category_name: None,
                         show_series_name: None,
@@ -8938,7 +9019,13 @@ fn parse_chart_xml(
                         }
                     }
                     "spPr" => {
-                        if stack.last().is_none_or(|ancestor| ancestor != "ser") {
+                        if stack.last().is_none_or(|ancestor| ancestor != "ser")
+                            && !(stack.iter().any(|ancestor| ancestor == "dPt")
+                                && matches!(
+                                    stack.last().map(String::as_str),
+                                    Some("dPt" | "marker")
+                                ))
+                        {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has formatting outside an individual series; remove custom chart formatting or add explicit reverse support"
                             )));
@@ -8984,6 +9071,28 @@ fn parse_chart_xml(
                                 }
                                 current.line_width = Some(f64::from(width_emu) / 12700.0);
                             }
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|item| item == "dPt") =>
+                    {
+                        let color = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attr| attr.key.local_name().as_ref() == b"val")
+                            .and_then(|attr| attr.decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder()).ok().map(std::borrow::Cow::into_owned))
+                            .ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a point RGB fill without val; use #RRGGBB")))?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB data-point fill; use an opaque six-digit RGB color"
+                            )));
+                        }
+                        if point_color.replace(format!("#{color}")).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a data-point fill; retain one solid RGB fill per point"
+                            )));
                         }
                     }
                     "srgbClr"
@@ -9309,6 +9418,20 @@ fn parse_chart_xml(
                         "chart part `{part}` has a series without a value range; add a valid c:val/c:numRef/c:f source"
                     )));
                 }
+                if tag == "dPt" {
+                    let index = point_index.take().ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a data point without an index; add `<c:idx val=.../>`")))?;
+                    let color = point_color.take().ok_or_else(|| Error::Reverse(format!("chart part `{part}` has unsupported point formatting; add one opaque RGB solid fill")))?;
+                    let current = series.last_mut().ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "chart part `{part}` has a data point without a series"
+                        ))
+                    })?;
+                    if current.point_colors.insert(index, color).is_some() {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats data-point index {index}; retain one color per point"
+                        )));
+                    }
+                }
                 if tag == "errBars" {
                     current_error_bar = None;
                 }
@@ -9374,6 +9497,23 @@ fn parse_chart_xml(
         return Err(Error::Reverse(format!(
             "chart part `{part}` contains no data series; add at least one series"
         )));
+    }
+    for item in &series {
+        if let Some(max_index) = item.point_colors.keys().next_back().copied() {
+            let point_count = item
+                .values
+                .split_once('!')
+                .and_then(|(_, range)| parse_a1_range(range))
+                .and_then(one_dimensional_range_length)
+                .ok_or_else(|| Error::Reverse(format!(
+                    "chart part `{part}` has point colors on a non-one-dimensional value range; use a one-dimensional Series.values range"
+                )))?;
+            if u32::try_from(max_index).is_ok_and(|index| index >= point_count) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` colors point {max_index} beyond the series value range of {point_count} points; extend the source range or remove that point format"
+                )));
+            }
+        }
     }
     validate_reversed_chart_error_bars(chart_type, &mut series, part)?;
     for item in &mut series {
@@ -13018,6 +13158,7 @@ struct WorksheetChartSeries {
     line_width: Option<f64>,
     line_dash: Option<&'static str>,
     line_transparency: Option<u32>,
+    point_colors: BTreeMap<usize, String>,
     show_value: Option<bool>,
     show_category_name: Option<bool>,
     show_series_name: Option<bool>,

@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.62
+Version: 1.63
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -116,6 +116,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   Omission preserves the chart-type default. Reverse maps only exact writer
   representations; unsupported fills, theme colors, effects, and line XML
   structures fail with repair guidance.
+- `Series.pointColors?: { [zeroBasedIndex: string]: "#RRGGBB" }` assigns opaque
+  RGB solid-fill colors to data points by zero-based category/value position.
+  Keys are canonical decimal point indices from 0 through 1,048,575; omitted
+  keys leave points at the chart-type default, so sparse overrides retain their
+  original positions. Reverse preserves explicit
+  point indices and rejects custom point borders, patterns, gradients,
+  transparency, marker formatting, duplicate indices, and indices beyond the
+  source range.
 - `ChartDataTable` is an optional child of `Chart`, at most one per chart.
   `showHorizontalBorders`, `showVerticalBorders`, `showOutlineBorders`, and
   `showLegendKeys` are booleans. Omission uses the pinned writer defaults

@@ -697,7 +697,17 @@
             "lineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
             "lineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
             "lineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
-            "lineHidden": { "type": "boolean" }
+            "lineHidden": { "type": "boolean" },
+            "pointColors": {
+              "type": "object",
+              "propertyNames": {
+                "pattern": "^(0|[1-9][0-9]{0,5}|10[0-3][0-9]{4}|104[0-7][0-9]{3}|1048[0-4][0-9]{2}|10485[0-6][0-9]|104857[0-5])$"
+              },
+              "patternProperties": {
+                "^(0|[1-9][0-9]*)$": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+              },
+              "additionalProperties": false
+            }
           },
           "additionalProperties": false
         },

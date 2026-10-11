@@ -2606,6 +2606,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "lineDash",
                 "lineTransparency",
                 "lineHidden",
+                "pointColors",
             ],
             "Series",
         )?;
@@ -2686,7 +2687,62 @@ fn validate_chart_series_properties(
     validate_series_data_label_props(chart, series)?;
     validate_chart_series_marker(chart, series, series_index)?;
     validate_chart_series_line(chart, series, series_index)?;
+    validate_chart_series_point_colors(series)?;
     validate_chart_series_error_bars(chart, series, series_index)
+}
+
+fn validate_chart_series_point_colors(series: &Node) -> Result<()> {
+    let Some(value) = series.props.get("pointColors") else {
+        return Ok(());
+    };
+    let Some(colors) = value.as_object() else {
+        return Err(Error::Compile("Series.pointColors must be an object keyed by zero-based point indices; use {0: \"#FF0000\"} with opaque RGB values".into()));
+    };
+    for (index, color) in colors {
+        let parsed = index
+            .parse::<usize>()
+            .ok()
+            .filter(|parsed| *parsed <= 1_048_575 && parsed.to_string() == *index);
+        if parsed.is_none() {
+            return Err(Error::Compile(format!(
+                "Series.pointColors key `{index}` must be a canonical zero-based point index from 0 through 1,048,575"
+            )));
+        }
+        let Some(color) = color.as_str() else {
+            return Err(Error::Compile(format!(
+                "Series.pointColors[{index}] must be an opaque #RRGGBB RGB string"
+            )));
+        };
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointColors[{index}] must match #RRGGBB; use exactly six hexadecimal digits after #"
+            )));
+        }
+    }
+    let point_count = series
+        .props
+        .get("values")
+        .and_then(Value::as_str)
+        .and_then(|formula| formula.split_once('!'))
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length);
+    if let (Some(max_index), Some(point_count)) = (
+        colors
+            .keys()
+            .filter_map(|index| index.parse::<u32>().ok())
+            .max(),
+        point_count,
+    ) && max_index >= point_count
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointColors index {max_index} exceeds the Series.values point count {point_count}; use an index from 0 through {}",
+            point_count.saturating_sub(1)
+        )));
+    }
+    Ok(())
 }
 
 fn validate_chart_series_line(chart: &Node, series: &Node, series_index: usize) -> Result<()> {
