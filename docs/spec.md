@@ -212,6 +212,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   folded when equivalent. Theme, indexed, automatic, and translucent colors,
   East Asian/complex-script typefaces, and other font properties remain
   rejected unless they have an explicit DSL property.
+- `Chart.titleFillColor?: "#RRGGBB"` sets an opaque RGB solid fill on a static
+  chart title. `titleLineColor`, `titleLineWidth`, `titleLineDash`, and
+  `titleLineTransparency` model the outline through `ChartTitle::set_format()`
+  and `ChartLine`; width is 0.25–1584 points in quarter-point increments,
+  dash uses the supported chart-line presets, and transparency is 0–100 and
+  requires an RGB line color. All require `title`; reverse rejects patterns,
+  gradients, effects, theme/indexed colors, and unsupported line children.
 - `Chart.titleLayout?: { x, y }` manually positions a static chart title using
   finite relative fractions in `[0, 1]` of the chart width and height. The
   writer uses outer/default layout target and edge positioning. It requires

@@ -777,6 +777,9 @@ fn compile_chart(
     if let Some(title) = component.props.get("title").and_then(Value::as_str) {
         chart.title().set_name(title);
     }
+    if let Some(mut format) = chart_title_shape_format(component) {
+        chart.title().set_format(&mut format);
+    }
     if component.props.contains_key("titleFontSize")
         || component.props.contains_key("titleFontBold")
         || component.props.contains_key("titleFontItalic")
@@ -2311,18 +2314,31 @@ fn chart_line_dash_type(dash: &str) -> ChartLineDashType {
 }
 
 fn chart_axis_title_format(component: &Node, axis: &str) -> Option<ChartFormat> {
+    let fill_color = format!("{axis}AxisTitleFillColor");
+    let line_prefix = format!("{axis}AxisTitleLine");
+    chart_shape_format(component, &fill_color, &line_prefix)
+}
+
+fn chart_title_shape_format(component: &Node) -> Option<ChartFormat> {
+    chart_shape_format(component, "titleFillColor", "titleLine")
+}
+
+fn chart_shape_format(
+    component: &Node,
+    fill_color: &str,
+    line_prefix: &str,
+) -> Option<ChartFormat> {
     let mut chart_format = ChartFormat::new();
     let mut has_format = false;
-    let fill_color = format!("{axis}AxisTitleFillColor");
-    if let Some(color) = component.props.get(&fill_color).and_then(Value::as_str) {
+    if let Some(color) = component.props.get(fill_color).and_then(Value::as_str) {
         chart_format.set_solid_fill(ChartSolidFill::new().set_color(color));
         has_format = true;
     }
 
-    let line_color = format!("{axis}AxisTitleLineColor");
-    let line_width = format!("{axis}AxisTitleLineWidth");
-    let line_dash = format!("{axis}AxisTitleLineDash");
-    let line_transparency = format!("{axis}AxisTitleLineTransparency");
+    let line_color = format!("{line_prefix}Color");
+    let line_width = format!("{line_prefix}Width");
+    let line_dash = format!("{line_prefix}Dash");
+    let line_transparency = format!("{line_prefix}Transparency");
     let mut line = ChartLine::new();
     let mut has_line = false;
     if let Some(color) = component.props.get(&line_color).and_then(Value::as_str) {
@@ -5590,6 +5606,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
         properties.push_str(" autoTitleDeleted={true}");
     }
     append_chart_title_font_properties(&mut properties, chart);
+    append_chart_title_shape_properties(&mut properties, chart);
     if !chart.legend_deleted_entries.is_empty() {
         let entries = chart
             .legend_deleted_entries
@@ -5647,6 +5664,27 @@ fn append_chart_title_font_properties(properties: &mut String, chart: &Worksheet
     }
     if let Some(rotation) = chart.title_font_rotation {
         let _ = write!(properties, " titleFontRotation={{{rotation}}}");
+    }
+}
+
+fn append_chart_title_shape_properties(properties: &mut String, chart: &WorksheetChart) {
+    if let Some(color) = &chart.title_fill_color {
+        let _ = write!(properties, " titleFillColor={color:?}");
+    }
+    let Some(style) = &chart.title_line else {
+        return;
+    };
+    if let Some(color) = &style.color {
+        let _ = write!(properties, " titleLineColor={color:?}");
+    }
+    if let Some(width) = style.width {
+        let _ = write!(properties, " titleLineWidth={{{width}}}");
+    }
+    if let Some(dash) = style.dash {
+        let _ = write!(properties, " titleLineDash={dash:?}");
+    }
+    if let Some(transparency) = style.transparency {
+        let _ = write!(properties, " titleLineTransparency={{{transparency}}}");
     }
 }
 
@@ -8928,6 +8966,10 @@ fn parse_chart_xml(
     let mut title_font_charset: Option<u8> = None;
     let mut title_font_underline: Option<bool> = None;
     let mut title_font_rotation: Option<i16> = None;
+    let mut title_fill_color: Option<String> = None;
+    let mut title_line: Option<WorksheetChartGridlineStyle> = None;
+    let mut title_sppr_seen = false;
+    let mut title_line_seen = false;
     let mut title_font_latin_seen = false;
     let mut title_overlay = false;
     let mut title_overlay_seen = false;
@@ -9670,6 +9712,7 @@ fn parse_chart_xml(
                     }
                     if stack.last().is_some_and(|ancestor| ancestor == "title") {
                         let seen = match chart_title_target {
+                            Some("title") => Some(&mut title_sppr_seen),
                             Some("xAxisTitle") => Some(&mut x_axis_title_sppr_seen),
                             Some("yAxisTitle") => Some(&mut y_axis_title_sppr_seen),
                             _ => None,
@@ -9678,7 +9721,7 @@ fn parse_chart_xml(
                             && std::mem::replace(seen, true)
                         {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` repeats axis-title shape properties; keep one supported title fill/outline"
+                                "chart part `{part}` repeats title shape properties; keep one supported fill/outline"
                             )));
                         }
                     }
@@ -9686,16 +9729,20 @@ fn parse_chart_xml(
                 if tag == "ln"
                     && stack.last().is_some_and(|ancestor| ancestor == "spPr")
                     && stack.iter().any(|ancestor| ancestor == "title")
-                    && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"))
+                    && matches!(
+                        chart_title_target,
+                        Some("title" | "xAxisTitle" | "yAxisTitle")
+                    )
                 {
                     let seen = match chart_title_target {
+                        Some("title") => &mut title_line_seen,
                         Some("xAxisTitle") => &mut x_axis_title_line_seen,
                         Some("yAxisTitle") => &mut y_axis_title_line_seen,
                         _ => unreachable!(),
                     };
                     if std::mem::replace(seen, true) {
                         return Err(Error::Reverse(format!(
-                            "chart part `{part}` repeats an axis-title outline; keep one a:ln line"
+                            "chart part `{part}` repeats a title outline; keep one a:ln line"
                         )));
                     }
                 }
@@ -9717,7 +9764,10 @@ fn parse_chart_xml(
                     )));
                 }
                 let is_axis_title_line_element = stack.iter().any(|ancestor| ancestor == "spPr")
-                    && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"))
+                    && matches!(
+                        chart_title_target,
+                        Some("title" | "xAxisTitle" | "yAxisTitle")
+                    )
                     && ((tag == "ln" && stack.last().is_some_and(|ancestor| ancestor == "spPr"))
                         || (matches!(tag.as_str(), "alpha" | "prstDash")
                             && stack.iter().any(|ancestor| ancestor == "ln")));
@@ -13190,25 +13240,27 @@ fn parse_chart_xml(
                         table.font_name = name;
                     }
                     "spPr" => {
-                        let has_supported_parent = stack
-                            .last()
-                            .is_some_and(|ancestor| ancestor == "ser")
-                            || stack.last().is_some_and(|ancestor| ancestor == "trendline")
-                            || matches!(
-                                stack.last().map(String::as_str),
-                                Some("chartSpace" | "plotArea")
-                            )
-                            || (stack.iter().any(|ancestor| ancestor == "dPt")
-                                && matches!(
+                        let has_supported_parent =
+                            stack.last().is_some_and(|ancestor| ancestor == "ser")
+                                || stack.last().is_some_and(|ancestor| ancestor == "trendline")
+                                || matches!(
                                     stack.last().map(String::as_str),
-                                    Some("dPt" | "marker")
-                                ))
-                            || stack.iter().any(|ancestor| {
-                                matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
-                            })
-                            || (stack.last().is_some_and(|ancestor| ancestor == "title")
-                                && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle")))
-                            || stack.iter().any(|ancestor| ancestor == "errBars");
+                                    Some("chartSpace" | "plotArea")
+                                )
+                                || (stack.iter().any(|ancestor| ancestor == "dPt")
+                                    && matches!(
+                                        stack.last().map(String::as_str),
+                                        Some("dPt" | "marker")
+                                    ))
+                                || stack.iter().any(|ancestor| {
+                                    matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
+                                })
+                                || (stack.last().is_some_and(|ancestor| ancestor == "title")
+                                    && matches!(
+                                        chart_title_target,
+                                        Some("title" | "xAxisTitle" | "yAxisTitle")
+                                    ))
+                                || stack.iter().any(|ancestor| ancestor == "errBars");
                         if !has_supported_parent {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has formatting outside an individual series; remove custom chart formatting or add explicit reverse support"
@@ -13216,9 +13268,12 @@ fn parse_chart_xml(
                         }
                     }
                     "ln" => {
-                        let in_axis_title = stack.iter().any(|item| item == "title")
+                        let in_title_shape = stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
-                            && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"));
+                            && matches!(
+                                chart_title_target,
+                                Some("title" | "xAxisTitle" | "yAxisTitle")
+                            );
                         let in_trendline_line = stack.iter().any(|item| item == "trendline")
                             && stack.iter().any(|item| item == "spPr")
                             && !stack.iter().any(|item| item == "trendlineLbl");
@@ -13230,7 +13285,7 @@ fn parse_chart_xml(
                             || (!in_gridlines
                                 && !in_error_bars
                                 && !in_trendline_line
-                                && !in_axis_title
+                                && !in_title_shape
                                 && !stack.iter().any(|ancestor| ancestor == "ser"))
                         {
                             return Err(Error::Reverse(format!(
@@ -13241,7 +13296,7 @@ fn parse_chart_xml(
                         for attribute in event.attributes().with_checks(false) {
                             let attribute =
                                 attribute.map_err(|error| Error::Reverse(error.to_string()))?;
-                            if in_axis_title && attribute.key.local_name().as_ref() != b"w" {
+                            if in_title_shape && attribute.key.local_name().as_ref() != b"w" {
                                 return Err(Error::Reverse(format!(
                                     "chart part `{part}` has unsupported axis-title outline attribute `{}`; keep only reversible line width",
                                     String::from_utf8_lossy(attribute.key.local_name().as_ref())
@@ -13264,7 +13319,7 @@ fn parse_chart_xml(
                                 );
                             }
                         }
-                        if in_axis_title {
+                        if in_title_shape {
                             let width = line_width
                                 .map(|value| {
                                     value.parse::<u32>().ok().filter(|width| {
@@ -13279,6 +13334,7 @@ fn parse_chart_xml(
                                 })
                                 .transpose()?;
                             let style = match chart_title_target {
+                                Some("title") => &mut title_line,
                                 Some("xAxisTitle") => &mut x_axis_title_line,
                                 Some("yAxisTitle") => &mut y_axis_title_line,
                                 _ => unreachable!(),
@@ -13348,23 +13404,27 @@ fn parse_chart_xml(
                             && stack.iter().any(|item| item == "spPr")
                             && stack.iter().any(|item| item == "title")
                             && !stack.iter().any(|item| item == "ln")
-                            && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle")) =>
+                            && matches!(
+                                chart_title_target,
+                                Some("title" | "xAxisTitle" | "yAxisTitle")
+                            ) =>
                     {
                         validate_chart_axis_title_color_attributes(&event, part, reader.decoder())?;
                         let color = chart_element_val_attribute(
                             &event,
                             part,
                             reader.decoder(),
-                            "axis-title fill",
+                            "chart-title fill",
                         )?;
                         let target = match chart_title_target {
+                            Some("title") => &mut title_fill_color,
                             Some("xAxisTitle") => &mut x_axis_title_fill_color,
                             Some("yAxisTitle") => &mut y_axis_title_fill_color,
                             _ => unreachable!(),
                         };
                         if target.replace(format!("#{color}")).is_some() {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` repeats an axis-title RGB fill; retain one opaque solid fill"
+                                "chart part `{part}` repeats a title RGB fill; retain one opaque solid fill"
                             )));
                         }
                     }
@@ -13396,7 +13456,10 @@ fn parse_chart_xml(
                     {
                         if stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
-                            && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"))
+                            && matches!(
+                                chart_title_target,
+                                Some("title" | "xAxisTitle" | "yAxisTitle")
+                            )
                         {
                             validate_chart_axis_title_color_attributes(
                                 &event,
@@ -13412,9 +13475,13 @@ fn parse_chart_xml(
                         }
                         if stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
-                            && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"))
+                            && matches!(
+                                chart_title_target,
+                                Some("title" | "xAxisTitle" | "yAxisTitle")
+                            )
                         {
                             let target = match chart_title_target {
+                                Some("title") => &mut title_line,
                                 Some("xAxisTitle") => &mut x_axis_title_line,
                                 Some("yAxisTitle") => &mut y_axis_title_line,
                                 _ => unreachable!(),
@@ -13426,7 +13493,7 @@ fn parse_chart_xml(
                                 .is_some()
                             {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` repeats an axis-title outline color; keep one opaque RGB solid fill"
+                                    "chart part `{part}` repeats a title outline color; keep one opaque RGB solid fill"
                                 )));
                             }
                         } else if stack.iter().any(|item| {
@@ -13460,7 +13527,10 @@ fn parse_chart_xml(
                     "alpha" if stack.iter().any(|item| item == "ln") => {
                         if stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
-                            && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"))
+                            && matches!(
+                                chart_title_target,
+                                Some("title" | "xAxisTitle" | "yAxisTitle")
+                            )
                         {
                             validate_chart_axis_title_color_attributes(
                                 &event,
@@ -13476,9 +13546,13 @@ fn parse_chart_xml(
                         }
                         if stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
-                            && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"))
+                            && matches!(
+                                chart_title_target,
+                                Some("title" | "xAxisTitle" | "yAxisTitle")
+                            )
                         {
                             let target = match chart_title_target {
+                                Some("title") => &mut title_line,
                                 Some("xAxisTitle") => &mut x_axis_title_line,
                                 Some("yAxisTitle") => &mut y_axis_title_line,
                                 _ => unreachable!(),
@@ -13490,7 +13564,7 @@ fn parse_chart_xml(
                                 .is_some()
                             {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` repeats axis-title outline transparency; keep one alpha value"
+                                    "chart part `{part}` repeats title outline transparency; keep one alpha value"
                                 )));
                             }
                         } else if stack.iter().any(|item| {
@@ -13524,7 +13598,10 @@ fn parse_chart_xml(
                     "prstDash" if stack.last().is_some_and(|parent| parent == "ln") => {
                         if stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
-                            && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"))
+                            && matches!(
+                                chart_title_target,
+                                Some("title" | "xAxisTitle" | "yAxisTitle")
+                            )
                         {
                             validate_chart_axis_title_color_attributes(
                                 &event,
@@ -13567,16 +13644,20 @@ fn parse_chart_xml(
                         };
                         if stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
-                            && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"))
+                            && matches!(
+                                chart_title_target,
+                                Some("title" | "xAxisTitle" | "yAxisTitle")
+                            )
                         {
                             let target = match chart_title_target {
+                                Some("title") => &mut title_line,
                                 Some("xAxisTitle") => &mut x_axis_title_line,
                                 Some("yAxisTitle") => &mut y_axis_title_line,
                                 _ => unreachable!(),
                             };
                             if target.get_or_insert_default().dash.replace(dash).is_some() {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` repeats the axis-title outline dash; keep one preset dash"
+                                    "chart part `{part}` repeats the title outline dash; keep one preset dash"
                                 )));
                             }
                         } else if stack.iter().any(|item| {
@@ -14555,24 +14636,40 @@ fn parse_chart_xml(
             )));
         }
     }
-    for (axis, title, line) in [
-        ("X", x_axis_title.as_ref(), x_axis_title_line.as_ref()),
-        ("Y", y_axis_title.as_ref(), y_axis_title_line.as_ref()),
+    for (label, title, fill, line) in [
+        (
+            "chart",
+            chart_title.as_ref(),
+            title_fill_color.as_ref(),
+            title_line.as_ref(),
+        ),
+        (
+            "X-axis",
+            x_axis_title.as_ref(),
+            x_axis_title_fill_color.as_ref(),
+            x_axis_title_line.as_ref(),
+        ),
+        (
+            "Y-axis",
+            y_axis_title.as_ref(),
+            y_axis_title_fill_color.as_ref(),
+            y_axis_title_line.as_ref(),
+        ),
     ] {
+        if (fill.is_some() || line.is_some()) && title.is_none() {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has a {label} title shape format without a static title; add title text or remove the shape formatting"
+            )));
+        }
         if let Some(line) = line {
-            if title.is_none() {
-                return Err(Error::Reverse(format!(
-                    "chart part `{part}` has an {axis}-axis title outline without a static title; add the title text or remove the outline"
-                )));
-            }
             if line.is_empty() {
                 return Err(Error::Reverse(format!(
-                    "chart part `{part}` has an empty {axis}-axis title line that cannot be represented; remove the empty outline or specify a supported line property"
+                    "chart part `{part}` has an empty {label} title line that cannot be represented; remove the empty outline or specify a supported line property"
                 )));
             }
             if line.transparency.is_some() && line.color.is_none() {
                 return Err(Error::Reverse(format!(
-                    "chart part `{part}` has {axis}-axis title line transparency without RGB color; add a solid RGB line color or remove alpha"
+                    "chart part `{part}` has {label} title line transparency without RGB color; add a solid RGB line color or remove alpha"
                 )));
             }
         }
@@ -14662,6 +14759,8 @@ fn parse_chart_xml(
         height,
         name: anchor.name,
         title: chart_title,
+        title_fill_color,
+        title_line,
         title_font_size,
         title_font_bold,
         title_font_italic,
@@ -18782,6 +18881,8 @@ struct WorksheetChart {
     height: u32,
     name: String,
     title: Option<String>,
+    title_fill_color: Option<String>,
+    title_line: Option<WorksheetChartGridlineStyle>,
     title_font_size: Option<f64>,
     title_font_bold: Option<bool>,
     title_font_italic: Option<bool>,

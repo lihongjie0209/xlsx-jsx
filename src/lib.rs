@@ -1892,6 +1892,11 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "name",
             "altText",
             "title",
+            "titleFillColor",
+            "titleLineColor",
+            "titleLineWidth",
+            "titleLineDash",
+            "titleLineTransparency",
             "xAxisTitle",
             "yAxisTitle",
             "xAxisTitleFillColor",
@@ -2217,6 +2222,7 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_title_font_properties(chart)?;
+    validate_chart_title_shape_format(chart)?;
     validate_chart_axis_title_fonts(chart)?;
     validate_chart_axis_title_fill_colors(chart)?;
     validate_chart_axis_title_lines(chart)?;
@@ -2678,6 +2684,86 @@ fn is_opaque_rgb_color(color: &str) -> bool {
     color.len() == 7
         && color.starts_with('#')
         && color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn validate_chart_title_shape_format(chart: &Node) -> Result<()> {
+    if chart.props.contains_key("titleFillColor") && !chart.props.contains_key("title") {
+        return Err(Error::Compile(
+            "Chart.titleFillColor requires Chart.title; add a static title or remove the fill property".into(),
+        ));
+    }
+    if let Some(value) = chart.props.get("titleFillColor")
+        && !value.as_str().is_some_and(is_opaque_rgb_color)
+    {
+        return Err(Error::Compile(
+            "Chart.titleFillColor must be an opaque RGB color like #336699".into(),
+        ));
+    }
+    let property_names = [
+        "titleLineColor",
+        "titleLineWidth",
+        "titleLineDash",
+        "titleLineTransparency",
+    ];
+    if !property_names
+        .iter()
+        .any(|property| chart.props.contains_key(*property))
+    {
+        return Ok(());
+    }
+    if !chart.props.contains_key("title") {
+        return Err(Error::Compile(
+            "Chart.titleLine* requires Chart.title; add a static title or remove the title-line properties".into(),
+        ));
+    }
+    if let Some(value) = chart.props.get("titleLineColor")
+        && !value.as_str().is_some_and(is_opaque_rgb_color)
+    {
+        return Err(Error::Compile(
+            "Chart.titleLineColor must be an opaque RGB color like #336699".into(),
+        ));
+    }
+    if let Some(value) = chart.props.get("titleLineWidth")
+        && !value
+            .as_f64()
+            .is_some_and(|width| (0.25..=1584.0).contains(&width) && (width * 4.0).fract() == 0.0)
+    {
+        return Err(Error::Compile(
+            "Chart.titleLineWidth must be 0.25–1584 points in quarter-point increments".into(),
+        ));
+    }
+    if let Some(value) = chart.props.get("titleLineDash")
+        && !value.as_str().is_some_and(|dash| {
+            matches!(
+                dash,
+                "solid"
+                    | "roundDot"
+                    | "squareDot"
+                    | "dash"
+                    | "dashDot"
+                    | "longDash"
+                    | "longDashDot"
+                    | "longDashDotDot"
+            )
+        })
+    {
+        return Err(Error::Compile(
+            "Chart.titleLineDash must be a supported chart-line preset".into(),
+        ));
+    }
+    if let Some(value) = chart.props.get("titleLineTransparency") {
+        if value.as_u64().is_none_or(|transparency| transparency > 100) {
+            return Err(Error::Compile(
+                "Chart.titleLineTransparency must be an integer from 0 to 100".into(),
+            ));
+        }
+        if !chart.props.contains_key("titleLineColor") {
+            return Err(Error::Compile(
+                "Chart.titleLineTransparency requires Chart.titleLineColor; add an RGB line color or remove transparency".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_chart_axis_number_formats(chart: &Node, chart_type: &str) -> Result<()> {
