@@ -1918,6 +1918,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "legendPosition",
             "holeSize",
             "firstSliceAngle",
+            "style",
         ],
         "Chart",
     )?;
@@ -1939,6 +1940,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     validate_chart_presentation(chart, chart_type)?;
     validate_doughnut_hole_size(chart, chart_type)?;
     validate_chart_slice_angle(chart, chart_type)?;
+    validate_chart_style(chart)?;
     let cell = chart
         .props
         .get("cell")
@@ -1971,6 +1973,21 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     if matches!(chart_type, "pie" | "doughnut") && chart.children.len() != 1 {
         return Err(Error::Compile(
             "pie and doughnut Charts accept exactly one Series; split the data into separate charts or choose area, column, bar, or line".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_chart_style(chart: &Node) -> Result<()> {
+    let Some(value) = chart.props.get("style") else {
+        return Ok(());
+    };
+    if !value
+        .as_u64()
+        .is_some_and(|style| (1..=48).contains(&style))
+    {
+        return Err(Error::Compile(
+            "Chart.style must be an integer from 1 through 48; choose a built-in Excel chart style ID".into(),
         ));
     }
     Ok(())

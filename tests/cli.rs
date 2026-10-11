@@ -143,6 +143,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("verticalAxisLabelPosition"))
         .stdout(predicate::str::contains("categoryAxisLabelAlignment"))
         .stdout(predicate::str::contains("categoryAxisOnTickMarks"))
+        .stdout(predicate::str::contains("style"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1257,6 +1258,67 @@ fn reverses_external_category_axis_tick_position_without_a_manifest() {
     let bar_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
     assert!(column_xml.contains("<c:crossBetween val=\"midCat\"/>"));
     assert!(bar_xml.contains("<c:crossBetween val=\"midCat\"/>"));
+}
+
+#[test]
+fn reverses_external_chart_style_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-style.xlsx");
+    let output_path = directory.path().join("external-chart-style.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.set_style(7);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("style={7}"));
+
+    let rebuilt_path = directory.path().join("rebuilt-chart-style.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<c:style val=\"7\"/>"));
+}
+
+#[test]
+fn rejects_chart_style_outside_the_excel_range_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-style.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" style={49}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.style must be an integer from 1 through 48",
+        ))
+        .stderr(predicate::str::contains("built-in Excel chart style ID"));
 }
 
 #[test]

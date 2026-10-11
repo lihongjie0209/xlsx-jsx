@@ -189,6 +189,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   and maps it back to the logical category axis (including the swapped axes in
   bar charts); writer-default `crossBetween=between` is omitted. Other values
   or ambiguous/secondary axis structures are rejected rather than discarded.
+- `Chart.style?: integer` selects the built-in Excel chart style written as
+  `<c:style val="…">`; valid values are 1–48. Omission uses
+  `rust_xlsxwriter` style 2, and reverse omits style 2 while preserving other
+  style IDs. This is a preset selector, not a guarantee of identical rendering
+  across spreadsheet applications; custom series/area/plot styling remains a
+  separate unsupported surface.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed

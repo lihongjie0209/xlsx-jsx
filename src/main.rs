@@ -712,16 +712,7 @@ fn compile_chart(
             chart.set_up_down_bars(true);
         }
     }
-    if let Some(hole_size) = component.props.get("holeSize").and_then(Value::as_u64) {
-        chart.set_hole_size(u8::try_from(hole_size).expect("validated Chart.holeSize"));
-    }
-    if let Some(angle) = component
-        .props
-        .get("firstSliceAngle")
-        .and_then(Value::as_u64)
-    {
-        chart.set_rotation(u16::try_from(angle).expect("validated Chart.firstSliceAngle"));
-    }
+    configure_chart_visual_properties(&mut chart, component);
     if let Some(name) = component.props.get("name").and_then(Value::as_str) {
         chart.set_name(name);
     }
@@ -966,6 +957,22 @@ fn configure_chart_category_axis_settings(
     }
     configure_chart_axis_hidden(chart, component);
     Ok(())
+}
+
+fn configure_chart_visual_properties(chart: &mut Chart, component: &Node) {
+    if let Some(style) = component.props.get("style").and_then(Value::as_u64) {
+        chart.set_style(u8::try_from(style).expect("validated Chart.style"));
+    }
+    if let Some(hole_size) = component.props.get("holeSize").and_then(Value::as_u64) {
+        chart.set_hole_size(u8::try_from(hole_size).expect("validated Chart.holeSize"));
+    }
+    if let Some(angle) = component
+        .props
+        .get("firstSliceAngle")
+        .and_then(Value::as_u64)
+    {
+        chart.set_rotation(u16::try_from(angle).expect("validated Chart.firstSliceAngle"));
+    }
 }
 
 fn configure_chart_axis_hidden(chart: &mut Chart, component: &Node) {
@@ -3888,6 +3895,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
 
 fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     let mut properties = String::new();
+    if let Some(style) = chart.style {
+        let _ = write!(properties, " style={{{style}}}");
+    }
     append_chart_axis_value_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
     append_chart_axis_label_properties(&mut properties, chart);
@@ -6754,6 +6764,7 @@ fn parse_chart_xml(
         "symbol",
         "varyColors",
         "firstSliceAng",
+        "style",
         "txPr",
     ];
     let mut reader = XmlReader::from_str(xml);
@@ -6833,6 +6844,8 @@ fn parse_chart_xml(
     let mut hole_size_seen = false;
     let mut first_slice_angle = None;
     let mut first_slice_angle_seen = false;
+    let mut chart_style = None;
+    let mut chart_style_seen = false;
     let mut radar_style = None;
     let mut radar_style_seen = false;
     let mut scatter_style = None;
@@ -7498,6 +7511,44 @@ fn parse_chart_xml(
                                     .map_err(|error| Error::Reverse(error.to_string()))?;
                                 first_slice_angle = value.parse::<u16>().ok();
                             }
+                        }
+                    }
+                    "style" => {
+                        if stack.last().is_none_or(|ancestor| ancestor != "chartSpace") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has style outside the chartSpace root; repair the chart structure"
+                            )));
+                        }
+                        if chart_style_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats c:style; retain one chart style ID"
+                            )));
+                        }
+                        chart_style_seen = true;
+                        let mut value = None;
+                        for attribute in event.attributes().with_checks(false) {
+                            let attribute =
+                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                            if attribute.key.local_name().as_ref() == b"val" {
+                                let raw = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                                value = raw
+                                    .parse::<u8>()
+                                    .ok()
+                                    .filter(|style| (1..=48).contains(style));
+                            }
+                        }
+                        let Some(style) = value else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an invalid c:style ID; use an integer from 1 through 48"
+                            )));
+                        };
+                        if style != 2 {
+                            chart_style = Some(style);
                         }
                     }
                     "numFmt" => {
@@ -8350,6 +8401,7 @@ fn parse_chart_xml(
         legend_position: legend_position.filter(|position| *position != "right"),
         hole_size: hole_size.filter(|size| *size != 50),
         first_slice_angle: first_slice_angle.filter(|angle| *angle != 0),
+        style: chart_style,
         alt_text: anchor.alt_text,
         series,
     })
@@ -8964,6 +9016,9 @@ fn is_supported_chart_attribute(
         ("lblAlgn", "val") => matches!(value, "ctr" | "l" | "r"),
         ("lblOffset", "val") => value == "100",
         ("crossBetween", "val") => matches!(value, "between" | "midCat"),
+        ("style", "val") => value
+            .parse::<u8>()
+            .is_ok_and(|style| (1..=48).contains(&style)),
         ("numFmt", "formatCode") => {
             !value.is_empty()
                 && value.chars().count() <= 255
@@ -11504,6 +11559,7 @@ struct WorksheetChart {
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,
     first_slice_angle: Option<u16>,
+    style: Option<u8>,
     alt_text: Option<String>,
     series: Vec<WorksheetChartSeries>,
 }
