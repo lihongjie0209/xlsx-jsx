@@ -179,11 +179,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.xAxisNumberFormat?: string` and `Chart.yAxisNumberFormat?: string`
   set Excel number-format codes on the corresponding category/date and value
   axes. Each is a non-empty, XML-safe format code of at most 255 characters;
-  omission keeps the writer's source-linked default. The properties are
-  mutually exclusive with pie/doughnut charts and scatter charts (whose two
-  axes are both value axes and cannot be unambiguously mapped to X/Y by this
-  writer subset). Reverse preserves explicit `sourceLinked=false` codes and
-  rejects non-default source-linked codes rather than dropping them.
+  omission keeps the writer's source-linked default. They are invalid for
+  pie/doughnut charts. Scatter charts use their bottom/left value-axis positions
+  to map these formats to X/Y independently. Reverse preserves explicit
+  `sourceLinked=false` codes and rejects non-default source-linked codes rather
+  than dropping them.
 - `Chart.yAxisMin?: number` and `Chart.yAxisMax?: number` set the numeric bounds
   of the chart's value axis and default to automatic scaling when omitted. Each
   value must be finite; if both are supplied, the minimum must be less than the

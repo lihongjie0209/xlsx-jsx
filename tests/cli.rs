@@ -4613,12 +4613,12 @@ fn validates_stock_series_share_one_category_range() {
 }
 
 #[test]
-fn rejects_axis_number_formats_for_ambiguous_scatter_axes() {
+fn validates_independent_scatter_axis_number_formats() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("scatter-axis-format.tsx");
     std::fs::write(
         &input,
-        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisNumberFormat="0.00"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisNumberFormat="0.00" yAxisNumberFormat="0.0%"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
     )
     .expect("source writes");
     Command::cargo_bin("xlsx-jsx")
@@ -4626,9 +4626,59 @@ fn rejects_axis_number_formats_for_ambiguous_scatter_axes() {
         .args(["validate"])
         .arg(input)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("not supported for scatter"))
-        .stderr(predicate::str::contains("unambiguous category/value axes"));
+        .success();
+}
+
+#[test]
+fn reverses_and_rebuilds_external_scatter_axis_number_formats_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-axis-format.xlsx");
+    let output_path = directory.path().join("external-scatter-axis-format.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.x_axis().set_num_format("#,##0.00");
+    chart.y_axis().set_num_format("0.0%");
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(
+        source.contains("xAxisNumberFormat={\"#,##0.00\"}"),
+        "{source}"
+    );
+    assert!(source.contains("yAxisNumberFormat={\"0.0%\"}"), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-axis-format.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        xml.contains("formatCode=\"#,##0.00\" sourceLinked=\"0\""),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("formatCode=\"0.0%\" sourceLinked=\"0\""),
+        "{xml}"
+    );
 }
 
 #[test]

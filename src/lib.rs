@@ -2174,9 +2174,9 @@ fn validate_chart_axis_number_formats(chart: &Node, chart_type: &str) -> Result<
     {
         return Ok(());
     }
-    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+    if matches!(chart_type, "pie" | "doughnut") {
         return Err(Error::Compile(
-            "Chart axis number formats are not supported for scatter, pie, or doughnut charts; use an area, bar, column, line, radar, or stock chart with unambiguous category/value axes".into(),
+            "Chart axis number formats are not supported for pie or doughnut charts because they have no axes; use a chart with numeric axes or omit the formats".into(),
         ));
     }
     for property in properties {

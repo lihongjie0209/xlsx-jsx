@@ -642,8 +642,6 @@
                   "anyOf": [
                     { "required": ["xAxisTitle"] },
                     { "required": ["yAxisTitle"] },
-                    { "required": ["xAxisNumberFormat"] },
-                    { "required": ["yAxisNumberFormat"] },
                     { "required": ["yAxisLogBase"] },
                     { "required": ["valueAxisReversed"] },
                     { "required": ["valueAxisDisplayUnit"] },

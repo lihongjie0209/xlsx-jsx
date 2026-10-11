@@ -9356,13 +9356,6 @@ fn parse_chart_xml(
                                     "chart part `{part}` has an axis numFmt without sourceLinked; use an explicit sourceLinked boolean"
                                 )));
                             };
-                            if chart_type.is_some_and(|value| value.starts_with("scatter"))
-                                && !source_linked
-                            {
-                                return Err(Error::Reverse(format!(
-                                    "chart part `{part}` has a fixed number format on a scatter value axis, whose X/Y role is ambiguous; remove it or use a category-axis chart"
-                                )));
-                            }
                             if source_linked {
                                 let is_writer_default = format_code == "General"
                                     || (format_code == "0%"
@@ -9384,7 +9377,22 @@ fn parse_chart_xml(
                                         "chart part `{part}` has an axis format outside the 1–255 XML-safe character range; repair the format code"
                                     )));
                                 }
-                                let (seen, target) = if category_axis_context {
+                                let horizontal_scatter_axis = if chart_type
+                                    .is_some_and(|value| value.starts_with("scatter"))
+                                {
+                                    match current_axis_position {
+                                        Some("b") => true,
+                                        Some("l") => false,
+                                        _ => {
+                                            return Err(Error::Reverse(format!(
+                                                "chart part `{part}` has a scatter axis number format without a bottom horizontal or left vertical position; restore the primary axis positions"
+                                            )));
+                                        }
+                                    }
+                                } else {
+                                    category_axis_context
+                                };
+                                let (seen, target) = if horizontal_scatter_axis {
                                     (&mut x_axis_number_format_seen, &mut x_axis_number_format)
                                 } else {
                                     (&mut y_axis_number_format_seen, &mut y_axis_number_format)
