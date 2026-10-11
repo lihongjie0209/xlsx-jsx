@@ -818,6 +818,10 @@ fn configure_chart_series_data_labels(
         .get("labelSeparator")
         .and_then(Value::as_str)
         .and_then(chart_data_label_separator_value);
+    let number_format = series
+        .props
+        .get("labelNumberFormat")
+        .and_then(Value::as_str);
     if !(show_value
         || show_category_name
         || show_series_name
@@ -826,6 +830,7 @@ fn configure_chart_series_data_labels(
         || show_leader_lines
         || position.is_some())
         && separator.is_none()
+        && number_format.is_none()
     {
         return;
     }
@@ -853,6 +858,9 @@ fn configure_chart_series_data_labels(
     }
     if let Some(separator) = separator {
         data_label.set_separator(separator);
+    }
+    if let Some(number_format) = number_format {
+        data_label.set_num_format(number_format);
     }
     chart_series.set_data_label(&data_label);
 }
@@ -4013,6 +4021,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(separator) = &series.label_separator {
             let _ = write!(output, " labelSeparator=\"{separator}\"");
         }
+        if let Some(number_format) = &series.label_number_format {
+            let _ = write!(output, " labelNumberFormat={number_format:?}");
+        }
         output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
@@ -6906,6 +6917,7 @@ fn parse_chart_xml(
         "showLegendKey",
         "showLeaderLines",
         "separator",
+        "numFmt",
         "extLst",
         "ext",
         "style",
@@ -7055,6 +7067,7 @@ fn parse_chart_xml(
                             | "showLegendKey"
                             | "showLeaderLines"
                             | "separator"
+                            | "numFmt"
                             | "extLst"
                             | "ext"
                     )
@@ -7804,85 +7817,127 @@ fn parse_chart_xml(
                         }
                     }
                     "numFmt" => {
-                        let category_axis_context = stack
-                            .iter()
-                            .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"));
-                        let value_axis_context = stack.iter().any(|ancestor| ancestor == "valAx");
-                        if !category_axis_context && !value_axis_context {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a number format outside a primary axis; remove it or extend chart number-format support"
-                            )));
-                        }
-                        let mut format_code = None;
-                        let mut source_linked = None;
-                        for attribute in event.attributes().with_checks(false) {
-                            let attribute =
-                                attribute.map_err(|error| Error::Reverse(error.to_string()))?;
-                            let value = attribute
-                                .decoded_and_normalized_value(
-                                    XmlVersion::Implicit1_0,
-                                    reader.decoder(),
-                                )
-                                .map_err(|error| Error::Reverse(error.to_string()))?
-                                .into_owned();
-                            match attribute.key.local_name().as_ref() {
-                                b"formatCode" => format_code = Some(value),
-                                b"sourceLinked" => {
-                                    source_linked = Some(matches!(value.as_str(), "1" | "true"));
+                        if stack.last().is_some_and(|parent| parent == "dLbls")
+                            && stack.iter().any(|ancestor| ancestor == "ser")
+                        {
+                            let mut format_code = None;
+                            let mut source_linked = None;
+                            for attribute in event.attributes().with_checks(false) {
+                                let attribute =
+                                    attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?
+                                    .into_owned();
+                                match attribute.key.local_name().as_ref() {
+                                    b"formatCode" => format_code = Some(value),
+                                    b"sourceLinked" => {
+                                        source_linked =
+                                            Some(matches!(value.as_str(), "1" | "true"));
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
-                        }
-                        let format_code = format_code.ok_or_else(|| {
+                            let format_code = format_code.ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a data-label numFmt without formatCode; add an explicit Excel number format"
+                            )))?;
+                            if source_linked != Some(false) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a linked or implicit data-label number format; set sourceLinked=\"0\" to preserve an explicit format code"
+                                )));
+                            }
+                            let current = series.last_mut().expect("series context");
+                            if current.label_number_format.replace(format_code).is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats the series data-label number format; retain one c:numFmt"
+                                )));
+                            }
+                        } else {
+                            let category_axis_context = stack
+                                .iter()
+                                .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"));
+                            let value_axis_context =
+                                stack.iter().any(|ancestor| ancestor == "valAx");
+                            if !category_axis_context && !value_axis_context {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a number format outside a primary axis; remove it or extend chart number-format support"
+                                )));
+                            }
+                            let mut format_code = None;
+                            let mut source_linked = None;
+                            for attribute in event.attributes().with_checks(false) {
+                                let attribute =
+                                    attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                                let value = attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?
+                                    .into_owned();
+                                match attribute.key.local_name().as_ref() {
+                                    b"formatCode" => format_code = Some(value),
+                                    b"sourceLinked" => {
+                                        source_linked =
+                                            Some(matches!(value.as_str(), "1" | "true"));
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            let format_code = format_code.ok_or_else(|| {
                             Error::Reverse(format!(
                                 "chart part `{part}` has an axis numFmt without formatCode; add an explicit Excel number format"
                             ))
                         })?;
-                        let Some(source_linked) = source_linked else {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has an axis numFmt without sourceLinked; use an explicit sourceLinked boolean"
-                            )));
-                        };
-                        if chart_type.is_some_and(|value| value.starts_with("scatter"))
-                            && !source_linked
-                        {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a fixed number format on a scatter value axis, whose X/Y role is ambiguous; remove it or use a category-axis chart"
-                            )));
-                        }
-                        if source_linked {
-                            let is_writer_default = format_code == "General"
-                                || (format_code == "0%"
-                                    && chart_type.is_some_and(is_percent_stacked_chart_type))
-                                || (format_code == "dd/mm/yyyy"
-                                    && chart_type == Some("stock")
-                                    && category_axis_context);
-                            if !is_writer_default {
+                            let Some(source_linked) = source_linked else {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` has non-default source-linked axis format `{format_code}`; use sourceLinked=false for a fixed format or remove the override"
+                                    "chart part `{part}` has an axis numFmt without sourceLinked; use an explicit sourceLinked boolean"
                                 )));
-                            }
-                        } else {
-                            if format_code.is_empty()
-                                || format_code.chars().count() > 255
-                                || !format_code.chars().all(is_valid_xml_character)
+                            };
+                            if chart_type.is_some_and(|value| value.starts_with("scatter"))
+                                && !source_linked
                             {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` has an axis format outside the 1–255 XML-safe character range; repair the format code"
+                                    "chart part `{part}` has a fixed number format on a scatter value axis, whose X/Y role is ambiguous; remove it or use a category-axis chart"
                                 )));
                             }
-                            let (seen, target) = if category_axis_context {
-                                (&mut x_axis_number_format_seen, &mut x_axis_number_format)
+                            if source_linked {
+                                let is_writer_default = format_code == "General"
+                                    || (format_code == "0%"
+                                        && chart_type.is_some_and(is_percent_stacked_chart_type))
+                                    || (format_code == "dd/mm/yyyy"
+                                        && chart_type == Some("stock")
+                                        && category_axis_context);
+                                if !is_writer_default {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has non-default source-linked axis format `{format_code}`; use sourceLinked=false for a fixed format or remove the override"
+                                    )));
+                                }
                             } else {
-                                (&mut y_axis_number_format_seen, &mut y_axis_number_format)
-                            };
-                            if *seen {
-                                return Err(Error::Reverse(format!(
-                                    "chart part `{part}` repeats an explicit axis number format; keep one format per primary axis"
-                                )));
+                                if format_code.is_empty()
+                                    || format_code.chars().count() > 255
+                                    || !format_code.chars().all(is_valid_xml_character)
+                                {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has an axis format outside the 1–255 XML-safe character range; repair the format code"
+                                    )));
+                                }
+                                let (seen, target) = if category_axis_context {
+                                    (&mut x_axis_number_format_seen, &mut x_axis_number_format)
+                                } else {
+                                    (&mut y_axis_number_format_seen, &mut y_axis_number_format)
+                                };
+                                if *seen {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats an explicit axis number format; keep one format per primary axis"
+                                    )));
+                                }
+                                *seen = true;
+                                *target = Some(format_code);
                             }
-                            *seen = true;
-                            *target = Some(format_code);
                         }
                     }
                     "min" | "max" => {
@@ -8166,6 +8221,7 @@ fn parse_chart_xml(
                         show_legend_key: None,
                         show_leader_lines: None,
                         label_separator: None,
+                        label_number_format: None,
                         data_label_flags_seen: [false; 6],
                         data_labels_seen: false,
                         data_label_position_seen: false,
@@ -8708,7 +8764,8 @@ fn parse_chart_xml(
                 || item.show_legend_key == Some(true)
                 || item.show_leader_lines == Some(true)
                 || item.label_position.is_some()
-                || item.label_separator.is_some());
+                || item.label_separator.is_some()
+                || item.label_number_format.is_some());
         if has_unsupported_value_default {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` combines a data-label option with no value/category/percentage label; rust_xlsxwriter automatically enables values for this combination, so add an explicit showVal or remove the ancillary option"
@@ -12161,6 +12218,7 @@ struct WorksheetChartSeries {
     show_legend_key: Option<bool>,
     show_leader_lines: Option<bool>,
     label_separator: Option<String>,
+    label_number_format: Option<String>,
     data_label_flags_seen: [bool; 6],
     data_labels_seen: bool,
     data_label_position_seen: bool,

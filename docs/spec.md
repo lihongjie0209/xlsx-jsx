@@ -220,14 +220,19 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   fields; omission uses the writer's comma default. Reverse strips the one
   trailing space the pinned writer serializes after the separator character.
   Explicit false flags and the default comma separator fold to omission.
-  When no category or percentage is displayed, the pinned writer serializes
-  value labels even if legend keys, leader lines, position, or a separator are
-  also requested. Therefore `showValue={false}` cannot be combined with those
+  `Series.labelNumberFormat?: string` sets the label number format using
+  `ChartDataLabel::set_num_format`; it must contain 1–255 valid XML characters.
+  Reverse preserves a series `<c:numFmt>` only when `sourceLinked="0"` (the
+  writer's explicit, unlinked format) is present; linked or implicit formats
+  are rejected because they cannot be reproduced exactly. When no category or
+  percentage is displayed, the pinned writer serializes value labels even if
+  legend keys, leader lines, position, a separator, or a number format are also
+  requested. Therefore `showValue={false}` cannot be combined with those
   options unless `showCategoryName` or `showPercentage` is true. Reverse rejects
   external combinations the writer would normalize by adding values. Default
-  false flags and the comma separator are omitted. Numeric formats, custom
-  text, fonts, and point-specific labels are not represented and are rejected
-  with repair guidance.
+  false flags and the comma separator are omitted. Custom label text, fonts,
+  and point-specific labels are not represented and are rejected with repair
+  guidance.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed

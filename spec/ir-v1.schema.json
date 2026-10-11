@@ -680,7 +680,8 @@
             "labelPosition": { "enum": ["center", "right", "left", "above", "below", "insideBase", "insideEnd", "outsideEnd", "bestFit"] },
             "showLegendKey": { "type": "boolean" },
             "showLeaderLines": { "type": "boolean" },
-            "labelSeparator": { "enum": ["comma", "semicolon", "period", "space", "newline"] }
+            "labelSeparator": { "enum": ["comma", "semicolon", "period", "space", "newline"] },
+            "labelNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 }
           },
           "additionalProperties": false
         },

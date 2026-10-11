@@ -155,6 +155,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("showLegendKey"))
         .stdout(predicate::str::contains("showLeaderLines"))
         .stdout(predicate::str::contains("labelSeparator"))
+        .stdout(predicate::str::contains("labelNumberFormat"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1569,6 +1570,77 @@ fn reverses_external_series_data_label_extras_without_a_manifest() {
     assert!(line_xml.contains("<c15:showLeaderLines val=\"1\"/>"));
     assert!(line_xml.contains("<c:separator>; </c:separator>"));
     assert!(pie_xml.contains("<c:showLeaderLines val=\"1\"/>"));
+}
+
+#[test]
+fn reverses_external_series_data_label_number_formats_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-data-label-number-format.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-data-label-number-format.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    let mut label = ChartDataLabel::new();
+    label.show_value().set_num_format("0.00%");
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_data_label(&label);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("labelNumberFormat=\"0.00%\""));
+
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-data-label-number-format.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<c:numFmt formatCode=\"0.00%\" sourceLinked=\"0\"/>"));
+}
+
+#[test]
+fn rejects_invalid_chart_data_label_number_formats_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("invalid-data-label-number-format.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" labelNumberFormat="" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Series.labelNumberFormat must contain 1–255 valid XML characters",
+        ))
+        .stderr(predicate::str::contains("shorten the format code"));
 }
 
 #[test]

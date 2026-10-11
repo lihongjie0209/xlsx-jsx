@@ -2530,6 +2530,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "showLegendKey",
                 "showLeaderLines",
                 "labelSeparator",
+                "labelNumberFormat",
             ],
             "Series",
         )?;
@@ -2637,10 +2638,11 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
         .iter()
         .any(|property| series.props.get(*property).and_then(Value::as_bool) == Some(true))
         || series.props.contains_key("labelPosition")
-        || series.props.contains_key("labelSeparator");
+        || series.props.contains_key("labelSeparator")
+        || series.props.contains_key("labelNumberFormat");
     if value_suppressed && !category_or_percentage_shown && another_label_option {
         return Err(Error::Compile(
-            "Series.showValue={false} cannot be combined with Series.showLegendKey, showLeaderLines, showSeriesName, labelPosition, or labelSeparator because rust_xlsxwriter automatically enables values; enable showCategoryName or showPercentage, or remove the conflicting options".into(),
+            "Series.showValue={false} cannot be combined with Series.showLegendKey, showLeaderLines, showSeriesName, labelPosition, labelSeparator, or labelNumberFormat because rust_xlsxwriter automatically enables values; enable showCategoryName or showPercentage, or remove the conflicting options".into(),
         ));
     }
     if let Some(value) = series.props.get("labelPosition") {
@@ -2670,6 +2672,21 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
         return Err(Error::Compile(
             "Series.labelSeparator must be comma, semicolon, period, space, or newline; choose one of those values or omit the property".into(),
         ));
+    }
+    if let Some(value) = series.props.get("labelNumberFormat") {
+        let Some(format) = value.as_str() else {
+            return Err(Error::Compile(
+                "Series.labelNumberFormat must be a string; use a quoted Excel number-format code or omit the property".into(),
+            ));
+        };
+        if format.is_empty()
+            || format.chars().count() > 255
+            || !format.chars().all(is_valid_xml_character)
+        {
+            return Err(Error::Compile(
+                "Series.labelNumberFormat must contain 1–255 valid XML characters; shorten the format code or remove control characters".into(),
+            ));
+        }
     }
     Ok(())
 }
