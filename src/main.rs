@@ -11,8 +11,8 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use rust_xlsxwriter::{
-    Chart, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartLegendPosition,
-    ChartLine, ChartMarker, ChartType, Color, ConditionalFormat2ColorScale,
+    Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
+    ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color, ConditionalFormat2ColorScale,
     ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
     ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
     ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
@@ -713,6 +713,7 @@ fn compile_chart(
         }
     }
     configure_chart_visual_properties(&mut chart, component);
+    configure_chart_axis_crossings(&mut chart, component);
     if let Some(name) = component.props.get("name").and_then(Value::as_str) {
         chart.set_name(name);
     }
@@ -972,6 +973,26 @@ fn configure_chart_visual_properties(chart: &mut Chart, component: &Node) {
         .and_then(Value::as_u64)
     {
         chart.set_rotation(u16::try_from(angle).expect("validated Chart.firstSliceAngle"));
+    }
+}
+
+fn configure_chart_axis_crossings(chart: &mut Chart, component: &Node) {
+    for (property, horizontal_handle) in [("xAxisCrossing", true), ("yAxisCrossing", false)] {
+        let Some(value) = component.props.get(property).and_then(Value::as_str) else {
+            continue;
+        };
+        let crossing = match value {
+            "automatic" => ChartAxisCrossing::Automatic,
+            "min" => ChartAxisCrossing::Min,
+            "max" => ChartAxisCrossing::Max,
+            _ => unreachable!("Chart axis crossings were validated"),
+        };
+        let axis = if horizontal_handle {
+            chart.x_axis()
+        } else {
+            chart.y_axis()
+        };
+        axis.set_crossing(crossing);
     }
 }
 
@@ -3897,6 +3918,14 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     let mut properties = String::new();
     if let Some(style) = chart.style {
         let _ = write!(properties, " style={{{style}}}");
+    }
+    for (name, value) in [
+        ("xAxisCrossing", chart.x_axis_crossing),
+        ("yAxisCrossing", chart.y_axis_crossing),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}=\"{value}\"");
+        }
     }
     append_chart_axis_value_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
@@ -6846,6 +6875,10 @@ fn parse_chart_xml(
     let mut first_slice_angle_seen = false;
     let mut chart_style = None;
     let mut chart_style_seen = false;
+    let mut x_axis_crossing = None;
+    let mut y_axis_crossing = None;
+    let mut x_axis_crossing_seen = false;
+    let mut y_axis_crossing_seen = false;
     let mut radar_style = None;
     let mut radar_style_seen = false;
     let mut scatter_style = None;
@@ -7174,6 +7207,91 @@ fn parse_chart_xml(
                         category_axis_label_alignment_seen = true;
                         if alignment != "center" {
                             category_axis_label_alignment = Some(alignment);
+                        }
+                    }
+                    "crosses" => {
+                        let Some(chart_type) = chart_type else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has crosses before its chart type; retain a supported chart family"
+                            )));
+                        };
+                        let Some(axis_tag) = stack.iter().rev().find(|ancestor| {
+                            matches!(ancestor.as_str(), "catAx" | "dateAx" | "valAx")
+                        }) else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has crosses outside a primary chart axis; repair the axis structure"
+                            )));
+                        };
+                        let raw_value = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            });
+                        let Some(crossing) = raw_value.as_deref().and_then(|value| match value {
+                            "autoZero" => Some("automatic"),
+                            "min" => Some("min"),
+                            "max" => Some("max"),
+                            _ => None,
+                        }) else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported crosses; use autoZero, min, or max, and avoid numeric crossesAt settings"
+                            )));
+                        };
+                        let supported_family = matches!(
+                            chart_type,
+                            "area"
+                                | "areaStacked"
+                                | "areaPercentStacked"
+                                | "column"
+                                | "columnStacked"
+                                | "columnPercentStacked"
+                                | "bar"
+                                | "barStacked"
+                                | "barPercentStacked"
+                                | "line"
+                                | "lineStacked"
+                                | "linePercentStacked"
+                        );
+                        if !supported_family && crossing != "automatic" {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` custom axis crossings are supported only for area, column, bar, and line charts; remove the override or use one of those chart types"
+                            )));
+                        }
+                        if axis_tag == "dateAx" && crossing != "automatic" {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` sets a crossing on a date axis, whose axis type is not represented by this DSL; restore autoZero or use a category axis"
+                            )));
+                        }
+                        if supported_family {
+                            let is_bar = chart_type.starts_with("bar");
+                            let horizontal_handle = match axis_tag.as_str() {
+                                "valAx" => !is_bar,
+                                "catAx" | "dateAx" => is_bar,
+                                _ => unreachable!("axis element was matched above"),
+                            };
+                            let (seen, target) = if horizontal_handle {
+                                (&mut x_axis_crossing_seen, &mut x_axis_crossing)
+                            } else {
+                                (&mut y_axis_crossing_seen, &mut y_axis_crossing)
+                            };
+                            if *seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats the same axis crossing; retain one primary axis crossing declaration"
+                                )));
+                            }
+                            *seen = true;
+                            if crossing != "automatic" {
+                                *target = Some(crossing);
+                            }
                         }
                     }
                     "crossBetween" => {
@@ -8303,7 +8421,11 @@ fn parse_chart_xml(
             "chart part `{part}` has a non-positive bound on a logarithmic value axis; remove the bound or set it to a positive value"
         )));
     }
-    if nonstandard_axis_position_seen && value_axis_reversed != Some(true) {
+    if nonstandard_axis_position_seen
+        && value_axis_reversed != Some(true)
+        && x_axis_crossing != Some("max")
+        && y_axis_crossing != Some("max")
+    {
         return Err(Error::Reverse(format!(
             "chart part `{part}` uses top/right axis positions without a reversed value axis; restore bottom/left positions or add explicit axis-position support"
         )));
@@ -8385,6 +8507,8 @@ fn parse_chart_xml(
         vertical_axis_label_position,
         category_axis_label_alignment,
         category_axis_on_tick_marks: category_axis_on_tick_marks.then_some(true),
+        x_axis_crossing,
+        y_axis_crossing,
         horizontal_axis_hidden: horizontal_axis_hidden.then_some(true),
         vertical_axis_hidden: vertical_axis_hidden.then_some(true),
         y_axis_major_unit,
@@ -9005,7 +9129,7 @@ fn is_supported_chart_attribute(
         ("majorTickMark" | "minorTickMark", "val") => {
             matches!(value, "cross" | "in" | "out" | "none")
         }
-        ("crosses", "val") => value == "autoZero",
+        ("crosses", "val") => matches!(value, "autoZero" | "min" | "max"),
         ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
         ("delete", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("numFmt", "sourceLinked") => {
@@ -11553,6 +11677,8 @@ struct WorksheetChart {
     vertical_axis_label_position: Option<&'static str>,
     category_axis_label_alignment: Option<&'static str>,
     category_axis_on_tick_marks: Option<bool>,
+    x_axis_crossing: Option<&'static str>,
+    y_axis_crossing: Option<&'static str>,
     horizontal_axis_hidden: Option<bool>,
     vertical_axis_hidden: Option<bool>,
     show_legend: bool,

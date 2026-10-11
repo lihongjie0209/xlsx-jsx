@@ -2,8 +2,8 @@ use assert_cmd::Command;
 use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
-    Chart as XlsxChart, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
-    ChartLine, ChartMarker, ChartType, Workbook as XlsxWorkbook,
+    Chart as XlsxChart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition,
+    ChartAxisTickType, ChartLine, ChartMarker, ChartType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -144,6 +144,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("categoryAxisLabelAlignment"))
         .stdout(predicate::str::contains("categoryAxisOnTickMarks"))
         .stdout(predicate::str::contains("style"))
+        .stdout(predicate::str::contains("xAxisCrossing"))
+        .stdout(predicate::str::contains("yAxisCrossing"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1319,6 +1321,86 @@ fn rejects_chart_style_outside_the_excel_range_with_guidance() {
             "Chart.style must be an integer from 1 through 48",
         ))
         .stderr(predicate::str::contains("built-in Excel chart style ID"));
+}
+
+#[test]
+fn reverses_external_chart_axis_crossings_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-crossing.xlsx");
+    let output_path = directory.path().join("external-axis-crossing.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+
+    let mut column = XlsxChart::new(ChartType::Column);
+    column
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    column.x_axis().set_crossing(ChartAxisCrossing::Max);
+    column.y_axis().set_crossing(ChartAxisCrossing::Min);
+    worksheet.insert_chart(0, 5, &column).unwrap();
+
+    let mut bar = XlsxChart::new(ChartType::Bar);
+    bar.add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    bar.x_axis().set_crossing(ChartAxisCrossing::Min);
+    bar.y_axis().set_crossing(ChartAxisCrossing::Max);
+    worksheet.insert_chart(18, 5, &bar).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("xAxisCrossing=\"max\""));
+    assert!(source.contains("yAxisCrossing=\"min\""));
+    assert!(source.contains("xAxisCrossing=\"min\""));
+    assert!(source.contains("yAxisCrossing=\"max\""));
+
+    let rebuilt_path = directory.path().join("rebuilt-axis-crossing.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let column_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    let bar_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    assert!(column_xml.contains("<c:crosses val=\"max\"/>"));
+    assert!(column_xml.contains("<c:crosses val=\"min\"/>"));
+    assert!(bar_xml.contains("<c:crosses val=\"max\"/>"));
+    assert!(bar_xml.contains("<c:crosses val=\"min\"/>"));
+}
+
+#[test]
+fn rejects_axis_crossings_on_scatter_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-axis-crossing.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisCrossing="min"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "xAxisCrossing is supported only for area, column, bar, and line charts",
+        ))
+        .stderr(predicate::str::contains(
+            "omit it or choose one of those chart types",
+        ));
 }
 
 #[test]

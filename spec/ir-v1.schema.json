@@ -526,6 +526,8 @@
             "holeSize": { "type": "integer", "minimum": 10, "maximum": 90 },
             "firstSliceAngle": { "type": "integer", "minimum": 0, "maximum": 360 },
             "style": { "type": "integer", "minimum": 1, "maximum": 48 },
+            "xAxisCrossing": { "enum": ["automatic", "min", "max"] },
+            "yAxisCrossing": { "enum": ["automatic", "min", "max"] },
             "width": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "height": { "type": "integer", "minimum": 1, "maximum": 1790 }
           },
@@ -560,6 +562,8 @@
                     { "required": ["verticalAxisLabelPosition"] },
                     { "required": ["categoryAxisLabelAlignment"] },
                     { "required": ["categoryAxisOnTickMarks"] },
+                    { "required": ["xAxisCrossing"] },
+                    { "required": ["yAxisCrossing"] },
                     { "required": ["horizontalAxisHidden"] },
                     { "required": ["verticalAxisHidden"] },
                     { "required": ["yAxisMajorUnit"] },
@@ -578,7 +582,7 @@
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },
           "then": {
             "properties": {
-              "props": { "not": { "anyOf": [{ "required": ["categoryAxisLabelAlignment"] }, { "required": ["categoryAxisOnTickMarks"] }] } }
+              "props": { "not": { "anyOf": [{ "required": ["categoryAxisLabelAlignment"] }, { "required": ["categoryAxisOnTickMarks"] }, { "required": ["xAxisCrossing"] }, { "required": ["yAxisCrossing"] }] } }
             }
           }
         },

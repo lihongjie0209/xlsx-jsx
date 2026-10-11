@@ -195,6 +195,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   style IDs. This is a preset selector, not a guarantee of identical rendering
   across spreadsheet applications; custom series/area/plot styling remains a
   separate unsupported surface.
+- `Chart.xAxisCrossing?: "automatic" | "min" | "max"` and
+  `Chart.yAxisCrossing?: "automatic" | "min" | "max"` set where the opposite
+  axis crosses each `ChartAxis` handle. They map to OOXML `crosses` values
+  `autoZero`, `min`, and `max`; omission and `automatic` use the default and
+  are folded on reverse. The names follow rust_xlsxwriter's x/y axis handles,
+  including its bar-chart axis swap. Numeric `crossesAt` values and crossing
+  metadata on secondary, date, or ambiguous axes are rejected with repair guidance.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed

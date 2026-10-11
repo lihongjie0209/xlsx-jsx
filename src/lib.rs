@@ -1919,6 +1919,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "holeSize",
             "firstSliceAngle",
             "style",
+            "xAxisCrossing",
+            "yAxisCrossing",
         ],
         "Chart",
     )?;
@@ -1940,7 +1942,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     validate_chart_presentation(chart, chart_type)?;
     validate_doughnut_hole_size(chart, chart_type)?;
     validate_chart_slice_angle(chart, chart_type)?;
-    validate_chart_style(chart)?;
+    validate_chart_visual_properties(chart, chart_type)?;
     let cell = chart
         .props
         .get("cell")
@@ -1989,6 +1991,47 @@ fn validate_chart_style(chart: &Node) -> Result<()> {
         return Err(Error::Compile(
             "Chart.style must be an integer from 1 through 48; choose a built-in Excel chart style ID".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_chart_visual_properties(chart: &Node, chart_type: &str) -> Result<()> {
+    validate_chart_style(chart)?;
+    validate_chart_crossings(chart, chart_type)
+}
+
+fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
+    for property in ["xAxisCrossing", "yAxisCrossing"] {
+        let Some(value) = chart.props.get(property) else {
+            continue;
+        };
+        if !matches!(
+            chart_type,
+            "area"
+                | "areaStacked"
+                | "areaPercentStacked"
+                | "column"
+                | "columnStacked"
+                | "columnPercentStacked"
+                | "bar"
+                | "barStacked"
+                | "barPercentStacked"
+                | "line"
+                | "lineStacked"
+                | "linePercentStacked"
+        ) {
+            return Err(Error::Compile(format!(
+                "Chart.{property} is supported only for area, column, bar, and line charts; omit it or choose one of those chart types"
+            )));
+        }
+        if !value
+            .as_str()
+            .is_some_and(|crossing| matches!(crossing, "automatic" | "min" | "max"))
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be automatic, min, or max; numeric crossing values are not represented yet"
+            )));
+        }
     }
     Ok(())
 }
