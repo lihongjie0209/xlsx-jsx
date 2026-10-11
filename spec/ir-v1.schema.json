@@ -677,7 +677,10 @@
             "showCategoryName": { "type": "boolean" },
             "showSeriesName": { "type": "boolean" },
             "showPercentage": { "type": "boolean" },
-            "labelPosition": { "enum": ["center", "right", "left", "above", "below", "insideBase", "insideEnd", "outsideEnd", "bestFit"] }
+            "labelPosition": { "enum": ["center", "right", "left", "above", "below", "insideBase", "insideEnd", "outsideEnd", "bestFit"] },
+            "showLegendKey": { "type": "boolean" },
+            "showLeaderLines": { "type": "boolean" },
+            "labelSeparator": { "enum": ["comma", "semicolon", "period", "space", "newline"] }
           },
           "additionalProperties": false
         },

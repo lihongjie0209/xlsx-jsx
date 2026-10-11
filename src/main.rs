@@ -29,8 +29,9 @@ use rust_xlsxwriter::{
 use serde_json::Value;
 use xlsx_jsx::{
     Error, IrEnvelope, Node, OutlineProperties, PrintRange, chart_data_label_position_is_supported,
-    collapsed_outline_ranges, format_a1_cell_reference, format_a1_range, format_print_range,
-    parse_a1_cell_reference, parse_a1_range, parse_print_range, runtime::evaluate_entry,
+    chart_data_label_separator_name, chart_data_label_separator_value, collapsed_outline_ranges,
+    format_a1_cell_reference, format_a1_range, format_print_range, parse_a1_cell_reference,
+    parse_a1_range, parse_print_range, runtime::evaluate_entry,
 };
 use zip::ZipArchive;
 
@@ -804,16 +805,27 @@ fn configure_chart_series_data_labels(
     let show_series_name =
         series.props.get("showSeriesName").and_then(Value::as_bool) == Some(true);
     let show_percentage = series.props.get("showPercentage").and_then(Value::as_bool) == Some(true);
+    let show_legend_key = series.props.get("showLegendKey").and_then(Value::as_bool) == Some(true);
+    let show_leader_lines =
+        series.props.get("showLeaderLines").and_then(Value::as_bool) == Some(true);
     let position = series
         .props
         .get("labelPosition")
         .and_then(Value::as_str)
         .and_then(chart_data_label_position);
+    let separator = series
+        .props
+        .get("labelSeparator")
+        .and_then(Value::as_str)
+        .and_then(chart_data_label_separator_value);
     if !(show_value
         || show_category_name
         || show_series_name
         || show_percentage
+        || show_legend_key
+        || show_leader_lines
         || position.is_some())
+        && separator.is_none()
     {
         return;
     }
@@ -832,6 +844,15 @@ fn configure_chart_series_data_labels(
     }
     if let Some(position) = position {
         data_label.set_position(position);
+    }
+    if show_legend_key {
+        data_label.show_legend_key();
+    }
+    if show_leader_lines {
+        data_label.show_leader_lines();
+    }
+    if let Some(separator) = separator {
+        data_label.set_separator(separator);
     }
     chart_series.set_data_label(&data_label);
 }
@@ -3983,6 +4004,15 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(position) = &series.label_position {
             let _ = write!(output, " labelPosition=\"{position}\"");
         }
+        if series.show_legend_key == Some(true) {
+            output.push_str(" showLegendKey={true}");
+        }
+        if series.show_leader_lines == Some(true) {
+            output.push_str(" showLeaderLines={true}");
+        }
+        if let Some(separator) = &series.label_separator {
+            let _ = write!(output, " labelSeparator=\"{separator}\"");
+        }
         output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
@@ -6873,6 +6903,11 @@ fn parse_chart_xml(
         "showSerName",
         "showPercent",
         "dLblPos",
+        "showLegendKey",
+        "showLeaderLines",
+        "separator",
+        "extLst",
+        "ext",
         "style",
         "txPr",
     ];
@@ -7012,7 +7047,16 @@ fn parse_chart_xml(
                 if stack.iter().any(|ancestor| ancestor == "dLbls")
                     && !matches!(
                         tag.as_str(),
-                        "showVal" | "showCatName" | "showSerName" | "showPercent" | "dLblPos"
+                        "showVal"
+                            | "showCatName"
+                            | "showSerName"
+                            | "showPercent"
+                            | "dLblPos"
+                            | "showLegendKey"
+                            | "showLeaderLines"
+                            | "separator"
+                            | "extLst"
+                            | "ext"
                     )
                 {
                     return Err(Error::Reverse(format!(
@@ -8119,9 +8163,13 @@ fn parse_chart_xml(
                         show_series_name: None,
                         show_percentage: None,
                         label_position: None,
-                        data_label_flags_seen: [false; 4],
+                        show_legend_key: None,
+                        show_leader_lines: None,
+                        label_separator: None,
+                        data_label_flags_seen: [false; 6],
                         data_labels_seen: false,
                         data_label_position_seen: false,
+                        label_separator_seen: false,
                     }),
                     "dLbls" => {
                         if stack.last().is_none_or(|ancestor| ancestor != "ser") {
@@ -8137,13 +8185,36 @@ fn parse_chart_xml(
                         }
                         current.data_labels_seen = true;
                     }
-                    "showVal" | "showCatName" | "showSerName" | "showPercent" => {
+                    "showVal" | "showCatName" | "showSerName" | "showPercent" | "showLegendKey"
+                    | "showLeaderLines" => {
                         if !stack.iter().any(|ancestor| ancestor == "dLbls")
                             || !stack.iter().any(|ancestor| ancestor == "ser")
                         {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has {tag} outside series data labels; repair the dLbls structure"
                             )));
+                        }
+                        if tag == "showLegendKey"
+                            && stack.last().is_none_or(|parent| parent != "dLbls")
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has showLegendKey outside the series dLbls group; keep it at the series-level label group"
+                            )));
+                        }
+                        if tag == "showLeaderLines" {
+                            let direct_group = stack.last().is_some_and(|parent| parent == "dLbls");
+                            let c15_extension = stack.last().is_some_and(|parent| parent == "ext")
+                                && stack.iter().any(|ancestor| ancestor == "extLst");
+                            if !direct_group && !c15_extension {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has showLeaderLines outside a supported series data-label group; use the standard pie/doughnut flag or the pinned c15 extension"
+                                )));
+                            }
+                            if direct_group != matches!(chart_type, Some("pie" | "doughnut")) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` uses the wrong showLeaderLines serialization for this chart type; use the pinned writer's pie/doughnut element or non-pie c15 extension form"
+                                )));
+                            }
                         }
                         if tag == "showPercent" && !matches!(chart_type, Some("pie" | "doughnut")) {
                             return Err(Error::Reverse(format!(
@@ -8180,6 +8251,8 @@ fn parse_chart_xml(
                             "showCatName" => (1, &mut current.show_category_name),
                             "showSerName" => (2, &mut current.show_series_name),
                             "showPercent" => (3, &mut current.show_percentage),
+                            "showLegendKey" => (4, &mut current.show_legend_key),
+                            "showLeaderLines" => (5, &mut current.show_leader_lines),
                             _ => unreachable!("data-label flag tag was matched"),
                         };
                         if current.data_label_flags_seen[index] {
@@ -8231,6 +8304,39 @@ fn parse_chart_xml(
                         }
                         current.data_label_position_seen = true;
                         current.label_position = Some(position.to_owned());
+                    }
+                    "extLst" => {
+                        if stack.last().is_none_or(|parent| parent != "dLbls") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has extLst outside series data labels; preserve only the pinned c15 leader-lines extension"
+                            )));
+                        }
+                    }
+                    "ext" => {
+                        if stack.last().is_none_or(|parent| parent != "extLst")
+                            || !stack.iter().any(|ancestor| ancestor == "dLbls")
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an extension outside supported data labels; preserve only the pinned c15 leader-lines extension"
+                            )));
+                        }
+                        validate_chart_leader_line_extension(&event, part, reader.decoder())?;
+                    }
+                    "separator" => {
+                        if stack.last().is_none_or(|parent| parent != "dLbls")
+                            || !stack.iter().any(|ancestor| ancestor == "ser")
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has separator outside series data labels; place one supported separator in dLbls"
+                            )));
+                        }
+                        let current = series.last_mut().expect("series context");
+                        if current.label_separator_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a data-label separator; retain exactly one separator value"
+                            )));
+                        }
+                        current.label_separator_seen = true;
                     }
                     "marker" if stack.iter().any(|ancestor| ancestor == "ser") => {
                         if let Some(current) = series.last_mut() {
@@ -8382,6 +8488,38 @@ fn parse_chart_xml(
                 }
             }
             Ok(Event::Text(text)) => {
+                if stack.last().is_some_and(|tag| tag == "separator") {
+                    let serialized_separator = text
+                        .xml_content(XmlVersion::Implicit1_0)
+                        .map_err(|error| Error::Reverse(error.to_string()))?
+                        .into_owned();
+                    let Some(separator) = serialized_separator.strip_suffix(' ') else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an unsupported data-label separator; the pinned writer requires one supported separator character followed by one space"
+                        )));
+                    };
+                    if separator.chars().count() != 1 {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an unsupported data-label separator; the pinned writer requires one supported separator character followed by one space"
+                        )));
+                    }
+                    let mut chars = separator.chars();
+                    let Some(separator) = chars.next() else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an empty data-label separator; use comma, semicolon, period, space, or newline"
+                        )));
+                    };
+                    let Some(name) = chart_data_label_separator_name(separator) else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` uses unsupported data-label separator `{separator}`; use comma, semicolon, period, space, or newline"
+                        )));
+                    };
+                    if let Some(current) = series.last_mut()
+                        && name != "comma"
+                    {
+                        current.label_separator = Some(name.to_owned());
+                    }
+                }
                 if series_literal_title_open {
                     let title_text = text
                         .xml_content(XmlVersion::Implicit1_0)
@@ -8563,20 +8701,24 @@ fn parse_chart_xml(
         if item.label_position.as_deref() == chart_default_data_label_position(chart_type) {
             item.label_position = None;
         }
+        let has_unsupported_value_default = item.show_value != Some(true)
+            && item.show_category_name != Some(true)
+            && item.show_percentage != Some(true)
+            && (item.show_series_name == Some(true)
+                || item.show_legend_key == Some(true)
+                || item.show_leader_lines == Some(true)
+                || item.label_position.is_some()
+                || item.label_separator.is_some());
+        if has_unsupported_value_default {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` combines a data-label option with no value/category/percentage label; rust_xlsxwriter automatically enables values for this combination, so add an explicit showVal or remove the ancillary option"
+            )));
+        }
         if let Some(position) = item.label_position.as_deref()
             && !chart_data_label_position_is_supported(chart_type, position)
         {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` uses label position `{position}` that is not supported for `{chart_type}` charts; choose a position supported by that chart type or remove the custom placement"
-            )));
-        }
-        if item.show_series_name == Some(true)
-            && item.show_value != Some(true)
-            && item.show_category_name != Some(true)
-            && item.show_percentage != Some(true)
-        {
-            return Err(Error::Reverse(format!(
-                "chart part `{part}` shows only series names in data labels, which rust_xlsxwriter cannot reproduce without also enabling values; enable showValue or add category/percentage labels"
             )));
         }
     }
@@ -9385,6 +9527,10 @@ fn is_supported_chart_attribute(
         ("showVal" | "showCatName" | "showSerName" | "showPercent", "val") => {
             matches!(value, "0" | "1" | "false" | "true")
         }
+        ("showLegendKey" | "showLeaderLines", "val") => {
+            matches!(value, "0" | "1" | "false" | "true")
+        }
+        ("ext", "uri") => value == "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}",
         ("dLblPos", "val") => chart_data_label_position_from_ooxml(value).is_some(),
         ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
         ("delete", "val") => matches!(value, "0" | "1" | "false" | "true"),
@@ -9439,6 +9585,30 @@ fn chart_data_label_position_from_ooxml(value: &str) -> Option<&'static str> {
         "bestFit" => Some("bestFit"),
         _ => None,
     }
+}
+
+fn validate_chart_leader_line_extension(
+    event: &BytesStart<'_>,
+    part: &str,
+    decoder: quick_xml::encoding::Decoder,
+) -> xlsx_jsx::Result<()> {
+    let mut has_expected_namespace = false;
+    for attribute in event.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+        if attribute.key.as_ref() == b"xmlns:c15" {
+            has_expected_namespace = attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+                .is_ok_and(|value| {
+                    value.as_ref() == "http://schemas.microsoft.com/office/drawing/2012/chart"
+                });
+        }
+    }
+    if !has_expected_namespace {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a leader-line extension without the pinned c15 namespace; retain the standard writer-generated c15 extension"
+        )));
+    }
+    Ok(())
 }
 
 #[expect(
@@ -11988,9 +12158,13 @@ struct WorksheetChartSeries {
     show_series_name: Option<bool>,
     show_percentage: Option<bool>,
     label_position: Option<String>,
-    data_label_flags_seen: [bool; 4],
+    show_legend_key: Option<bool>,
+    show_leader_lines: Option<bool>,
+    label_separator: Option<String>,
+    data_label_flags_seen: [bool; 6],
     data_labels_seen: bool,
     data_label_position_seen: bool,
+    label_separator_seen: bool,
 }
 
 #[derive(Clone)]

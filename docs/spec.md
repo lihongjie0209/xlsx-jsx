@@ -213,10 +213,21 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   pie/doughnut accept `center`, `insideEnd`, `outsideEnd`, and `bestFit`;
   area/radar accept only `center`. Stock charts do not support this property.
   The writer's chart-specific default positions are omitted from reverse output.
-  The writer's default value-label behavior is retained when labels are
-  requested without another visible field; default false flags are omitted on
-  reverse. Numeric formats, custom text, fonts, and point-specific labels are
-  not represented and are rejected with repair guidance.
+  `Series.showLegendKey?: boolean` adds the series key to each label, and
+  `Series.showLeaderLines?: boolean` enables leader lines (rendered by Excel
+  when labels need them). `Series.labelSeparator?: "comma" | "semicolon" |
+  "period" | "space" | "newline"` selects the separator between displayed
+  fields; omission uses the writer's comma default. Reverse strips the one
+  trailing space the pinned writer serializes after the separator character.
+  Explicit false flags and the default comma separator fold to omission.
+  When no category or percentage is displayed, the pinned writer serializes
+  value labels even if legend keys, leader lines, position, or a separator are
+  also requested. Therefore `showValue={false}` cannot be combined with those
+  options unless `showCategoryName` or `showPercentage` is true. Reverse rejects
+  external combinations the writer would normalize by adding values. Default
+  false flags and the comma separator are omitted. Numeric formats, custom
+  text, fonts, and point-specific labels are not represented and are rejected
+  with repair guidance.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed

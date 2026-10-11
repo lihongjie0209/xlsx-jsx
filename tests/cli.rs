@@ -152,6 +152,9 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("showSeriesName"))
         .stdout(predicate::str::contains("showPercentage"))
         .stdout(predicate::str::contains("labelPosition"))
+        .stdout(predicate::str::contains("showLegendKey"))
+        .stdout(predicate::str::contains("showLeaderLines"))
+        .stdout(predicate::str::contains("labelSeparator"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1508,6 +1511,67 @@ fn reverses_external_series_data_label_positions_without_a_manifest() {
 }
 
 #[test]
+fn reverses_external_series_data_label_extras_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-data-label-extras.xlsx");
+    let output_path = directory.path().join("external-data-label-extras.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+
+    let mut line = XlsxChart::new(ChartType::Line);
+    let mut line_label = ChartDataLabel::new();
+    line_label
+        .show_value()
+        .show_legend_key()
+        .show_leader_lines()
+        .set_separator(';');
+    line.add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_data_label(&line_label);
+    worksheet.insert_chart(0, 5, &line).unwrap();
+
+    let mut pie = XlsxChart::new(ChartType::Pie);
+    let mut pie_label = ChartDataLabel::new();
+    pie_label.show_value().show_leader_lines();
+    pie.add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_data_label(&pie_label);
+    worksheet.insert_chart(18, 5, &pie).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("showLegendKey={true}"));
+    assert!(source.contains("showLeaderLines={true}"));
+    assert!(source.contains("labelSeparator=\"semicolon\""));
+
+    let rebuilt_path = directory.path().join("rebuilt-data-label-extras.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let line_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    let pie_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    assert!(line_xml.contains("<c:showLegendKey val=\"1\"/>"));
+    assert!(line_xml.contains("<c15:showLeaderLines val=\"1\"/>"));
+    assert!(line_xml.contains("<c:separator>; </c:separator>"));
+    assert!(pie_xml.contains("<c:showLeaderLines val=\"1\"/>"));
+}
+
+#[test]
 fn rejects_axis_crossings_on_scatter_charts_with_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("scatter-axis-crossing.tsx");
@@ -1573,6 +1637,56 @@ fn rejects_chart_data_label_positions_that_do_not_match_the_chart_type() {
         ))
         .stderr(predicate::str::contains(
             "choose a position allowed for that chart type",
+        ));
+}
+
+#[test]
+fn rejects_unsupported_chart_data_label_separators_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("unsupported-data-label-separator.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" labelSeparator="pipe" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Series.labelSeparator must be comma, semicolon, period, space, or newline",
+        ))
+        .stderr(predicate::str::contains(
+            "choose one of those values or omit the property",
+        ));
+}
+
+#[test]
+fn rejects_explicitly_suppressed_values_when_writer_would_enable_them() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("suppressed-chart-data-label-value.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" showValue={false} showLegendKey={true} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "showValue={false} cannot be combined with Series.showLegendKey",
+        ))
+        .stderr(predicate::str::contains(
+            "enable showCategoryName or showPercentage",
         ));
 }
 

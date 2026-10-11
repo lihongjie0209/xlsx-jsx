@@ -2527,6 +2527,9 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "showSeriesName",
                 "showPercentage",
                 "labelPosition",
+                "showLegendKey",
+                "showLeaderLines",
+                "labelSeparator",
             ],
             "Series",
         )?;
@@ -2605,6 +2608,8 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
         "showCategoryName",
         "showSeriesName",
         "showPercentage",
+        "showLegendKey",
+        "showLeaderLines",
     ] {
         if let Some(value) = series.props.get(property)
             && !value.is_boolean()
@@ -2624,6 +2629,20 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
             "Series.showPercentage is supported only for pie and doughnut charts; omit it or choose one of those chart types".into(),
         ));
     }
+    let value_suppressed = series.props.get("showValue").and_then(Value::as_bool) == Some(false);
+    let category_or_percentage_shown = ["showCategoryName", "showPercentage"]
+        .iter()
+        .any(|property| series.props.get(*property).and_then(Value::as_bool) == Some(true));
+    let another_label_option = ["showSeriesName", "showLegendKey", "showLeaderLines"]
+        .iter()
+        .any(|property| series.props.get(*property).and_then(Value::as_bool) == Some(true))
+        || series.props.contains_key("labelPosition")
+        || series.props.contains_key("labelSeparator");
+    if value_suppressed && !category_or_percentage_shown && another_label_option {
+        return Err(Error::Compile(
+            "Series.showValue={false} cannot be combined with Series.showLegendKey, showLeaderLines, showSeriesName, labelPosition, or labelSeparator because rust_xlsxwriter automatically enables values; enable showCategoryName or showPercentage, or remove the conflicting options".into(),
+        ));
+    }
     if let Some(value) = series.props.get("labelPosition") {
         let Some(position) = value.as_str() else {
             return Err(Error::Compile(
@@ -2641,6 +2660,16 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
                 "Series.labelPosition `{position}` is not supported for Chart.type `{chart_type}`; choose a position allowed for that chart type or omit labelPosition"
             )));
         }
+    }
+    if let Some(value) = series.props.get("labelSeparator")
+        && value
+            .as_str()
+            .and_then(chart_data_label_separator_value)
+            .is_none()
+    {
+        return Err(Error::Compile(
+            "Series.labelSeparator must be comma, semicolon, period, space, or newline; choose one of those values or omit the property".into(),
+        ));
     }
     Ok(())
 }
@@ -2676,6 +2705,32 @@ pub fn chart_data_label_position_is_supported(chart_type: &str, position: &str) 
         "area" | "areaStacked" | "areaPercentStacked" | "radar" | "radarWithMarkers"
         | "radarFilled" => position == "center",
         _ => false,
+    }
+}
+
+/// Maps a DSL label-separator name to the character accepted by the writer.
+#[must_use]
+pub fn chart_data_label_separator_value(separator: &str) -> Option<char> {
+    match separator {
+        "comma" => Some(','),
+        "semicolon" => Some(';'),
+        "period" => Some('.'),
+        "space" => Some(' '),
+        "newline" => Some('\n'),
+        _ => None,
+    }
+}
+
+/// Maps a serialized chart label-separator character to its DSL name.
+#[must_use]
+pub fn chart_data_label_separator_name(separator: char) -> Option<&'static str> {
+    match separator {
+        ',' => Some("comma"),
+        ';' => Some("semicolon"),
+        '.' => Some("period"),
+        ' ' => Some("space"),
+        '\n' => Some("newline"),
+        _ => None,
     }
 }
 
