@@ -6,9 +6,9 @@ use rust_xlsxwriter::{
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
-    ChartLineDashType, ChartMarker, ChartMarkerType, ChartPoint, ChartRange, ChartSolidFill,
-    ChartTrendline, ChartTrendlineType, ChartType, Image as XlsxImage, ObjectMovement,
-    Workbook as XlsxWorkbook,
+    ChartLineDashType, ChartMarker, ChartMarkerType, ChartPatternFill, ChartPatternFillType,
+    ChartPoint, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType,
+    Image as XlsxImage, ObjectMovement, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -4292,6 +4292,234 @@ fn reverses_explicit_false_chart_data_table_text_direction() {
     let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
     assert!(
         chart_xml.contains("<a:pPr rtl=\"0\"><a:defRPr/></a:pPr>"),
+        "{chart_xml}"
+    );
+}
+
+#[test]
+fn reverses_external_chart_data_table_pattern_fill_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-chart-data-table-pattern.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-chart-data-table-pattern.tsx");
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-chart-data-table-pattern.xlsx");
+    let rebuilt_source_path = directory
+        .path()
+        .join("rebuilt-chart-data-table-pattern.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    let mut pattern = ChartPatternFill::new();
+    pattern
+        .set_pattern(ChartPatternFillType::DiagonalBrick)
+        .set_foreground_color("#123456")
+        .set_background_color("#ABCDEF");
+    let mut format = ChartFormat::new();
+    format.set_pattern_fill(&pattern);
+    chart.set_data_table(&XlsxChartDataTable::new().set_format(&mut format));
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains(
+        "fillPattern=\"diagBrick\" fillForegroundColor=\"#123456\" fillBackgroundColor=\"#ABCDEF\""
+    ), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains(
+        "<a:pattFill prst=\"diagBrick\"><a:fgClr><a:srgbClr val=\"123456\"/></a:fgClr><a:bgClr><a:srgbClr val=\"ABCDEF\"/></a:bgClr></a:pattFill>"
+    ), "{chart_xml}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(&rebuilt_source_path)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(&rebuilt_source_path).expect("rebuilt source exists"),
+        source
+    );
+}
+
+#[test]
+fn validate_rejects_unknown_chart_data_table_pattern_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-data-table-pattern.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ChartDataTable } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" /><ChartDataTable fillPattern="notAPattern" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ChartDataTable.fillPattern must be one of the 48 supported DrawingML pattern names",
+        ))
+        .stderr(predicate::str::contains("xlsx-jsx spec"));
+}
+
+#[test]
+fn reverses_default_colors_for_external_chart_data_table_pattern_fill() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-chart-data-table-pattern-defaults.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-chart-data-table-pattern-defaults.tsx");
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-chart-data-table-pattern-defaults.xlsx");
+    let rebuilt_source_path = directory
+        .path()
+        .join("rebuilt-chart-data-table-pattern-defaults.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    let mut pattern = ChartPatternFill::new();
+    pattern.set_pattern(ChartPatternFillType::Wave);
+    let mut format = ChartFormat::new();
+    format.set_pattern_fill(&pattern);
+    chart.set_data_table(&XlsxChartDataTable::new().set_format(&mut format));
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("fillPattern=\"wave\""), "{source}");
+    assert!(!source.contains("fillForegroundColor"), "{source}");
+    assert!(!source.contains("fillBackgroundColor"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        chart_xml.contains("<a:pattFill prst=\"wave\"></a:pattFill>"),
+        "{chart_xml}"
+    );
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(&rebuilt_source_path)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(&rebuilt_source_path).expect("rebuilt source exists"),
+        source
+    );
+}
+
+#[test]
+fn reverses_writer_materialized_white_pattern_background_without_loss() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-chart-data-table-pattern-foreground.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-chart-data-table-pattern-foreground.tsx");
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-chart-data-table-pattern-foreground.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    let mut pattern = ChartPatternFill::new();
+    pattern
+        .set_pattern(ChartPatternFillType::Wave)
+        .set_foreground_color("#123456");
+    let mut format = ChartFormat::new();
+    format.set_pattern_fill(&pattern);
+    chart.set_data_table(&XlsxChartDataTable::new().set_format(&mut format));
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(
+        source.contains("fillForegroundColor=\"#123456\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("fillBackgroundColor=\"#FFFFFF\""),
+        "{source}"
+    );
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        chart_xml.contains("<a:bgClr><a:srgbClr val=\"FFFFFF\"/></a:bgClr>"),
         "{chart_xml}"
     );
 }

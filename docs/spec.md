@@ -197,13 +197,23 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   through `ChartDataTable::set_format()`. Optional `fillTransparency` is an
   integer percentage from 0 (opaque) through 100 (fully transparent) and
   requires `fillColor`; reverse preserves solid RGB alpha only when it is
-  representable in whole percentages. `lineColor`, `lineWidth`, `lineDash`,
+  representable in whole percentages. Alternatively, `fillPattern` selects
+  one of the pinned writer's 48 DrawingML pattern presets; optional
+  `fillForegroundColor` and `fillBackgroundColor` are opaque RGB colors.
+  Pattern fills cannot be combined with `fillColor` or `fillTransparency`, and
+  the two pattern colors require `fillPattern`. Reverse preserves pattern,
+  foreground, and background independently, including omitted colors. When a
+  foreground color is supplied without a background, the pinned writer
+  materializes its default white background; reverse emits that resulting
+  `fillBackgroundColor="#FFFFFF"` explicitly. A pattern with neither color
+  remains colorless.
+  `lineColor`, `lineWidth`, `lineDash`,
   `lineTransparency`, and `lineHidden` describe the supported `ChartLine`
   outline; widths use 0.25–1584 points in quarter-point increments, dashes use
   the supported chart-line presets, and transparency (0–100) requires
   `lineColor`. Hidden lines cannot combine with color, transparency, or a
-  non-solid dash. Reverse preserves this line subset and rejects patterns,
-  gradients, effects, and other shape content.
+  non-solid dash. Reverse preserves this line subset and rejects gradients,
+  effects, and other shape content.
   `fontSize` (1–4000 points), `fontBold`, `fontItalic`, `fontUnderline`,
   `fontColor` (opaque `#RRGGBB`), `fontName` (1–255 XML-safe characters),
   `fontPitchFamily` (0–255), `fontCharset` (0–127), and `fontRotation`

@@ -15,27 +15,29 @@ use rust_xlsxwriter::{
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLayout,
-    ChartLegendPosition, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartPoint,
-    ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType, Color,
-    ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
-    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
-    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
-    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
-    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
-    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
-    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
-    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
-    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
-    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
-    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
-    TableColumn, TableStyle, Url, Workbook,
+    ChartLegendPosition, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType,
+    ChartPatternFill, ChartPatternFillType, ChartPoint, ChartSolidFill, ChartTrendline,
+    ChartTrendlineType, ChartType, Color, ConditionalFormat2ColorScale,
+    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
+    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
+    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
+    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
+    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
+    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
+    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
+    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
+    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
+    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
+    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
+    Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
     Error, IrEnvelope, Node, OutlineProperties, PrintRange, chart_data_label_position_is_supported,
-    chart_data_label_separator_name, chart_data_label_separator_value, collapsed_outline_ranges,
-    format_a1_cell_reference, format_a1_range, format_print_range, parse_a1_cell_reference,
-    parse_a1_range, parse_print_range, runtime::evaluate_entry,
+    chart_data_label_separator_name, chart_data_label_separator_value,
+    chart_data_table_fill_pattern_is_supported, collapsed_outline_ranges, format_a1_cell_reference,
+    format_a1_range, format_print_range, parse_a1_cell_reference, parse_a1_range,
+    parse_print_range, runtime::evaluate_entry,
 };
 use zip::{
     ZipArchive,
@@ -1503,7 +1505,29 @@ fn compile_chart(
             if let Some(value) = child.props.get("showLegendKeys").and_then(Value::as_bool) {
                 data_table = data_table.show_legend_keys(value);
             }
-            if let Some(mut format) = chart_shape_format(&child, "fillColor", "line") {
+            let mut shape_format = chart_shape_format(&child, "fillColor", "line");
+            if let Some(pattern) = child.props.get("fillPattern").and_then(Value::as_str) {
+                let mut pattern_fill = ChartPatternFill::new();
+                pattern_fill.set_pattern(chart_pattern_fill_type(pattern));
+                if let Some(color) = child
+                    .props
+                    .get("fillForegroundColor")
+                    .and_then(Value::as_str)
+                {
+                    pattern_fill.set_foreground_color(color);
+                }
+                if let Some(color) = child
+                    .props
+                    .get("fillBackgroundColor")
+                    .and_then(Value::as_str)
+                {
+                    pattern_fill.set_background_color(color);
+                }
+                let mut format = shape_format.take().unwrap_or_default();
+                format.set_pattern_fill(&pattern_fill);
+                shape_format = Some(format);
+            }
+            if let Some(mut format) = shape_format {
                 data_table = data_table.set_format(&mut format);
             }
             if [
@@ -3004,6 +3028,60 @@ fn chart_line_dash_type(dash: &str) -> ChartLineDashType {
         "longDashDot" => ChartLineDashType::LongDashDot,
         "longDashDotDot" => ChartLineDashType::LongDashDotDot,
         _ => unreachable!("validated chart line dash"),
+    }
+}
+
+fn chart_pattern_fill_type(value: &str) -> ChartPatternFillType {
+    match value {
+        "pct5" => ChartPatternFillType::Dotted5Percent,
+        "pct10" => ChartPatternFillType::Dotted10Percent,
+        "pct20" => ChartPatternFillType::Dotted20Percent,
+        "pct25" => ChartPatternFillType::Dotted25Percent,
+        "pct30" => ChartPatternFillType::Dotted30Percent,
+        "pct40" => ChartPatternFillType::Dotted40Percent,
+        "pct50" => ChartPatternFillType::Dotted50Percent,
+        "pct60" => ChartPatternFillType::Dotted60Percent,
+        "pct70" => ChartPatternFillType::Dotted70Percent,
+        "pct75" => ChartPatternFillType::Dotted75Percent,
+        "pct80" => ChartPatternFillType::Dotted80Percent,
+        "pct90" => ChartPatternFillType::Dotted90Percent,
+        "ltDnDiag" => ChartPatternFillType::DiagonalStripesLightDownwards,
+        "ltUpDiag" => ChartPatternFillType::DiagonalStripesLightUpwards,
+        "dkDnDiag" => ChartPatternFillType::DiagonalStripesDarkDownwards,
+        "dkUpDiag" => ChartPatternFillType::DiagonalStripesDarkUpwards,
+        "wdDnDiag" => ChartPatternFillType::DiagonalStripesWideDownwards,
+        "wdUpDiag" => ChartPatternFillType::DiagonalStripesWideUpwards,
+        "ltVert" => ChartPatternFillType::VerticalStripesLight,
+        "ltHorz" => ChartPatternFillType::HorizontalStripesLight,
+        "narVert" => ChartPatternFillType::VerticalStripesNarrow,
+        "narHorz" => ChartPatternFillType::HorizontalStripesNarrow,
+        "dkVert" => ChartPatternFillType::VerticalStripesDark,
+        "dkHorz" => ChartPatternFillType::HorizontalStripesDark,
+        "dashDnDiag" => ChartPatternFillType::StripesBackslashes,
+        "dashUpDiag" => ChartPatternFillType::StripesForwardSlashes,
+        "dashHorz" => ChartPatternFillType::HorizontalStripesAlternating,
+        "dashVert" => ChartPatternFillType::VerticalStripesAlternating,
+        "smConfetti" => ChartPatternFillType::SmallConfetti,
+        "lgConfetti" => ChartPatternFillType::LargeConfetti,
+        "zigZag" => ChartPatternFillType::Zigzag,
+        "wave" => ChartPatternFillType::Wave,
+        "diagBrick" => ChartPatternFillType::DiagonalBrick,
+        "horzBrick" => ChartPatternFillType::HorizontalBrick,
+        "weave" => ChartPatternFillType::Weave,
+        "plaid" => ChartPatternFillType::Plaid,
+        "divot" => ChartPatternFillType::Divot,
+        "dotGrid" => ChartPatternFillType::DottedGrid,
+        "dotDmnd" => ChartPatternFillType::DottedDiamond,
+        "shingle" => ChartPatternFillType::Shingle,
+        "trellis" => ChartPatternFillType::Trellis,
+        "sphere" => ChartPatternFillType::Sphere,
+        "smGrid" => ChartPatternFillType::SmallGrid,
+        "lgGrid" => ChartPatternFillType::LargeGrid,
+        "smCheck" => ChartPatternFillType::SmallCheckerboard,
+        "lgCheck" => ChartPatternFillType::LargeCheckerboard,
+        "openDmnd" => ChartPatternFillType::OutlinedDiamondGrid,
+        "solidDmnd" => ChartPatternFillType::SolidDiamondGrid,
+        _ => unreachable!("validated chart data-table pattern"),
     }
 }
 
@@ -6391,6 +6469,15 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         }
         if let Some(color) = &table.fill_color {
             let _ = write!(output, " fillColor={color:?}");
+        }
+        if let Some(pattern) = &table.fill_pattern {
+            let _ = write!(output, " fillPattern={pattern:?}");
+        }
+        if let Some(color) = &table.fill_foreground_color {
+            let _ = write!(output, " fillForegroundColor={color:?}");
+        }
+        if let Some(color) = &table.fill_background_color {
+            let _ = write!(output, " fillBackgroundColor={color:?}");
         }
         if let Some(transparency) = table.fill_transparency {
             let _ = write!(output, " fillTransparency={{{transparency}}}");
@@ -10130,6 +10217,9 @@ fn parse_chart_xml(
         "spPr",
         "ln",
         "solidFill",
+        "pattFill",
+        "fgClr",
+        "bgClr",
         "srgbClr",
         "alpha",
         "prstDash",
@@ -11089,7 +11179,7 @@ fn parse_chart_xml(
                         && std::mem::replace(&mut data_table_sppr_seen, true)
                     {
                         return Err(Error::Reverse(format!(
-                            "chart part `{part}` repeats data-table shape properties; keep one opaque RGB solid fill"
+                            "chart part `{part}` repeats data-table shape properties; keep one solid or pattern fill"
                         )));
                     }
                     if stack.last().is_some_and(|ancestor| ancestor == "legend")
@@ -11486,16 +11576,28 @@ fn parse_chart_xml(
                                     | "srgbClr"
                                     | "latin"
                             )));
+                let in_data_table_shape = stack.iter().any(|ancestor| ancestor == "dTable")
+                    && stack.iter().any(|ancestor| ancestor == "spPr");
                 let data_table_shape_content = stack.iter().any(|ancestor| ancestor == "dTable")
-                    && ((tag == "spPr" && stack.last().is_some_and(|parent| parent == "dTable"))
-                        || (stack.iter().any(|ancestor| ancestor == "spPr")
+                    && (tag == "spPr" && stack.last().is_some_and(|parent| parent == "dTable")
+                        || (in_data_table_shape
+                            && matches!(tag.as_str(), "ln" | "solidFill" | "prstDash" | "noFill"))
+                        || (in_data_table_shape
+                            && tag == "pattFill"
+                            && stack.last().is_some_and(|parent| parent == "spPr"))
+                        || (in_data_table_shape
+                            && matches!(tag.as_str(), "fgClr" | "bgClr")
+                            && stack.last().is_some_and(|parent| parent == "pattFill"))
+                        || (in_data_table_shape
+                            && tag == "srgbClr"
                             && matches!(
-                                tag.as_str(),
-                                "ln" | "solidFill" | "srgbClr" | "prstDash" | "noFill"
+                                stack.last().map(String::as_str),
+                                Some("solidFill" | "fgClr" | "bgClr")
                             ))
-                        || (tag == "alpha"
+                        || (in_data_table_shape
+                            && tag == "alpha"
                             && stack.last().is_some_and(|parent| parent == "srgbClr")
-                            && stack.iter().any(|ancestor| ancestor == "spPr")));
+                            && stack.iter().any(|ancestor| ancestor == "solidFill")));
                 if stack.iter().any(|ancestor| ancestor == "dTable")
                     && !matches!(
                         tag.as_str(),
@@ -11505,7 +11607,7 @@ fn parse_chart_xml(
                     && !data_table_shape_content
                 {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported `<{tag}>` data-table formatting; keep the four display flags, one RGB solid fill with representable transparency, and supported font properties, and remove borders or extensions"
+                        "chart part `{part}` has unsupported `<{tag}>` data-table formatting; keep the four display flags, one RGB solid or pattern fill with supported line/font properties, and remove borders, gradients, or extensions"
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "marker")
@@ -11951,6 +12053,32 @@ fn parse_chart_xml(
                         if point_index.replace(index).is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats a data-point index; retain one index per `<dPt>`"
+                            )));
+                        }
+                    }
+                    "pattFill"
+                        if stack.last().is_some_and(|parent| parent == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "dTable") =>
+                    {
+                        let pattern = chart_xml_attribute(&event, "prst", reader.decoder())?
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a data-table pattFill without prst; add a supported DrawingML pattern preset"
+                            )))?;
+                        if !chart_data_table_fill_pattern_is_supported(&pattern) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported data-table pattern `{pattern}`; use one of the 48 pinned ChartPatternFillType presets"
+                            )));
+                        }
+                        let table = data_table.as_mut().ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has a data-table pattern fill without a dTable"
+                            ))
+                        })?;
+                        if table.fill_pattern.replace(pattern).is_some()
+                            || table.fill_color.is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or conflicting data-table fills; keep one solid or pattern fill"
                             )));
                         }
                     }
@@ -15512,9 +15640,50 @@ fn parse_chart_xml(
                                 "chart part `{part}` has a data-table fill without a dTable"
                             ))
                         })?;
+                        if table.fill_pattern.is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` combines data-table solid and pattern fills; keep one fill representation"
+                            )));
+                        }
                         if table.fill_color.replace(format!("#{color}")).is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats a data-table RGB fill; retain one opaque solid fill"
+                            )));
+                        }
+                    }
+                    "srgbClr"
+                        if matches!(stack.last().map(String::as_str), Some("fgClr" | "bgClr"))
+                            && stack.iter().any(|ancestor| ancestor == "dTable")
+                            && stack.iter().any(|ancestor| ancestor == "pattFill")
+                            && stack.iter().any(|ancestor| ancestor == "spPr") =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "data-table pattern color",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB data-table pattern color; use an opaque six-digit #RRGGBB color"
+                            )));
+                        }
+                        let table = data_table.as_mut().ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has a pattern color without a dTable"
+                            ))
+                        })?;
+                        let target = if stack.last().is_some_and(|parent| parent == "fgClr") {
+                            &mut table.fill_foreground_color
+                        } else {
+                            &mut table.fill_background_color
+                        };
+                        if target
+                            .replace(format!("#{}", color.to_ascii_uppercase()))
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a data-table pattern color; keep one RGB value for each foreground/background"
                             )));
                         }
                     }
@@ -15626,6 +15795,7 @@ fn parse_chart_xml(
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|ancestor| ancestor == "dTable")
                             && stack.iter().any(|ancestor| ancestor == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "solidFill")
                             && !stack.iter().any(|ancestor| ancestor == "ln") =>
                     {
                         let alpha = chart_element_val_attribute(
@@ -17676,6 +17846,7 @@ fn parse_chart_xml(
     }
     let data_table_has_supported_shape = data_table.as_ref().is_some_and(|table| {
         table.fill_color.is_some()
+            || table.fill_pattern.is_some()
             || table.line_hidden
             || table
                 .line_style
@@ -17684,7 +17855,7 @@ fn parse_chart_xml(
     });
     if data_table_sppr_seen && !data_table_has_supported_shape {
         return Err(Error::Reverse(format!(
-            "chart part `{part}` has data-table shape properties without a supported RGB fill or line; add one or remove the shape properties"
+            "chart part `{part}` has data-table shape properties without a supported RGB solid/pattern fill or line; add one or remove the shape properties"
         )));
     }
     if data_table_line_seen
@@ -19152,6 +19323,11 @@ fn audit_chart_attributes(
                 "chart part `{part}` has unsupported data-table font attribute `{tag}@{key}={value}`; only point size, bold, italic, single underline, opaque RGB color, Latin typeface, pitch-family, charset, and supported bodyPr rotation are represented, so remove the unsupported font metadata"
             )));
         }
+        let is_supported_data_table_pattern_attribute = tag == "pattFill"
+            && key == "prst"
+            && stack.iter().any(|ancestor| ancestor == "dTable")
+            && stack.iter().any(|ancestor| ancestor == "spPr")
+            && chart_data_table_fill_pattern_is_supported(&value);
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
             && !is_supported_chart_title_body_attribute
@@ -19164,6 +19340,7 @@ fn audit_chart_attributes(
             && !is_supported_chart_title_font_attribute
             && !is_supported_chart_axis_label_font_attribute
             && !is_supported_chart_legend_font_attribute
+            && !is_supported_data_table_pattern_attribute
         {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` has unsupported `{tag}@{key}={value}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
@@ -22525,6 +22702,9 @@ struct WorksheetChartDataTable {
     font_right_to_left: Option<bool>,
     fill_color: Option<String>,
     fill_transparency: Option<u8>,
+    fill_pattern: Option<String>,
+    fill_foreground_color: Option<String>,
+    fill_background_color: Option<String>,
     line_style: Option<WorksheetChartGridlineStyle>,
     line_hidden: bool,
 }
@@ -31927,6 +32107,66 @@ fn builtin_number_format(id: usize) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chart_data_table_pattern_names_match_the_pinned_writer_presets() {
+        let patterns = [
+            "pct5",
+            "pct10",
+            "pct20",
+            "pct25",
+            "pct30",
+            "pct40",
+            "pct50",
+            "pct60",
+            "pct70",
+            "pct75",
+            "pct80",
+            "pct90",
+            "ltDnDiag",
+            "ltUpDiag",
+            "dkDnDiag",
+            "dkUpDiag",
+            "wdDnDiag",
+            "wdUpDiag",
+            "ltVert",
+            "ltHorz",
+            "narVert",
+            "narHorz",
+            "dkVert",
+            "dkHorz",
+            "dashDnDiag",
+            "dashUpDiag",
+            "dashHorz",
+            "dashVert",
+            "smConfetti",
+            "lgConfetti",
+            "zigZag",
+            "wave",
+            "diagBrick",
+            "horzBrick",
+            "weave",
+            "plaid",
+            "divot",
+            "dotGrid",
+            "dotDmnd",
+            "shingle",
+            "trellis",
+            "sphere",
+            "smGrid",
+            "lgGrid",
+            "smCheck",
+            "lgCheck",
+            "openDmnd",
+            "solidDmnd",
+        ];
+
+        for pattern in patterns {
+            assert!(chart_data_table_fill_pattern_is_supported(pattern));
+            assert_eq!(chart_pattern_fill_type(pattern).to_string(), pattern);
+        }
+        assert!(!chart_data_table_fill_pattern_is_supported("notAPattern"));
+    }
 
     fn dynamic_array_metadata_xml() -> String {
         r#"<metadata xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:xda="http://schemas.microsoft.com/office/spreadsheetml/2017/dynamicarray"><metadataTypes count="1"><metadataType name="XLDAPR" minSupportedVersion="120000" copy="1" pasteAll="1" pasteValues="1" merge="1" splitFirst="1" rowColShift="1" clearFormats="1" clearComments="1" assign="1" coerce="1" cellMeta="1"/></metadataTypes><futureMetadata name="XLDAPR" count="1"><bk><extLst><ext uri="{bdbb8cdc-fa1e-496e-a857-3c3f30c029c3}"><xda:dynamicArrayProperties fDynamic="1" fCollapsed="0"/></ext></extLst></bk></futureMetadata><cellMetadata count="1"><bk><rc t="1" v="0"/></bk></cellMetadata></metadata>"#.to_owned()

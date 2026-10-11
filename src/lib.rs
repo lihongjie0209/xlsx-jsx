@@ -4330,6 +4330,9 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     "fontRightToLeft",
                     "fillColor",
                     "fillTransparency",
+                    "fillPattern",
+                    "fillForegroundColor",
+                    "fillBackgroundColor",
                     "lineColor",
                     "lineWidth",
                     "lineDash",
@@ -4507,6 +4510,42 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
 
 fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
     validate_chart_data_table_line_style(data_table)?;
+    let has_pattern = data_table.props.contains_key("fillPattern");
+    let has_pattern_color = data_table.props.contains_key("fillForegroundColor")
+        || data_table.props.contains_key("fillBackgroundColor");
+    if let Some(value) = data_table.props.get("fillPattern")
+        && value
+            .as_str()
+            .is_none_or(|pattern| !chart_data_table_fill_pattern_is_supported(pattern))
+    {
+        return Err(Error::Compile(
+            "ChartDataTable.fillPattern must be one of the 48 supported DrawingML pattern names; use a value listed by `xlsx-jsx spec`".into(),
+        ));
+    }
+    if has_pattern_color && !has_pattern {
+        return Err(Error::Compile(
+            "ChartDataTable.fillForegroundColor and fillBackgroundColor require fillPattern; add a pattern or remove the pattern colors".into(),
+        ));
+    }
+    for property in ["fillForegroundColor", "fillBackgroundColor"] {
+        if data_table
+            .props
+            .get(property)
+            .is_some_and(|value| !value.as_str().is_some_and(is_opaque_rgb_color))
+        {
+            return Err(Error::Compile(format!(
+                "ChartDataTable.{property} must be an opaque RGB color like #336699"
+            )));
+        }
+    }
+    if has_pattern
+        && (data_table.props.contains_key("fillColor")
+            || data_table.props.contains_key("fillTransparency"))
+    {
+        return Err(Error::Compile(
+            "ChartDataTable fillPattern cannot combine with fillColor or fillTransparency; use one solid or pattern fill representation".into(),
+        ));
+    }
     if let Some(value) = data_table.props.get("fillColor")
         && !value.as_str().is_some_and(is_opaque_rgb_color)
     {
@@ -4528,6 +4567,61 @@ fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
     }
     validate_chart_data_table_font_properties(data_table)?;
     Ok(())
+}
+
+#[must_use]
+pub fn chart_data_table_fill_pattern_is_supported(pattern: &str) -> bool {
+    matches!(
+        pattern,
+        "pct5"
+            | "pct10"
+            | "pct20"
+            | "pct25"
+            | "pct30"
+            | "pct40"
+            | "pct50"
+            | "pct60"
+            | "pct70"
+            | "pct75"
+            | "pct80"
+            | "pct90"
+            | "ltDnDiag"
+            | "ltUpDiag"
+            | "dkDnDiag"
+            | "dkUpDiag"
+            | "wdDnDiag"
+            | "wdUpDiag"
+            | "ltVert"
+            | "ltHorz"
+            | "narVert"
+            | "narHorz"
+            | "dkVert"
+            | "dkHorz"
+            | "dashDnDiag"
+            | "dashUpDiag"
+            | "dashHorz"
+            | "dashVert"
+            | "smConfetti"
+            | "lgConfetti"
+            | "zigZag"
+            | "wave"
+            | "diagBrick"
+            | "horzBrick"
+            | "weave"
+            | "plaid"
+            | "divot"
+            | "dotGrid"
+            | "dotDmnd"
+            | "shingle"
+            | "trellis"
+            | "sphere"
+            | "smGrid"
+            | "lgGrid"
+            | "smCheck"
+            | "lgCheck"
+            | "openDmnd"
+            | "solidDmnd"
+    )
 }
 
 fn validate_chart_data_table_font_properties(data_table: &Node) -> Result<()> {
@@ -10317,6 +10411,93 @@ mod tests {
         )]);
         let validation = input.validate();
         assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_chart_data_table_pattern_fill_with_rgb_colors() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[
+                    {"type":"Series","props":{"values":"Charts!B1:B3"},"children":[]},
+                    {"type":"ChartDataTable","props":{
+                        "fillPattern":"diagBrick",
+                        "fillForegroundColor":"#123456",
+                        "fillBackgroundColor":"#ABCDEF"
+                    },"children":[]}
+                ]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn rejects_conflicting_chart_data_table_fill_representations() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[
+                    {"type":"Series","props":{"values":"Charts!B1:B3"},"children":[]},
+                    {"type":"ChartDataTable","props":{
+                        "fillPattern":"pct20","fillColor":"#123456"
+                    },"children":[]}
+                ]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("solid and pattern fill are exclusive");
+        assert!(error.to_string().contains("fillPattern cannot combine"));
+        assert!(error.to_string().contains("fillColor"));
+    }
+
+    #[test]
+    fn rejects_chart_data_table_pattern_colors_without_a_pattern() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[
+                    {"type":"Series","props":{"values":"Charts!B1:B3"},"children":[]},
+                    {"type":"ChartDataTable","props":{
+                        "fillForegroundColor":"#123456"
+                    },"children":[]}
+                ]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("pattern colors require a pattern");
+        assert!(error.to_string().contains("require fillPattern"));
+        assert!(error.to_string().contains("remove the pattern colors"));
+    }
+
+    #[test]
+    fn rejects_chart_data_table_pattern_fill_with_solid_transparency() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[
+                    {"type":"Series","props":{"values":"Charts!B1:B3"},"children":[]},
+                    {"type":"ChartDataTable","props":{
+                        "fillPattern":"pct20","fillTransparency":10
+                    },"children":[]}
+                ]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("pattern fills have no solid-fill alpha property");
+        assert!(error.to_string().contains("cannot combine with fillColor"));
+        assert!(error.to_string().contains("fillTransparency"));
     }
 
     #[test]
