@@ -2655,6 +2655,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "showCategoryName",
                 "showSeriesName",
                 "showPercentage",
+                "smooth",
                 "labelPosition",
                 "showLegendKey",
                 "showLeaderLines",
@@ -2801,12 +2802,42 @@ fn validate_chart_series_properties(
     series: &Node,
     series_index: usize,
 ) -> Result<()> {
+    validate_chart_series_smoothing(chart, series)?;
     validate_series_data_label_props(chart, series)?;
     validate_chart_series_marker(chart, series, series_index)?;
     validate_chart_series_line(chart, series, series_index)?;
     validate_chart_series_point_colors(series)?;
     validate_chart_series_trendline(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
+}
+
+fn validate_chart_series_smoothing(chart: &Node, series: &Node) -> Result<()> {
+    let Some(smooth) = series.props.get("smooth") else {
+        return Ok(());
+    };
+    if !smooth.is_boolean() {
+        return Err(Error::Compile(
+            "Series.smooth must be a boolean; use true/false or omit it for the chart-type default"
+                .into(),
+        ));
+    }
+    let chart_type = chart
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !chart_type.starts_with("line") && !chart_type.starts_with("scatter") {
+        return Err(Error::Compile(format!(
+            "Series.smooth is supported only for line and scatter chart families, not `{chart_type}`; remove it or choose a line/scatter Chart.type"
+        )));
+    }
+    if chart_type.starts_with("scatterWithSmooth") && smooth.as_bool() == Some(false) {
+        return Err(Error::Compile(
+            "Series.smooth={false} cannot override a smoothed scatter Chart.type because rust_xlsxwriter omits the false OOXML override; choose a straight scatter type or keep smooth=true"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 #[expect(

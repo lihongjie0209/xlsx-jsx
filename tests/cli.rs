@@ -3299,6 +3299,97 @@ fn rejects_chart_gridline_transparency_without_color_with_guidance() {
 }
 
 #[test]
+fn reverses_external_line_series_smoothing_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-line-smoothing.xlsx");
+    let source_path = directory.path().join("external-line-smoothing.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-line-smoothing.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart.add_series().set_values("Data!B2:B5").set_smooth(true);
+    chart
+        .add_series()
+        .set_values("Data!C2:C5")
+        .set_smooth(false);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    rewrite_part(&workbook_path, "xl/charts/chart1.xml", |mut xml| {
+        let second_series_end = xml
+            .match_indices("</c:ser>")
+            .nth(1)
+            .map(|(index, _)| index)
+            .expect("chart has two series");
+        xml.insert_str(second_series_end, "<c:smooth val=\"0\"/>");
+        xml
+    });
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("values={\"Data!$B$2:$B$5\"} smooth={true}"));
+    assert!(source.contains("values={\"Data!$C$2:$C$5\"} smooth={false}"));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:smooth val=\"1\"/>"));
+    assert!(!xml.contains("<c:smooth val=\"0\"/>"));
+}
+
+#[test]
+fn rejects_series_smoothing_for_column_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("column-smoothing.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" smooth={true} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Series.smooth is supported only"))
+        .stderr(predicate::str::contains("line and scatter chart families"));
+}
+
+#[test]
+fn rejects_smoothing_override_the_writer_would_drop_for_smooth_scatter() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("smooth-scatter-override.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatterWithSmoothLines" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" smooth={false} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "writer omits the false OOXML override",
+        ))
+        .stderr(predicate::str::contains("choose a straight scatter type"));
+}
+
+#[test]
 fn rejects_non_positive_chart_axis_units_with_repair_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-chart-axis-unit.tsx");

@@ -832,6 +832,9 @@ fn compile_chart(
         configure_chart_series_line(chart_series, &series);
         configure_chart_series_point_colors(chart_series, &series);
         configure_chart_series_spacing(chart_series, &series);
+        if let Some(smooth) = series.props.get("smooth").and_then(Value::as_bool) {
+            chart_series.set_smooth(smooth);
+        }
         configure_chart_series_trendline(chart_series, &series);
         configure_chart_series_error_bars(chart_series, &series)?;
         if component.props.get("type").and_then(Value::as_str) == Some("stock") {
@@ -4350,6 +4353,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 let _ = write!(output, "{point}: {color:?}");
             }
             output.push_str("}}");
+        }
+        if let Some(smooth) = series.smooth {
+            let _ = write!(output, " smooth={{{smooth}}}");
         }
         for (name, enabled) in [
             ("showValue", series.show_value),

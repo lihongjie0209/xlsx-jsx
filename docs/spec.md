@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.66
+Version: 1.67
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -281,6 +281,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   false flags and the comma separator are omitted. Custom label text, fonts,
   and point-specific labels are not represented and are rejected with repair
   guidance.
+- `Series.smooth?: boolean` explicitly selects straight or smoothed segments on
+  line and scatter series. Omission retains the chart-type default; reverse
+  preserves non-default `<c:smooth>` overrides. Explicit `false` where straight
+  lines are already the chart default may be folded to omission; the writer also
+  omits that default when rebuilding. `false` cannot override a smoothed scatter
+  chart because the pinned writer omits that OOXML override. This property is
+  supported only on line and scatter chart families.
 - `ErrorBars` is an optional child of `Series`, with at most one each for the
   `x` and `y` axes. `axis` is required and selects horizontal (`x`) or vertical
   (`y`) error bars; X error bars are valid only for scatter and bar charts,
