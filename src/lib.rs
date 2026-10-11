@@ -1973,6 +1973,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "legendFontRotation",
             "xAxisTitle",
             "yAxisTitle",
+            "x2AxisTitle",
+            "y2AxisTitle",
             "xAxisTitleLayout",
             "yAxisTitleLayout",
             "xAxisTitleFillColor",
@@ -2025,6 +2027,14 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisLabelFontRotation",
             "xAxisNumberFormat",
             "yAxisNumberFormat",
+            "x2AxisNumberFormat",
+            "y2AxisNumberFormat",
+            "secondaryValueAxisMin",
+            "secondaryValueAxisMax",
+            "secondaryValueAxisMajorUnit",
+            "secondaryValueAxisMinorUnit",
+            "secondaryValueAxisLogBase",
+            "secondaryValueAxisReversed",
             "xAxisMajorUnit",
             "xAxisMinorUnit",
             "xAxisMin",
@@ -2560,7 +2570,15 @@ fn validate_chart_text_properties(chart: &Node) -> Result<()> {
             "Chart.autoTitleDeleted cannot be combined with Chart.title; remove title or set autoTitleDeleted={false}".into(),
         ));
     }
-    for property in ["name", "altText", "title", "xAxisTitle", "yAxisTitle"] {
+    for property in [
+        "name",
+        "altText",
+        "title",
+        "xAxisTitle",
+        "yAxisTitle",
+        "x2AxisTitle",
+        "y2AxisTitle",
+    ] {
         if let Some(value) = chart.props.get(property) {
             let Some(value) = value.as_str() else {
                 return Err(Error::Compile(format!(
@@ -2576,8 +2594,10 @@ fn validate_chart_text_properties(chart: &Node) -> Result<()> {
                     "Chart.{property} must contain 1–{maximum} valid XML characters; shorten it or remove control characters"
                 )));
             }
-            if matches!(property, "title" | "xAxisTitle" | "yAxisTitle")
-                && valid_chart_source_reference(value, false)
+            if matches!(
+                property,
+                "title" | "xAxisTitle" | "yAxisTitle" | "x2AxisTitle" | "y2AxisTitle"
+            ) && valid_chart_source_reference(value, false)
             {
                 return Err(Error::Compile(format!(
                     "Chart.{property} `{value}` looks like a sheet-qualified A1 reference, which rust_xlsxwriter interprets as a formula; rephrase it as literal text"
@@ -2913,6 +2933,7 @@ fn validate_chart_title_rotation(chart: &Node) -> Result<()> {
 
 fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_titles(chart, chart_type)?;
+    validate_secondary_axis_titles(chart, chart_type)?;
     validate_chart_axis_number_formats(chart, chart_type)?;
     validate_chart_axis_bounds(chart, chart_type)?;
     validate_chart_axis_log_base(chart, chart_type)?;
@@ -2935,6 +2956,8 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
         let axis_titles = [
             "xAxisTitle",
             "yAxisTitle",
+            "x2AxisTitle",
+            "y2AxisTitle",
             "xAxisTitleLayout",
             "yAxisTitleLayout",
             "xAxisTitleFillColor",
@@ -2981,6 +3004,38 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
                 "pie and doughnut Charts have no X/Y axis labels; remove xAxisLabelFont* and yAxisLabelFont* or use a chart type with axes".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_secondary_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
+    if !["x2AxisTitle", "y2AxisTitle"]
+        .iter()
+        .any(|property| chart.props.contains_key(*property))
+    {
+        return Ok(());
+    }
+    if matches!(chart_type, "pie" | "doughnut") {
+        return Err(Error::Compile(
+            "pie and doughnut Charts have no secondary axes; remove x2AxisTitle/y2AxisTitle or use a Cartesian chart".into(),
+        ));
+    }
+    if !chart.children.iter().any(|child| {
+        child.get("type").and_then(Value::as_str) == Some("Series")
+            && child
+                .get("props")
+                .and_then(|props| props.get("secondaryAxis"))
+                .and_then(Value::as_bool)
+                == Some(true)
+    }) {
+        let property = if chart.props.contains_key("x2AxisTitle") {
+            "x2AxisTitle"
+        } else {
+            "y2AxisTitle"
+        };
+        return Err(Error::Compile(format!(
+            "Chart.{property} requires at least one Series with secondaryAxis={{true}}; add a secondary series or remove the title"
+        )));
     }
     Ok(())
 }
@@ -3388,7 +3443,12 @@ fn validate_chart_area_shape_formats(chart: &Node) -> Result<()> {
 }
 
 fn validate_chart_axis_number_formats(chart: &Node, chart_type: &str) -> Result<()> {
-    let properties = ["xAxisNumberFormat", "yAxisNumberFormat"];
+    let properties = [
+        "xAxisNumberFormat",
+        "yAxisNumberFormat",
+        "x2AxisNumberFormat",
+        "y2AxisNumberFormat",
+    ];
     if !properties
         .iter()
         .any(|property| chart.props.contains_key(*property))
@@ -3433,15 +3493,30 @@ fn validate_chart_axis_bounds(chart: &Node, chart_type: &str) -> Result<()> {
         ));
     }
     validate_chart_axis_bound_pair(chart, "xAxisMin", "xAxisMax")?;
-    if !chart.props.contains_key("yAxisMin") && !chart.props.contains_key("yAxisMax") {
+    let has_primary_bounds =
+        chart.props.contains_key("yAxisMin") || chart.props.contains_key("yAxisMax");
+    let has_secondary_bounds = chart.props.contains_key("secondaryValueAxisMin")
+        || chart.props.contains_key("secondaryValueAxisMax");
+    if !has_primary_bounds && !has_secondary_bounds {
         return Ok(());
     }
     if matches!(chart_type, "pie" | "doughnut") {
         return Err(Error::Compile(
-            "yAxisMin/yAxisMax are not supported for pie or doughnut charts; use a chart with a value axis, or omit the bounds for automatic scaling".into(),
+            "value-axis bounds are not supported for pie or doughnut charts; use a chart with a value axis, or omit the bounds for automatic scaling".into(),
         ));
     }
-    validate_chart_axis_bound_pair(chart, "yAxisMin", "yAxisMax")
+    if has_primary_bounds {
+        validate_chart_axis_bound_pair(chart, "yAxisMin", "yAxisMax")?;
+    }
+    if has_secondary_bounds {
+        if chart_type.starts_with("bar") {
+            return Err(Error::Compile(
+                "Chart.secondaryValueAxisMin/Max are not supported for horizontal bar charts because the pinned rust_xlsxwriter serializes these bounds onto the secondary category axis; omit these bounds or use a column, line, area, or scatter chart".into(),
+            ));
+        }
+        validate_chart_axis_bound_pair(chart, "secondaryValueAxisMin", "secondaryValueAxisMax")?;
+    }
+    Ok(())
 }
 
 fn validate_chart_axis_bound_pair(
@@ -3471,7 +3546,8 @@ fn validate_chart_axis_log_base(chart: &Node, chart_type: &str) -> Result<()> {
     let scatter_chart = chart_type.starts_with("scatter");
     let has_scatter_x_log_base = chart.props.contains_key("xAxisLogBase");
     let has_value_axis_log_base = chart.props.contains_key("yAxisLogBase");
-    if !has_scatter_x_log_base && !has_value_axis_log_base {
+    let has_secondary_log_base = chart.props.contains_key("secondaryValueAxisLogBase");
+    if !has_scatter_x_log_base && !has_value_axis_log_base && !has_secondary_log_base {
         return Ok(());
     }
     if has_scatter_x_log_base && !scatter_chart {
@@ -3484,9 +3560,18 @@ fn validate_chart_axis_log_base(chart: &Node, chart_type: &str) -> Result<()> {
             "Chart axis log bases are not supported for pie or doughnut charts because they have no axes; omit the log base or use a chart with numeric axes".into(),
         ));
     }
+    if has_secondary_log_base && chart_type.starts_with("bar") {
+        return Err(Error::Compile(
+            "Chart.secondaryValueAxisLogBase is not supported for horizontal bar charts because the pinned rust_xlsxwriter serializes secondary-axis scale settings onto the category axis; omit it or use a column, line, area, or scatter chart".into(),
+        ));
+    }
     for (base_property, bound_properties) in [
         ("xAxisLogBase", ["xAxisMin", "xAxisMax"]),
         ("yAxisLogBase", ["yAxisMin", "yAxisMax"]),
+        (
+            "secondaryValueAxisLogBase",
+            ["secondaryValueAxisMin", "secondaryValueAxisMax"],
+        ),
     ] {
         let Some(base) = chart.props.get(base_property) else {
             continue;
@@ -3510,6 +3595,18 @@ fn validate_chart_axis_log_base(chart: &Node, chart_type: &str) -> Result<()> {
 }
 
 fn validate_chart_value_axis_reversed(chart: &Node, chart_type: &str) -> Result<()> {
+    if let Some(reversed) = chart.props.get("secondaryValueAxisReversed") {
+        if !reversed.is_boolean() {
+            return Err(Error::Compile(
+                "Chart.secondaryValueAxisReversed must be a boolean; use true to reverse the secondary numeric axis or false to keep its normal direction".into(),
+            ));
+        }
+        if chart_type.starts_with("bar") {
+            return Err(Error::Compile(
+                "Chart.secondaryValueAxisReversed is not supported for horizontal bar charts because the pinned rust_xlsxwriter serializes secondary-axis scale settings onto the category axis; omit it or use a column, line, area, or scatter chart".into(),
+            ));
+        }
+    }
     let Some(reversed) = chart.props.get("valueAxisReversed") else {
         return Ok(());
     };
@@ -4024,6 +4121,8 @@ fn validate_chart_axis_units(chart: &Node, chart_type: &str) -> Result<()> {
         "xAxisMinorUnit",
         "yAxisMajorUnit",
         "yAxisMinorUnit",
+        "secondaryValueAxisMajorUnit",
+        "secondaryValueAxisMinorUnit",
     ];
     if !properties
         .iter()
@@ -4032,6 +4131,13 @@ fn validate_chart_axis_units(chart: &Node, chart_type: &str) -> Result<()> {
         return Ok(());
     }
     let scatter_chart = chart_type.starts_with("scatter");
+    let secondary_units = chart.props.contains_key("secondaryValueAxisMajorUnit")
+        || chart.props.contains_key("secondaryValueAxisMinorUnit");
+    if secondary_units && chart_type.starts_with("bar") {
+        return Err(Error::Compile(
+            "Chart.secondaryValueAxisMajorUnit/MinorUnit are not supported for horizontal bar charts because the pinned rust_xlsxwriter serializes secondary-axis scaling fields onto the category axis; omit these units or use a column, line, area, or scatter chart".into(),
+        ));
+    }
     if !scatter_chart
         && (chart.props.contains_key("xAxisMajorUnit")
             || chart.props.contains_key("xAxisMinorUnit"))
@@ -4565,6 +4671,26 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
     if secondary_series_count > 0 && secondary_series_count == series_count {
         return Err(Error::Compile(
             "Chart.secondaryAxis requires at least one primary-axis Series; remove secondaryAxis from one Series or add a primary series".into(),
+        ));
+    }
+    if secondary_series_count == 0
+        && [
+            "x2AxisNumberFormat",
+            "y2AxisNumberFormat",
+            "x2AxisTitle",
+            "y2AxisTitle",
+            "secondaryValueAxisMin",
+            "secondaryValueAxisMax",
+            "secondaryValueAxisMajorUnit",
+            "secondaryValueAxisMinorUnit",
+            "secondaryValueAxisLogBase",
+            "secondaryValueAxisReversed",
+        ]
+        .iter()
+        .any(|property| chart.props.contains_key(*property))
+    {
+        return Err(Error::Compile(
+            "secondary-axis titles, number formats, bounds, units, logarithmic base, and reversal require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties".into(),
         ));
     }
     validate_chart_series_spacing(chart)?;

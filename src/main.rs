@@ -1348,6 +1348,12 @@ fn compile_chart(
     if let Some(title) = component.props.get("yAxisTitle").and_then(Value::as_str) {
         chart.y_axis().set_name(title);
     }
+    if let Some(title) = component.props.get("x2AxisTitle").and_then(Value::as_str) {
+        chart.x2_axis().set_name(title);
+    }
+    if let Some(title) = component.props.get("y2AxisTitle").and_then(Value::as_str) {
+        chart.y2_axis().set_name(title);
+    }
     if let Some(layout) = component.props.get("xAxisTitleLayout") {
         chart
             .x_axis()
@@ -2500,6 +2506,20 @@ fn configure_chart_axis_number_formats(chart: &mut Chart, component: &Node) {
     {
         chart.y_axis().set_num_format(format);
     }
+    if let Some(format) = component
+        .props
+        .get("x2AxisNumberFormat")
+        .and_then(Value::as_str)
+    {
+        chart.x2_axis().set_num_format(format);
+    }
+    if let Some(format) = component
+        .props
+        .get("y2AxisNumberFormat")
+        .and_then(Value::as_str)
+    {
+        chart.y2_axis().set_num_format(format);
+    }
 }
 
 fn configure_chart_axis_bounds(chart: &mut Chart, component: &Node) {
@@ -2525,6 +2545,21 @@ fn configure_chart_axis_bounds(chart: &mut Chart, component: &Node) {
     if let Some(maximum) = component.props.get("yAxisMax").and_then(Value::as_f64) {
         value_axis.set_max(maximum);
     }
+    let secondary_value_axis = chart.y2_axis();
+    if let Some(minimum) = component
+        .props
+        .get("secondaryValueAxisMin")
+        .and_then(Value::as_f64)
+    {
+        secondary_value_axis.set_min(minimum);
+    }
+    if let Some(maximum) = component
+        .props
+        .get("secondaryValueAxisMax")
+        .and_then(Value::as_f64)
+    {
+        secondary_value_axis.set_max(maximum);
+    }
 }
 
 fn configure_chart_axis_log_base(chart: &mut Chart, component: &Node) {
@@ -2532,6 +2567,15 @@ fn configure_chart_axis_log_base(chart: &mut Chart, component: &Node) {
         chart
             .x_axis()
             .set_log_base(u16::try_from(base).expect("validated Chart.xAxisLogBase"));
+    }
+    if let Some(base) = component
+        .props
+        .get("secondaryValueAxisLogBase")
+        .and_then(Value::as_u64)
+    {
+        chart
+            .y2_axis()
+            .set_log_base(u16::try_from(base).expect("validated Chart.secondaryValueAxisLogBase"));
     }
     let Some(base) = component.props.get("yAxisLogBase").and_then(Value::as_u64) else {
         return;
@@ -2616,6 +2660,14 @@ fn chart_axis_display_unit_type(value: &str) -> ChartAxisDisplayUnitType {
 }
 
 fn configure_chart_value_axis_reversed(chart: &mut Chart, component: &Node) {
+    if component
+        .props
+        .get("secondaryValueAxisReversed")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        chart.y2_axis().set_reverse();
+    }
     if component
         .props
         .get("valueAxisReversed")
@@ -3010,6 +3062,20 @@ fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
         .and_then(Value::as_f64)
     {
         value_axis.set_minor_unit(unit);
+    }
+    if let Some(unit) = component
+        .props
+        .get("secondaryValueAxisMajorUnit")
+        .and_then(Value::as_f64)
+    {
+        chart.y2_axis().set_major_unit(unit);
+    }
+    if let Some(unit) = component
+        .props
+        .get("secondaryValueAxisMinorUnit")
+        .and_then(Value::as_f64)
+    {
+        chart.y2_axis().set_minor_unit(unit);
     }
 }
 
@@ -6907,6 +6973,10 @@ fn append_chart_area_line_properties(properties: &mut String, chart: &WorksheetC
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Axis properties are emitted together to keep the chart JSX property mapping auditable."
+)]
 fn append_chart_axis_value_properties(properties: &mut String, chart: &WorksheetChart) {
     append_chart_axis_title_font_properties(properties, chart);
     append_chart_axis_title_fill_properties(properties, chart);
@@ -6927,6 +6997,20 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
                 .map(|value| format!("{{{value:?}}}")),
         ),
         (
+            "x2AxisTitle",
+            chart
+                .x2_axis_title
+                .as_ref()
+                .map(|value| format!("{{{value:?}}}")),
+        ),
+        (
+            "y2AxisTitle",
+            chart
+                .y2_axis_title
+                .as_ref()
+                .map(|value| format!("{{{value:?}}}")),
+        ),
+        (
             "xAxisNumberFormat",
             chart
                 .x_axis_number_format
@@ -6939,6 +7023,56 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
                 .y_axis_number_format
                 .as_ref()
                 .map(|value| format!("{{{value:?}}}")),
+        ),
+        (
+            "x2AxisNumberFormat",
+            chart
+                .x2_axis_number_format
+                .as_ref()
+                .map(|value| format!("{{{value:?}}}")),
+        ),
+        (
+            "y2AxisNumberFormat",
+            chart
+                .y2_axis_number_format
+                .as_ref()
+                .map(|value| format!("{{{value:?}}}")),
+        ),
+        (
+            "secondaryValueAxisMin",
+            chart
+                .secondary_value_axis_min
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "secondaryValueAxisMax",
+            chart
+                .secondary_value_axis_max
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "secondaryValueAxisMajorUnit",
+            chart
+                .secondary_value_axis_major_unit
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "secondaryValueAxisMinorUnit",
+            chart
+                .secondary_value_axis_minor_unit
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "secondaryValueAxisLogBase",
+            chart
+                .secondary_value_axis_log_base
+                .map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "secondaryValueAxisReversed",
+            chart
+                .secondary_value_axis_reversed
+                .map(|value| format!("{{{value}}}")),
         ),
         (
             "xAxisMin",
@@ -10075,7 +10209,16 @@ fn parse_stock_bar_styles(
 struct ParsedSecondaryChartGroups {
     series_secondary: Vec<bool>,
     secondary_axis_indices: Vec<usize>,
-    secondary_axis_number_formats: Vec<Option<String>>,
+    x2_axis_number_format: Option<String>,
+    y2_axis_number_format: Option<String>,
+    x2_axis_title: Option<String>,
+    y2_axis_title: Option<String>,
+    secondary_value_axis_min: Option<f64>,
+    secondary_value_axis_max: Option<f64>,
+    secondary_value_axis_major_unit: Option<f64>,
+    secondary_value_axis_minor_unit: Option<f64>,
+    secondary_value_axis_log_base: Option<u16>,
+    secondary_value_axis_reversed: Option<bool>,
 }
 
 #[derive(Default)]
@@ -10083,6 +10226,9 @@ struct ParsedChartAxisInfo {
     kind: Option<String>,
     id: Option<u32>,
     deleted: bool,
+    title: Option<String>,
+    has_title: bool,
+    title_is_simple: bool,
     tags: Vec<(String, BTreeMap<String, String>)>,
 }
 
@@ -10110,6 +10256,10 @@ fn parse_secondary_chart_groups(
     let mut axes = Vec::<ParsedChartAxisInfo>::new();
     let mut current_group = None;
     let mut current_axis = None;
+    let mut axis_title_text = String::new();
+    let mut axis_title_paragraphs = 0_usize;
+    let mut axis_title_runs = 0_usize;
+    let mut axis_title_text_nodes = 0_usize;
 
     loop {
         match reader.read_event() {
@@ -10120,6 +10270,25 @@ fn parse_secondary_chart_groups(
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
                 let parent = stack.last().map(String::as_str);
+                if tag == "title" && current_axis.is_some() {
+                    axis_title_text.clear();
+                    axis_title_paragraphs = 0;
+                    axis_title_runs = 0;
+                    axis_title_text_nodes = 0;
+                    if empty {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an empty secondary-axis title; use one static title string"
+                        )));
+                    }
+                }
+                if current_axis.is_some() && stack.iter().any(|ancestor| ancestor == "title") {
+                    match tag.as_str() {
+                        "p" => axis_title_paragraphs += 1,
+                        "r" => axis_title_runs += 1,
+                        "t" => axis_title_text_nodes += 1,
+                        _ => {}
+                    }
+                }
                 if group_tags.contains(&tag.as_str()) && parent == Some("plotArea") {
                     groups.push(Vec::new());
                     current_group = Some(groups.len() - 1);
@@ -10200,7 +10369,29 @@ fn parse_secondary_chart_groups(
                 if axis_tags.contains(&tag.as_str()) {
                     current_axis = None;
                 }
+                if tag == "title"
+                    && let Some(index) = current_axis
+                {
+                    axes[index].has_title = true;
+                    axes[index].title_is_simple = axis_title_paragraphs == 1
+                        && axis_title_runs == 1
+                        && axis_title_text_nodes == 1
+                        && !axis_title_text.is_empty();
+                    if axes[index].title_is_simple {
+                        axes[index].title = Some(axis_title_text.clone());
+                    }
+                }
                 stack.pop();
+            }
+            Ok(Event::Text(event))
+                if current_axis.is_some() && stack.last().is_some_and(|tag| tag == "t") =>
+            {
+                let decoded = event
+                    .decode()
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                let decoded = quick_xml::escape::unescape(&decoded)
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                axis_title_text.push_str(&decoded);
             }
             Ok(Event::Eof) => break,
             Ok(_) => {}
@@ -10216,7 +10407,7 @@ fn parse_secondary_chart_groups(
         return Ok(ParsedSecondaryChartGroups {
             series_secondary: vec![false; series_groups.len()],
             secondary_axis_indices: Vec::new(),
-            secondary_axis_number_formats: Vec::new(),
+            ..ParsedSecondaryChartGroups::default()
         });
     }
     if groups.len() > 2 || groups.iter().any(|group| group.len() != 2) {
@@ -10255,7 +10446,7 @@ fn parse_secondary_chart_groups(
         return Ok(ParsedSecondaryChartGroups {
             series_secondary: vec![false; series_groups.len()],
             secondary_axis_indices: Vec::new(),
-            secondary_axis_number_formats: Vec::new(),
+            ..ParsedSecondaryChartGroups::default()
         });
     }
     if axes.len() != 4 || secondary_group_matches.len() != 1 {
@@ -10280,24 +10471,234 @@ fn parse_secondary_chart_groups(
     for index in &secondary_axis_indices {
         validate_secondary_axis_defaults(&axes[*index], part)?;
     }
-    let secondary_axis_number_formats = secondary_axis_indices
-        .iter()
-        .map(|index| {
-            axes[*index]
-                .tags
-                .iter()
-                .find(|(tag, _)| tag == "numFmt")
-                .and_then(|(_, attributes)| attributes.get("formatCode").cloned())
-        })
-        .collect();
     let series_secondary = series_groups
         .iter()
         .map(|group| *group == secondary_group_index)
         .collect();
+    let mut x2_axis_number_format = None;
+    let mut y2_axis_number_format = None;
+    let mut x2_axis_title = None;
+    let mut y2_axis_title = None;
+    let mut secondary_value_axis_min = None;
+    let mut secondary_value_axis_max = None;
+    let mut secondary_value_axis_major_unit = None;
+    let mut secondary_value_axis_minor_unit = None;
+    let mut secondary_value_axis_log_base = None;
+    let mut secondary_value_axis_reversed = None;
+    for index in &secondary_axis_indices {
+        let parsed_axis = &axes[*index];
+        if parsed_axis.has_title {
+            if !parsed_axis.title_is_simple {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has a formula or multi-run secondary-axis title; use one static text run or remove the title"
+                )));
+            }
+            let position = parsed_axis
+                .tags
+                .iter()
+                .find(|(tag, _)| tag == "axPos")
+                .and_then(|(_, attributes)| attributes.get("val"))
+                .map(String::as_str);
+            let target = match position {
+                Some("b" | "t") => &mut x2_axis_title,
+                Some("l" | "r") => &mut y2_axis_title,
+                _ => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has a secondary-axis title without a mappable axPos; restore a top/bottom x2 or left/right y2 position"
+                    )));
+                }
+            };
+            if target
+                .replace(
+                    parsed_axis
+                        .title
+                        .clone()
+                        .expect("simple axis title has text"),
+                )
+                .is_some()
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has multiple secondary-axis titles for one axis; retain one title per axis"
+                )));
+            }
+        }
+        let secondary_value_axis_count = secondary_axis_indices
+            .iter()
+            .filter(|axis_index| axes[**axis_index].kind.as_deref() == Some("valAx"))
+            .count();
+        let is_secondary_y_value_axis = if parsed_axis.kind.as_deref() != Some("valAx") {
+            false
+        } else if secondary_value_axis_count == 1 {
+            true
+        } else {
+            match parsed_axis
+                .tags
+                .iter()
+                .find(|(tag, _)| tag == "axPos")
+                .and_then(|(_, attributes)| attributes.get("val"))
+                .map(String::as_str)
+            {
+                Some("l" | "r") => true,
+                Some("b" | "t") => false,
+                _ => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has multiple secondary value axes without distinguishable positions; restore one top/bottom x2 axis and one left/right y2 axis"
+                    )));
+                }
+            }
+        };
+        if let Some((_, attributes)) = parsed_axis.tags.iter().find(|(tag, _)| tag == "logBase") {
+            if parsed_axis.kind.as_deref() != Some("valAx") {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has logBase on a secondary category axis; only numeric secondary value-axis scaling is supported"
+                )));
+            }
+            if !is_secondary_y_value_axis {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has logBase on the secondary horizontal value axis; only secondaryValueAxisLogBase on y2 is currently modeled"
+                )));
+            }
+            let raw = attributes.get("val").ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` secondary value-axis logBase has no val; restore an integer base from 2 through 1000"
+            )))?;
+            let base = raw.parse::<u16>().ok().filter(|base| (2..=1000).contains(base)).ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` secondary value-axis logBase must be from 2 through 1000; repair the numeric base"
+            )))?;
+            secondary_value_axis_log_base = Some(base);
+        }
+        if let Some((_, attributes)) = parsed_axis
+            .tags
+            .iter()
+            .find(|(tag, _)| tag == "orientation")
+        {
+            let orientation = attributes.get("val").map(String::as_str);
+            match (parsed_axis.kind.as_deref(), orientation) {
+                (Some("valAx"), Some("maxMin")) if is_secondary_y_value_axis => {
+                    secondary_value_axis_reversed = Some(true);
+                }
+                (Some("valAx"), Some("maxMin")) => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` reverses the secondary horizontal value axis; only secondaryValueAxisReversed on y2 is currently modeled"
+                    )));
+                }
+                (Some("valAx" | "catAx" | "dateAx"), Some("minMax")) => {}
+                (Some("catAx" | "dateAx"), Some("maxMin")) => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` reverses a secondary category axis; only secondary value-axis reversal is modeled"
+                    )));
+                }
+                _ => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has an unsupported secondary-axis orientation; use minMax or maxMin on a numeric value axis"
+                    )));
+                }
+            }
+        }
+        for (tag, target) in [
+            ("min", &mut secondary_value_axis_min),
+            ("max", &mut secondary_value_axis_max),
+        ] {
+            if let Some((_, attributes)) = parsed_axis.tags.iter().find(|(name, _)| name == tag) {
+                if parsed_axis.kind.as_deref() != Some("valAx") {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has `{tag}` on a secondary category axis; only numeric secondary value-axis bounds are supported"
+                    )));
+                }
+                if !is_secondary_y_value_axis {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has `{tag}` on the secondary horizontal value axis; only secondary value-axis bounds on y2 are modeled"
+                    )));
+                }
+                let raw = attributes.get("val").ok_or_else(|| Error::Reverse(format!(
+                    "chart part `{part}` secondary value-axis `{tag}` has no val; restore its numeric bound"
+                )))?;
+                let value = raw.parse::<f64>().ok().filter(|value| value.is_finite()).ok_or_else(|| Error::Reverse(format!(
+                    "chart part `{part}` secondary value-axis `{tag}` is not finite numeric data; repair its bound"
+                )))?;
+                if target.replace(value).is_some() {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` repeats a secondary value-axis `{tag}`; retain one bound"
+                    )));
+                }
+            }
+        }
+        for (tag, target) in [
+            ("majorUnit", &mut secondary_value_axis_major_unit),
+            ("minorUnit", &mut secondary_value_axis_minor_unit),
+        ] {
+            if let Some((_, attributes)) = parsed_axis.tags.iter().find(|(name, _)| name == tag) {
+                if parsed_axis.kind.as_deref() != Some("valAx") {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has `{tag}` on a secondary category axis; only numeric secondary value-axis units are supported"
+                    )));
+                }
+                if !is_secondary_y_value_axis {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has `{tag}` on the secondary horizontal value axis; only secondary value-axis units on y2 are modeled"
+                    )));
+                }
+                let raw = attributes.get("val").ok_or_else(|| Error::Reverse(format!(
+                    "chart part `{part}` secondary value-axis `{tag}` has no val; restore its numeric interval"
+                )))?;
+                let value = raw.parse::<f64>().ok().filter(|value| value.is_finite() && *value > 0.0).ok_or_else(|| Error::Reverse(format!(
+                    "chart part `{part}` secondary value-axis `{tag}` must be a finite positive number; repair its interval"
+                )))?;
+                if target.replace(value).is_some() {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` repeats a secondary value-axis `{tag}`; retain one interval"
+                    )));
+                }
+            }
+        }
+        if let Some((_, attributes)) = parsed_axis.tags.iter().find(|(tag, _)| tag == "numFmt")
+            && attributes
+                .get("sourceLinked")
+                .is_some_and(|value| matches!(value.as_str(), "0" | "false"))
+        {
+            let format = attributes.get("formatCode").cloned().ok_or_else(|| Error::Reverse(format!("chart part `{part}` secondary-axis numFmt has no formatCode; add an explicit Excel number format")))?;
+            let target = match parsed_axis
+                .tags
+                .iter()
+                .find(|(tag, _)| tag == "axPos")
+                .and_then(|(_, attrs)| attrs.get("val"))
+                .map(String::as_str)
+            {
+                Some("b" | "t") => &mut x2_axis_number_format,
+                Some("l" | "r") => &mut y2_axis_number_format,
+                _ => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` secondary axis has no mappable position; restore axPos"
+                    )));
+                }
+            };
+            if target.replace(format).is_some() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has duplicate secondary-axis number formats for one axis; remove the duplicate"
+                )));
+            }
+        }
+    }
+    if secondary_value_axis_min
+        .zip(secondary_value_axis_max)
+        .is_some_and(|(minimum, maximum)| minimum >= maximum)
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a secondary value-axis minimum greater than or equal to its maximum; lower the minimum or raise the maximum"
+        )));
+    }
     Ok(ParsedSecondaryChartGroups {
         series_secondary,
         secondary_axis_indices,
-        secondary_axis_number_formats,
+        x2_axis_number_format,
+        y2_axis_number_format,
+        x2_axis_title,
+        y2_axis_title,
+        secondary_value_axis_min,
+        secondary_value_axis_max,
+        secondary_value_axis_major_unit,
+        secondary_value_axis_minor_unit,
+        secondary_value_axis_log_base,
+        secondary_value_axis_reversed,
     })
 }
 
@@ -10326,10 +10727,34 @@ fn validate_secondary_axis_defaults(
         "lblOffset",
         "numFmt",
         "crossBetween",
+        "min",
+        "max",
+        "majorUnit",
+        "minorUnit",
+        "logBase",
+        "title",
+        "layout",
+        "tx",
+        "rich",
+        "bodyPr",
+        "lstStyle",
+        "p",
+        "pPr",
+        "defRPr",
+        "r",
+        "rPr",
+        "t",
     ];
     let mut tag_counts = BTreeMap::<&str, usize>::new();
     for (tag, attributes) in &axis.tags {
         *tag_counts.entry(tag).or_default() += 1;
+        if matches!(tag.as_str(), "min" | "max" | "majorUnit" | "minorUnit")
+            && axis.kind.as_deref() != Some("valAx")
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has `{tag}` on a secondary category axis; only numeric secondary value-axis settings are supported"
+            )));
+        }
         if !allowed_tags.contains(&tag.as_str()) {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` secondary axis contains unsupported `{tag}`; remove secondary-axis styling or use the writer-default axis formatting"
@@ -10337,8 +10762,11 @@ fn validate_secondary_axis_defaults(
         }
         let allowed_attributes: &[&str] = match tag.as_str() {
             "axId" | "crossAx" | "orientation" | "delete" | "axPos" | "tickLblPos" | "crosses"
-            | "auto" | "lblAlgn" | "lblOffset" | "crossBetween" => &["val"],
+            | "auto" | "lblAlgn" | "lblOffset" | "crossBetween" | "min" | "max" | "majorUnit"
+            | "minorUnit" | "logBase" => &["val"],
             "numFmt" => &["formatCode", "sourceLinked"],
+            "bodyPr" => &["rot", "vert"],
+            "rPr" => &["lang"],
             _ => &[],
         };
         if attributes
@@ -10350,7 +10778,6 @@ fn validate_secondary_axis_defaults(
             )));
         }
         let expected = match tag.as_str() {
-            "orientation" => Some(("val", "minMax")),
             "delete" | "auto" => Some(("val", "1")),
             "lblAlgn" => Some(("val", "ctr")),
             "lblOffset" => Some(("val", "100")),
@@ -10364,6 +10791,9 @@ fn validate_secondary_axis_defaults(
             )));
         }
         let values_valid = match tag.as_str() {
+            "orientation" => attributes
+                .get("val")
+                .is_some_and(|value| matches!(value.as_str(), "minMax" | "maxMin")),
             "axPos" => attributes
                 .get("val")
                 .is_some_and(|value| matches!(value.as_str(), "b" | "l" | "t" | "r")),
@@ -10377,13 +10807,37 @@ fn validate_secondary_axis_defaults(
                 .get("val")
                 .is_some_and(|value| matches!(value.as_str(), "between" | "midCat")),
             "numFmt" => {
-                attributes
-                    .get("formatCode")
-                    .is_some_and(|value| matches!(value.as_str(), "General" | "0%"))
-                    && attributes
-                        .get("sourceLinked")
-                        .is_some_and(|value| matches!(value.as_str(), "1" | "true"))
+                let format_valid = attributes.get("formatCode").is_some_and(|value| {
+                    !value.is_empty()
+                        && value.chars().count() <= 255
+                        && value.chars().all(is_valid_xml_character)
+                });
+                let source_linked = attributes.get("sourceLinked").map(String::as_str);
+                format_valid
+                    && source_linked
+                        .is_some_and(|value| matches!(value, "0" | "1" | "true" | "false"))
+                    && (matches!(source_linked, Some("0" | "false"))
+                        || attributes
+                            .get("formatCode")
+                            .is_some_and(|value| matches!(value.as_str(), "General" | "0%")))
             }
+            "min" | "max" => attributes
+                .get("val")
+                .and_then(|value| value.parse::<f64>().ok())
+                .is_some_and(f64::is_finite),
+            "majorUnit" | "minorUnit" => attributes
+                .get("val")
+                .and_then(|value| value.parse::<f64>().ok())
+                .is_some_and(|value| value.is_finite() && value > 0.0),
+            "logBase" => attributes
+                .get("val")
+                .and_then(|value| value.parse::<u16>().ok())
+                .is_some_and(|base| (2..=1000).contains(&base)),
+            "bodyPr" => attributes.iter().all(|(key, value)| match key.as_str() {
+                "rot" => matches!(value.as_str(), "0" | "-5400000"),
+                "vert" => value == "horz",
+                _ => false,
+            }),
             _ => true,
         };
         if !values_valid {
@@ -17877,26 +18331,6 @@ fn parse_chart_xml(
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
-    if !secondary_chart_groups
-        .secondary_axis_number_formats
-        .is_empty()
-    {
-        let expected_format = if is_percent_stacked_chart_type(chart_type) {
-            "0%"
-        } else {
-            "General"
-        };
-        if secondary_chart_groups
-            .secondary_axis_number_formats
-            .iter()
-            .flatten()
-            .any(|format| format != expected_format)
-        {
-            return Err(Error::Reverse(format!(
-                "chart part `{part}` has a secondary value-axis number format inconsistent with the `{chart_type}` writer default; remove the override or add matching secondary-axis format support"
-            )));
-        }
-    }
     if series.iter().any(|item| item.secondary_axis) {
         let mut orders = series
             .iter()
@@ -18774,8 +19208,18 @@ fn parse_chart_xml(
         category_axis_max_date,
         x_axis_title,
         y_axis_title,
+        x2_axis_title: secondary_chart_groups.x2_axis_title,
+        y2_axis_title: secondary_chart_groups.y2_axis_title,
         x_axis_number_format,
         y_axis_number_format,
+        x2_axis_number_format: secondary_chart_groups.x2_axis_number_format,
+        y2_axis_number_format: secondary_chart_groups.y2_axis_number_format,
+        secondary_value_axis_min: secondary_chart_groups.secondary_value_axis_min,
+        secondary_value_axis_max: secondary_chart_groups.secondary_value_axis_max,
+        secondary_value_axis_major_unit: secondary_chart_groups.secondary_value_axis_major_unit,
+        secondary_value_axis_minor_unit: secondary_chart_groups.secondary_value_axis_minor_unit,
+        secondary_value_axis_log_base: secondary_chart_groups.secondary_value_axis_log_base,
+        secondary_value_axis_reversed: secondary_chart_groups.secondary_value_axis_reversed,
         x_axis_min,
         x_axis_max,
         x_axis_log_base,
@@ -23214,8 +23658,18 @@ struct WorksheetChart {
     category_axis_max_date: Option<String>,
     x_axis_title: Option<String>,
     y_axis_title: Option<String>,
+    x2_axis_title: Option<String>,
+    y2_axis_title: Option<String>,
     x_axis_number_format: Option<String>,
     y_axis_number_format: Option<String>,
+    x2_axis_number_format: Option<String>,
+    y2_axis_number_format: Option<String>,
+    secondary_value_axis_min: Option<f64>,
+    secondary_value_axis_max: Option<f64>,
+    secondary_value_axis_major_unit: Option<f64>,
+    secondary_value_axis_minor_unit: Option<f64>,
+    secondary_value_axis_log_base: Option<u16>,
+    secondary_value_axis_reversed: Option<bool>,
     x_axis_min: Option<f64>,
     x_axis_max: Option<f64>,
     x_axis_log_base: Option<u16>,

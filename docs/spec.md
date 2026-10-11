@@ -85,7 +85,7 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `scatterWithSmoothLines` and `scatterWithSmoothLinesAndMarkers` use smoothed
   connections, with markers absent/present respectively. Reverse infers the
   line visibility, smoothing, and marker mode from scatter style, per-series
-  line properties, smoothing, and marker overrides. Mixed per-series settings, axis titles,
+  line properties, smoothing, and marker overrides. Mixed per-series settings
   and category-axis scatter charts fail with repair guidance.
 - `Series.secondaryAxis?: boolean` assigns a Cartesian series to the chart's
   secondary axis pair when true; omission/false uses the primary pair. A chart
@@ -93,10 +93,44 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   axis pair is used. Reverse resolves each series through its chart group's
   `axId` references and the matching axis definitions, without relying on the
   embedded manifest. The writer-default secondary axes are preserved, including
-  a secondary series' distinct `categories` range. Secondary-axis formatting
-  is not yet modeled: titles, bounds, custom labels, gridlines, crossings, or
-  other non-default axis XML fail with a repair suggestion rather than being
-  merged into primary-axis properties. Ambiguous axis-ID pairs also fail.
+  a secondary series' distinct `categories` range. Only explicitly documented
+  secondary-axis attributes below are modeled; other non-default axis XML fails
+  with a repair suggestion rather than being merged into primary-axis
+  properties. Ambiguous axis-ID pairs also fail.
+  `Chart.x2AxisNumberFormat?` and `Chart.y2AxisNumberFormat?` format the
+  secondary horizontal and vertical axes independently. For bar charts, the
+  writer's x2/y2 handles retain their OOXML meaning (horizontal/vertical
+  position); reverse identifies them by axis IDs and position rather than
+  declaration order. These values do not affect primary-axis formats.
+  `Chart.x2AxisTitle?` and `Chart.y2AxisTitle?` set static titles on the
+  secondary horizontal and vertical axes independently. Reverse maps titles
+  from secondary axis IDs and `axPos`, including the writer's bar-axis handle
+  swap. Only a single static title string is represented; formula/multi-run
+  titles and secondary title styling/layout remain unsupported and fail with
+  repair guidance. These properties require a secondary series.
+  `Chart.secondaryValueAxisMin?` and `Chart.secondaryValueAxisMax?` set finite
+  numeric bounds on the secondary value axis only. Both bounds may be omitted
+  for automatic scaling; if both are present, minimum must be less than maximum.
+  Reverse maps the value axis by axis kind and chart-group references and
+  preserves these bounds separately from primary bounds. The pinned writer
+  incorrectly emits secondary bar-chart bounds on a category axis, so this DSL
+  rejects bounds on horizontal bar charts. Bounds on secondary category/date
+  axes are not represented.
+  `Chart.secondaryValueAxisMajorUnit?` and
+  `Chart.secondaryValueAxisMinorUnit?` set positive finite numeric tick
+  intervals on the secondary value axis for area, column, line, and scatter
+  charts. Omission keeps automatic intervals. These values require a secondary
+  series; horizontal bar charts are rejected because the pinned writer routes
+  secondary-axis scaling fields to the wrong OOXML axis. Reverse preserves
+  explicit intervals by chart-group axis IDs and axis kind.
+  `Chart.secondaryValueAxisLogBase?` accepts integers 2–1000 and
+  `Chart.secondaryValueAxisReversed?` accepts a boolean; true reverses the
+  secondary value-axis orientation and omission/false keeps `minMax`. Both
+  properties require a secondary series and are supported for area, column,
+  line, and scatter charts. Horizontal bar charts are rejected because the
+  pinned writer serializes secondary-axis scale settings onto a category axis.
+  Reverse preserves explicit `c:logBase` and `orientation` on the secondary
+  value axis and rejects these settings on secondary category axes.
 - Stock charts support the standard high-low-close (3 series) and
   open-high-low-close (4 series) forms. `Series` order is significant and must
   be High/Low/Close or Open/High/Low/Close respectively; every series must have
@@ -414,6 +448,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   to map these formats to X/Y independently. Reverse preserves explicit
   `sourceLinked=false` codes and rejects non-default source-linked codes rather
   than dropping them.
+- `Chart.x2AxisNumberFormat?: string` and `Chart.y2AxisNumberFormat?: string`
+  set explicit Excel number-format codes on the secondary horizontal and
+  vertical axes. Each must contain 1–255 XML-safe characters, requires a
+  secondary-axis series, and is invalid for pie/doughnut charts. Reverse maps
+  by secondary chart-group axis IDs and `axPos`, preserving fixed
+  (`sourceLinked=false`) formats separately from primary formats; source-linked
+  defaults remain implicit.
 - `Chart.yAxisMin?: number` and `Chart.yAxisMax?: number` set the numeric bounds
   of the chart's value axis and default to automatic scaling when omitted. Each
   value must be finite; if both are supplied, the minimum must be less than the

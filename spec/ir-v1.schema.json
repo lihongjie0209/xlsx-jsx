@@ -541,6 +541,8 @@
             "title": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "x2AxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "y2AxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisTitleFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "xAxisTitleFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "yAxisTitleFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
@@ -573,6 +575,14 @@
             "yAxisTitleFontRotation": { "oneOf": [{ "type": "integer", "minimum": -90, "maximum": 90 }, { "enum": [270, 271] }] },
             "xAxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "x2AxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "y2AxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "secondaryValueAxisMin": { "type": "number" },
+            "secondaryValueAxisMax": { "type": "number" },
+            "secondaryValueAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
+            "secondaryValueAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
+            "secondaryValueAxisLogBase": { "type": "integer", "minimum": 2, "maximum": 1000 },
+            "secondaryValueAxisReversed": { "type": "boolean" },
             "xAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "xAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMin": { "type": "number" },
@@ -1050,6 +1060,14 @@
           "then": { "properties": { "props": { "required": ["valueAxisDisplayUnit"] } } }
         },
         {
+          "if": { "properties": { "props": { "properties": { "type": { "enum": ["bar", "barStacked", "barPercentStacked"] } }, "required": ["type"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "props": { "not": { "anyOf": [{ "required": ["secondaryValueAxisMin"] }, { "required": ["secondaryValueAxisMax"] }, { "required": ["secondaryValueAxisMajorUnit"] }, { "required": ["secondaryValueAxisMinorUnit"] }, { "required": ["secondaryValueAxisLogBase"] }, { "required": ["secondaryValueAxisReversed"] }] } }
+            }
+          }
+        },
+        {
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["pie", "doughnut"] } }, "required": ["type"] } }, "required": ["props"] },
           "then": {
             "properties": {
@@ -1063,6 +1081,16 @@
                     { "required": ["yAxisTitleLayout"] },
                     { "required": ["xAxisNumberFormat"] },
                     { "required": ["yAxisNumberFormat"] },
+                    { "required": ["x2AxisNumberFormat"] },
+                    { "required": ["y2AxisNumberFormat"] },
+                    { "required": ["x2AxisTitle"] },
+                    { "required": ["y2AxisTitle"] },
+                    { "required": ["secondaryValueAxisMin"] },
+                    { "required": ["secondaryValueAxisMax"] },
+                    { "required": ["secondaryValueAxisMajorUnit"] },
+                    { "required": ["secondaryValueAxisMinorUnit"] },
+                    { "required": ["secondaryValueAxisLogBase"] },
+                    { "required": ["secondaryValueAxisReversed"] },
                     { "required": ["xAxisMin"] },
                     { "required": ["xAxisMax"] },
                     { "required": ["xAxisMajorUnit"] },
