@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.63
+Version: 1.64
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -124,6 +124,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   point indices and rejects custom point borders, patterns, gradients,
   transparency, marker formatting, duplicate indices, and indices beyond the
   source range.
+- A `Trendline` child of `Series` supports `type="linear" | "exponential" |
+  "logarithmic" | "polynomial" | "power" | "movingAverage"`, optional
+  `order` (2–5, required for polynomial) and `period` (2–3, required for
+  moving average), nonnegative `forward` / `backward` extrapolation, and finite
+  `intercept`. Zero extrapolation is the default and omitted. Only one trendline
+  is allowed per series, on area, bar, column, line, and scatter charts.
+  Reverse preserves these calculation settings without a manifest; custom
+  trendline names, line/label formatting, legend deletion, and equation/
+  R-squared labels are rejected with repair guidance.
 - `ChartDataTable` is an optional child of `Chart`, at most one per chart.
   `showHorizontalBorders`, `showVerticalBorders`, `showOutlineBorders`, and
   `showLegendKeys` are booleans. Omission uses the pinned writer defaults

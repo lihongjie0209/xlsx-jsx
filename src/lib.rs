@@ -2688,7 +2688,131 @@ fn validate_chart_series_properties(
     validate_chart_series_marker(chart, series, series_index)?;
     validate_chart_series_line(chart, series, series_index)?;
     validate_chart_series_point_colors(series)?;
+    validate_chart_series_trendline(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "Trendline type and dependent parameters are validated as one atomic contract."
+)]
+fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: usize) -> Result<()> {
+    let mut trendline_seen = false;
+    for child in &series.children {
+        let trendline: Node = serde_json::from_value(child.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if trendline.r#type != "Trendline" {
+            continue;
+        }
+        if trendline_seen {
+            return Err(Error::Compile(format!(
+                "Chart Series {} has multiple Trendline children; keep only one trendline per series",
+                series_index + 1
+            )));
+        }
+        trendline_seen = true;
+        if !trendline.children.is_empty() {
+            return Err(Error::Compile(
+                "Trendline cannot contain child elements; remove nested content".into(),
+            ));
+        }
+        reject_unknown_props(
+            &trendline,
+            &[
+                "type",
+                "order",
+                "period",
+                "forward",
+                "backward",
+                "intercept",
+            ],
+            "Trendline",
+        )?;
+        let chart_type = chart
+            .props
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !matches!(
+            chart_type,
+            "area"
+                | "areaStacked"
+                | "areaPercentStacked"
+                | "bar"
+                | "barStacked"
+                | "barPercentStacked"
+                | "column"
+                | "columnStacked"
+                | "columnPercentStacked"
+                | "line"
+                | "lineStacked"
+                | "linePercentStacked"
+                | "scatter"
+                | "scatterWithLines"
+                | "scatterWithLinesAndMarkers"
+                | "scatterWithSmoothLines"
+                | "scatterWithSmoothLinesAndMarkers"
+        ) {
+            return Err(Error::Compile(format!(
+                "Trendline is not supported for Chart.type `{chart_type}`; use an area, bar, column, line, or scatter chart"
+            )));
+        }
+        let trend_type = trendline.props.get("type").and_then(Value::as_str).ok_or_else(|| Error::Compile("Trendline.type is required; use linear, exponential, logarithmic, polynomial, power, or movingAverage".into()))?;
+        if ![
+            "linear",
+            "exponential",
+            "logarithmic",
+            "polynomial",
+            "power",
+            "movingAverage",
+        ]
+        .contains(&trend_type)
+        {
+            return Err(Error::Compile(format!(
+                "Trendline.type `{trend_type}` is unsupported; choose linear, exponential, logarithmic, polynomial, power, or movingAverage"
+            )));
+        }
+        let order = trendline.props.get("order");
+        let period = trendline.props.get("period");
+        if trend_type == "polynomial" {
+            if period.is_some()
+                || !order
+                    .and_then(Value::as_u64)
+                    .is_some_and(|value| (2..=5).contains(&value))
+            {
+                return Err(Error::Compile("Trendline.type=\"polynomial\" requires order from 2 through 5 and does not accept period".into()));
+            }
+        } else if trend_type == "movingAverage" {
+            if order.is_some()
+                || !period
+                    .and_then(Value::as_u64)
+                    .is_some_and(|value| (2..=3).contains(&value))
+            {
+                return Err(Error::Compile("Trendline.type=\"movingAverage\" requires period 2 or 3 and does not accept order".into()));
+            }
+        } else if order.is_some() || period.is_some() {
+            return Err(Error::Compile("Trendline.order is only valid for polynomial and period is only valid for movingAverage; remove the inapplicable property".into()));
+        }
+        for property in ["forward", "backward"] {
+            if let Some(value) = trendline.props.get(property)
+                && !value
+                    .as_f64()
+                    .is_some_and(|number| number.is_finite() && number >= 0.0)
+            {
+                return Err(Error::Compile(format!(
+                    "Trendline.{property} must be a finite number greater than or equal to zero"
+                )));
+            }
+        }
+        if let Some(value) = trendline.props.get("intercept")
+            && !value.as_f64().is_some_and(f64::is_finite)
+        {
+            return Err(Error::Compile(
+                "Trendline.intercept must be a finite number".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_chart_series_point_colors(series: &Node) -> Result<()> {
@@ -2927,6 +3051,9 @@ fn validate_chart_series_error_bars(
     for (error_index, value) in series.children.iter().enumerate() {
         let error_bars: Node = serde_json::from_value(value.clone())
             .map_err(|error| Error::Compile(error.to_string()))?;
+        if error_bars.r#type == "Trendline" {
+            continue;
+        }
         if error_bars.r#type != "ErrorBars" || !error_bars.children.is_empty() {
             return Err(Error::Compile(format!(
                 "Series {} child {} must be an empty ErrorBars component",

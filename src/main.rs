@@ -14,19 +14,19 @@ use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
     ChartDataLabel, ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartMarker,
-    ChartMarkerType, ChartPoint, ChartSolidFill, ChartType, Color, ConditionalFormat2ColorScale,
-    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
-    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
-    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
-    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
-    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
-    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
-    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
-    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
-    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
-    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
-    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
-    Workbook,
+    ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType,
+    Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
+    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
+    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
+    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
+    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
+    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
+    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
+    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
+    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
+    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
+    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
+    TableColumn, TableStyle, Url, Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -830,6 +830,7 @@ fn compile_chart(
         configure_chart_series_marker(chart_series, &series);
         configure_chart_series_line(chart_series, &series);
         configure_chart_series_point_colors(chart_series, &series);
+        configure_chart_series_trendline(chart_series, &series);
         configure_chart_series_error_bars(chart_series, &series)?;
         if component.props.get("type").and_then(Value::as_str) == Some("stock") {
             chart_series
@@ -948,6 +949,9 @@ fn configure_chart_series_error_bars(
     for child in &series.children {
         let error_bars: Node = serde_json::from_value(child.clone())
             .map_err(|error| Error::Compile(error.to_string()))?;
+        if error_bars.r#type == "Trendline" {
+            continue;
+        }
         let axis = error_bars.props["axis"].as_str().expect("validated axis");
         let error_type = error_bars.props["type"].as_str().expect("validated type");
         let value = error_bars.props.get("value").and_then(Value::as_f64);
@@ -984,6 +988,54 @@ fn configure_chart_series_error_bars(
         }
     }
     Ok(())
+}
+
+fn configure_chart_series_trendline(
+    chart_series: &mut rust_xlsxwriter::ChartSeries,
+    series: &Node,
+) {
+    let Some(child) = series
+        .children
+        .iter()
+        .find(|child| child["type"] == "Trendline")
+    else {
+        return;
+    };
+    let trendline: Node = serde_json::from_value(child.clone()).expect("validated Trendline node");
+    let mut settings = ChartTrendline::new();
+    let trend_type = trendline.props["type"]
+        .as_str()
+        .expect("validated Trendline.type");
+    let kind = match trend_type {
+        "linear" => ChartTrendlineType::Linear,
+        "exponential" => ChartTrendlineType::Exponential,
+        "logarithmic" => ChartTrendlineType::Logarithmic,
+        "polynomial" => ChartTrendlineType::Polynomial(
+            u8::try_from(trendline.props["order"].as_u64().expect("validated order"))
+                .expect("order fits u8"),
+        ),
+        "power" => ChartTrendlineType::Power,
+        "movingAverage" => ChartTrendlineType::MovingAverage(
+            u8::try_from(
+                trendline.props["period"]
+                    .as_u64()
+                    .expect("validated period"),
+            )
+            .expect("period fits u8"),
+        ),
+        _ => unreachable!("validated Trendline.type"),
+    };
+    settings.set_type(kind);
+    if let Some(forward) = trendline.props.get("forward").and_then(Value::as_f64) {
+        settings.set_forward_period(forward);
+    }
+    if let Some(backward) = trendline.props.get("backward").and_then(Value::as_f64) {
+        settings.set_backward_period(backward);
+    }
+    if let Some(intercept) = trendline.props.get("intercept").and_then(Value::as_f64) {
+        settings.set_intercept(intercept);
+    }
+    chart_series.set_trendline(&settings);
 }
 
 fn configure_chart_series_data_labels(
@@ -3649,7 +3701,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         open_workbook_auto(path).map_err(|error| Error::Reverse(error.to_string()))?;
     let sheet_names = workbook.sheet_names().clone();
     let mut output = String::from(
-        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Image, Chart, Series, ErrorBars, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
+        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Image, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
     for (name, value) in [
         ("title", workbook_properties.title.as_deref()),
@@ -4267,7 +4319,7 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(number_format) = &series.label_number_format {
             let _ = write!(output, " labelNumberFormat={number_format:?}");
         }
-        if series.error_bars.is_empty() {
+        if series.error_bars.is_empty() && series.trendline.is_none() {
             output.push_str(" />\n");
         } else {
             output.push_str(">\n");
@@ -4284,6 +4336,27 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 }
                 if error_bar.end_cap == Some(false) {
                     output.push_str(" endCap={false}");
+                }
+                output.push_str(" />\n");
+            }
+            if let Some(trendline) = &series.trendline {
+                output.push_str("        <Trendline");
+                let trend_type = trendline.trend_type.expect("validated trendline type");
+                let _ = write!(output, " type=\"{trend_type}\"");
+                if let Some(order) = trendline.order {
+                    let _ = write!(output, " order={{{order}}}");
+                }
+                if let Some(period) = trendline.period {
+                    let _ = write!(output, " period={{{period}}}");
+                }
+                if let Some(forward) = trendline.forward.filter(|value| *value != 0.0) {
+                    let _ = write!(output, " forward={{{forward}}}");
+                }
+                if let Some(backward) = trendline.backward.filter(|value| *value != 0.0) {
+                    let _ = write!(output, " backward={{{backward}}}");
+                }
+                if let Some(intercept) = trendline.intercept {
+                    let _ = write!(output, " intercept={{{intercept}}}");
                 }
                 output.push_str(" />\n");
             }
@@ -7121,6 +7194,15 @@ fn parse_chart_xml(
         "scatterChart",
         "scatterStyle",
         "smooth",
+        "trendline",
+        "trendlineType",
+        "dispEq",
+        "dispRSqr",
+        "trendlineLbl",
+        "period",
+        "forward",
+        "backward",
+        "intercept",
         "spPr",
         "ln",
         "solidFill",
@@ -7429,6 +7511,23 @@ fn parse_chart_xml(
                         "chart part `{part}` has unsupported `<{tag}>` point formatting; retain only opaque RGB solid fills"
                     )));
                 }
+                if stack.iter().any(|ancestor| ancestor == "trendline")
+                    && !matches!(
+                        tag.as_str(),
+                        "trendlineType" | "order" | "period" | "forward" | "backward" | "intercept"
+                    )
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported `<{tag}>` trendline formatting; retain only the trendline model and numeric parameters"
+                    )));
+                }
+                if matches!(tag.as_str(), "dispEq" | "dispRSqr" | "trendlineLbl")
+                    && !stack.iter().any(|ancestor| ancestor == "trendline")
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has {tag} outside a trendline; repair the trendline structure"
+                    )));
+                }
                 if stack.iter().any(|ancestor| ancestor == "marker")
                     && stack.iter().any(|ancestor| ancestor == "dPt")
                     && !matches!(tag.as_str(), "spPr" | "solidFill" | "srgbClr")
@@ -7445,6 +7544,100 @@ fn parse_chart_xml(
                     )));
                 }
                 match tag.as_str() {
+                    "trendline" => {
+                        if stack.last().is_none_or(|parent| parent != "ser") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a trendline outside a series; attach one trendline to a Series"
+                            )));
+                        }
+                        let current = series.last_mut().expect("series context");
+                        if current
+                            .trendline
+                            .replace(WorksheetChartTrendline::default())
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has multiple trendlines for one series; retain one Trendline child"
+                            )));
+                        }
+                    }
+                    "trendlineType" => {
+                        let raw = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "trendlineType",
+                        )?;
+                        let trend_type = match raw.as_str() {
+                            "linear" => "linear",
+                            "exp" => "exponential",
+                            "log" => "logarithmic",
+                            "poly" => "polynomial",
+                            "power" => "power",
+                            "movingAvg" => "movingAverage",
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported trendline type `{raw}`; use a supported Excel trendline model"
+                                )));
+                            }
+                        };
+                        let current = series.last_mut().expect("trendline has series context");
+                        let trendline = current.trendline.as_mut().expect("trendline was opened");
+                        if trendline.trend_type.replace(trend_type).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats trendlineType; retain one model per trendline"
+                            )));
+                        }
+                    }
+                    "order" if stack.last().is_some_and(|parent| parent == "trendline") => {
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "order")?;
+                        let order = raw.parse::<u8>().ok().filter(|value| (2..=5).contains(value)).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has unsupported polynomial order `{raw}`; the pinned writer supports orders 2 through 5")))?;
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("trendline context");
+                        if trendline.order.replace(order).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats polynomial order"
+                            )));
+                        }
+                    }
+                    "period" if stack.last().is_some_and(|parent| parent == "trendline") => {
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "period")?;
+                        let period = raw.parse::<u8>().ok().filter(|value| (2..=3).contains(value)).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has unsupported moving-average period `{raw}`; the pinned writer supports periods 2 or 3")))?;
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("trendline context");
+                        if trendline.period.replace(period).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats moving-average period"
+                            )));
+                        }
+                    }
+                    "forward" | "backward" | "intercept"
+                        if stack.last().is_some_and(|parent| parent == "trendline") =>
+                    {
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), &tag)?;
+                        let value = raw.parse::<f64>().ok().filter(|value| value.is_finite() && (tag == "intercept" || *value >= 0.0)).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has invalid trendline {tag} `{raw}`; provide a finite value and keep extrapolation nonnegative")))?;
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("trendline context");
+                        let target = match tag.as_str() {
+                            "forward" => &mut trendline.forward,
+                            "backward" => &mut trendline.backward,
+                            _ => &mut trendline.intercept,
+                        };
+                        if target.replace(value).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats trendline {tag}"
+                            )));
+                        }
+                    }
                     "dPt" => {
                         if stack.last().is_none_or(|parent| parent != "ser") {
                             return Err(Error::Reverse(format!(
@@ -8658,6 +8851,7 @@ fn parse_chart_xml(
                         line_dash: None,
                         line_transparency: None,
                         point_colors: BTreeMap::new(),
+                        trendline: None,
                         show_value: None,
                         show_category_name: None,
                         show_series_name: None,
@@ -9432,6 +9626,32 @@ fn parse_chart_xml(
                         )));
                     }
                 }
+                if tag == "trendline" {
+                    let trendline = series
+                        .last()
+                        .and_then(|item| item.trendline.as_ref())
+                        .ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` closes a trendline without series context"
+                            ))
+                        })?;
+                    let Some(trend_type) = trendline.trend_type else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a trendline without trendlineType; add one supported model"
+                        )));
+                    };
+                    if (trend_type == "polynomial"
+                        && (trendline.order.is_none() || trendline.period.is_some()))
+                        || (trend_type == "movingAverage"
+                            && (trendline.period.is_none() || trendline.order.is_some()))
+                        || (!matches!(trend_type, "polynomial" | "movingAverage")
+                            && (trendline.order.is_some() || trendline.period.is_some()))
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has trendline order/period values inconsistent with `{trend_type}`; repair the model parameters"
+                        )));
+                    }
+                }
                 if tag == "errBars" {
                     current_error_bar = None;
                 }
@@ -9496,6 +9716,32 @@ fn parse_chart_xml(
     if series.is_empty() {
         return Err(Error::Reverse(format!(
             "chart part `{part}` contains no data series; add at least one series"
+        )));
+    }
+    if series.iter().any(|item| item.trendline.is_some())
+        && !matches!(
+            chart_type,
+            "area"
+                | "areaStacked"
+                | "areaPercentStacked"
+                | "bar"
+                | "barStacked"
+                | "barPercentStacked"
+                | "column"
+                | "columnStacked"
+                | "columnPercentStacked"
+                | "line"
+                | "lineStacked"
+                | "linePercentStacked"
+                | "scatter"
+                | "scatterWithLines"
+                | "scatterWithLinesAndMarkers"
+                | "scatterWithSmoothLines"
+                | "scatterWithSmoothLinesAndMarkers"
+        )
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` contains trendlines on unsupported chart type `{chart_type}`; use an area, bar, column, line, or scatter chart"
         )));
     }
     for item in &series {
@@ -10410,6 +10656,10 @@ fn is_supported_chart_attribute(
         ("scatterStyle", "val") => {
             chart_type == Some("scatter") && matches!(value, "lineMarker" | "smoothMarker")
         }
+        ("trendlineType", "val") => matches!(
+            value,
+            "linear" | "exp" | "log" | "poly" | "power" | "movingAvg"
+        ),
         ("ln", "w") => value
             .parse::<u32>()
             .is_ok_and(|width| width > 0 && width <= 20_116_800 && width % 3175 == 0),
@@ -10446,8 +10696,11 @@ fn is_supported_chart_attribute(
                 Some("columnStacked" | "columnPercentStacked" | "barStacked" | "barPercentStacked")
             ) && value == "100"
         }
-        ("idx" | "order" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
+        ("idx" | "order" | "period" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
             value.parse::<u32>().is_ok()
+        }
+        ("forward" | "backward" | "intercept", "val") => {
+            value.parse::<f64>().is_ok_and(f64::is_finite)
         }
         ("orientation", "val") => matches!(value, "minMax" | "maxMin"),
         ("logBase", "val") => value
@@ -10477,7 +10730,9 @@ fn is_supported_chart_attribute(
         }
         ("ext", "uri") => value == "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}",
         ("dLblPos", "val") => chart_data_label_position_from_ooxml(value).is_some(),
-        ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
+        ("dispEq" | "dispRSqr" | "auto" | "plotVisOnly" | "marker" | "varyColors", "val") => {
+            value == "1"
+        }
         ("delete", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("numFmt", "sourceLinked") => {
             matches!(value, "0" | "1" | "false" | "true")
@@ -13159,6 +13414,7 @@ struct WorksheetChartSeries {
     line_dash: Option<&'static str>,
     line_transparency: Option<u32>,
     point_colors: BTreeMap<usize, String>,
+    trendline: Option<WorksheetChartTrendline>,
     show_value: Option<bool>,
     show_category_name: Option<bool>,
     show_series_name: Option<bool>,
@@ -13173,6 +13429,16 @@ struct WorksheetChartSeries {
     data_label_position_seen: bool,
     label_separator_seen: bool,
     error_bars: Vec<WorksheetChartErrorBars>,
+}
+
+#[derive(Clone, Default)]
+struct WorksheetChartTrendline {
+    trend_type: Option<&'static str>,
+    order: Option<u8>,
+    period: Option<u8>,
+    forward: Option<f64>,
+    backward: Option<f64>,
+    intercept: Option<f64>,
 }
 
 #[derive(Clone, Default)]

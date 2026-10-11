@@ -713,8 +713,13 @@
         },
         "children": {
           "type": "array",
-          "maxItems": 2,
-          "items": { "$ref": "#/$defs/chartErrorBars" }
+          "maxItems": 3,
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/chartErrorBars" },
+              { "$ref": "#/$defs/chartTrendline" }
+            ]
+          }
         }
       },
       "allOf": [
@@ -777,6 +782,28 @@
           "then": { "properties": { "props": { "required": ["value"] } } }
         }
       ],
+      "additionalProperties": false
+    },
+    "chartTrendline": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "Trendline" },
+        "props": {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": { "enum": ["linear", "exponential", "logarithmic", "polynomial", "power", "movingAverage"] },
+            "order": { "type": "integer", "minimum": 2, "maximum": 5 },
+            "period": { "type": "integer", "minimum": 2, "maximum": 3 },
+            "forward": { "type": "number", "minimum": 0 },
+            "backward": { "type": "number", "minimum": 0 },
+            "intercept": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
       "additionalProperties": false
     },
     "ignoreError": {

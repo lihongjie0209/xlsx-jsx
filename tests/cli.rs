@@ -5,8 +5,8 @@ use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition,
     ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
     ChartDataTable as XlsxChartDataTable, ChartErrorBars, ChartErrorBarsDirection,
-    ChartErrorBarsType, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartType,
-    Workbook as XlsxWorkbook,
+    ChartErrorBarsType, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartTrendline,
+    ChartTrendlineType, ChartType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -165,6 +165,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("labelNumberFormat"))
         .stdout(predicate::str::contains("ErrorBars"))
         .stdout(predicate::str::contains("ChartDataTable"))
+        .stdout(predicate::str::contains("Trendline"))
         .stdout(predicate::str::contains("markerType"))
         .stdout(predicate::str::contains("markerSize"))
         .stdout(predicate::str::contains("pointColors"))
@@ -2126,6 +2127,99 @@ fn reverse_rejects_transparent_chart_point_fill_instead_of_dropping_alpha() {
             "unsupported `<alpha>` point formatting",
         ))
         .stderr(predicate::str::contains("opaque RGB solid fills"));
+}
+
+#[test]
+fn reverses_external_chart_trendline_parameters_and_rebuilds_them() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-trendline.xlsx");
+    let source_path = directory.path().join("external-chart-trendline.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-chart-trendline.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    let mut trendline = ChartTrendline::new();
+    trendline
+        .set_type(ChartTrendlineType::Linear)
+        .set_forward_period(2.5)
+        .set_backward_period(1.0)
+        .set_intercept(-3.0);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A5")
+        .set_values("Data!B2:B5")
+        .set_trendline(&trendline);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(
+        source.contains("<Trendline type=\"linear\" forward={2.5} backward={1} intercept={-3} />")
+    );
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:trendline><c:trendlineType val=\"linear\"/><c:forward val=\"2.5\"/><c:backward val=\"1\"/><c:intercept val=\"-3\"/></c:trendline>"));
+}
+
+#[test]
+fn rejects_unsupported_trendline_equation_label_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("trendline-equation.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    let mut trendline = ChartTrendline::new();
+    trendline
+        .set_type(ChartTrendlineType::Linear)
+        .display_equation(true);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A5")
+        .set_values("Data!B2:B5")
+        .set_trendline(&trendline);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported `<dispEq>` trendline formatting",
+        ))
+        .stderr(predicate::str::contains("numeric parameters"));
+}
+
+#[test]
+fn rejects_invalid_polynomial_trendline_order_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-trendline-order.tsx");
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series, Trendline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><Trendline type="polynomial" order={6} /></Series></Chart></Worksheet></Workbook>;"#).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("order from 2 through 5"));
 }
 
 #[test]
