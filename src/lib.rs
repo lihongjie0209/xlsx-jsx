@@ -4326,6 +4326,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     "fontName",
                     "fontPitchFamily",
                     "fontCharset",
+                    "fontRotation",
                     "fillColor",
                     "fillTransparency",
                     "lineColor",
@@ -4587,6 +4588,15 @@ fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
                 "ChartDataTable.{property} must be an integer from 0 through {maximum}; use a schema-valid OOXML font metadata value"
             )));
         }
+    }
+    if let Some(value) = data_table.props.get("fontRotation")
+        && value.as_i64().is_none_or(|rotation| {
+            !(-90..=90).contains(&rotation) && ![270, 271].contains(&rotation)
+        })
+    {
+        return Err(Error::Compile(
+            "ChartDataTable.fontRotation must be an integer from -90 through 90, or 270/271 for vertical text; choose one of those writer-supported values".into(),
+        ));
     }
     Ok(())
 }

@@ -468,6 +468,7 @@ fn spec_exposes_chart_data_table_font_properties() {
         .stdout(predicate::str::contains("fontName"))
         .stdout(predicate::str::contains("fontPitchFamily"))
         .stdout(predicate::str::contains("fontCharset"))
+        .stdout(predicate::str::contains("fontRotation"))
         .stdout(predicate::str::contains("fillColor"))
         .stdout(predicate::str::contains("fillTransparency"))
         .stdout(predicate::str::contains("lineColor"))
@@ -4370,6 +4371,28 @@ fn rejects_schema_invalid_chart_data_table_font_charset_with_guidance() {
 }
 
 #[test]
+fn rejects_out_of_range_chart_data_table_font_rotation_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("invalid-chart-data-table-rotation.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ChartDataTable } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /><ChartDataTable fontRotation={91} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ChartDataTable.fontRotation must be an integer from -90 through 90, or 270/271",
+        ));
+}
+
+#[test]
 fn reverses_chart_data_table_line_formatting_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("formatted-chart-data-table.xlsx");
@@ -4640,7 +4663,7 @@ fn reverses_hidden_chart_data_label_line_without_a_manifest() {
 }
 
 #[test]
-fn reverse_rejects_unmodeled_chart_data_table_font_rotation() {
+fn reverses_and_rebuilds_chart_data_table_font_rotation_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("rotated-chart-data-table-font.xlsx");
     let output_path = directory.path().join("rotated-chart-data-table-font.tsx");
@@ -4659,17 +4682,44 @@ fn reverse_rejects_unmodeled_chart_data_table_font_rotation() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["reverse"])
-        .arg(workbook_path)
+        .arg(&workbook_path)
         .args(["-o"])
-        .arg(output_path)
+        .arg(&output_path)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "unsupported data-table font attribute `bodyPr@rot=2700000`",
-        ))
-        .stderr(predicate::str::contains(
-            "remove rotation or other font metadata",
-        ));
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("fontRotation={45}"), "{source}");
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-chart-data-table-rotation.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        chart_xml.contains("<a:bodyPr rot=\"2700000\" vert=\"horz\"/>"),
+        "{chart_xml}"
+    );
+    let rebuilt_source_path = directory
+        .path()
+        .join("rebuilt-chart-data-table-rotation.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(&rebuilt_source_path)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(rebuilt_source_path).expect("rebuilt reverse source exists"),
+        source
+    );
 }
 
 #[test]

@@ -1515,6 +1515,7 @@ fn compile_chart(
                 "fontName",
                 "fontPitchFamily",
                 "fontCharset",
+                "fontRotation",
             ]
             .iter()
             .any(|property| child.props.contains_key(*property))
@@ -1553,6 +1554,9 @@ fn compile_chart(
                 }
                 if let Some(charset) = child.props.get("fontCharset").and_then(Value::as_u64) {
                     font.set_character_set(u8::try_from(charset).expect("validated font charset"));
+                }
+                if let Some(rotation) = child.props.get("fontRotation").and_then(Value::as_i64) {
+                    font.set_rotation(i16::try_from(rotation).expect("validated font rotation"));
                 }
                 data_table = data_table.set_font(&font);
             }
@@ -6373,6 +6377,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(charset) = table.font_charset {
             let _ = write!(output, " fontCharset={{{charset}}}");
         }
+        if let Some(rotation) = table.font_rotation {
+            let _ = write!(output, " fontRotation={{{rotation}}}");
+        }
         if let Some(color) = &table.fill_color {
             let _ = write!(output, " fillColor={color:?}");
         }
@@ -10590,6 +10597,33 @@ fn parse_chart_xml(
                             )));
                         }
                         current.label_font_rotation = Some(rotation);
+                    }
+                }
+                if tag == "bodyPr"
+                    && stack.iter().any(|ancestor| ancestor == "txPr")
+                    && stack.iter().any(|ancestor| ancestor == "dTable")
+                {
+                    let raw_rotation = chart_xml_attribute(&event, "rot", reader.decoder())?;
+                    let vertical = chart_xml_attribute(&event, "vert", reader.decoder())?;
+                    let rotation = parse_chart_text_rotation(
+                        raw_rotation.as_deref(),
+                        vertical.as_deref(),
+                        part,
+                        "data-table font",
+                    )?;
+                    if let Some(rotation) = rotation {
+                        let table = data_table
+                            .as_mut()
+                            .expect("data-table font has a table context");
+                        if table
+                            .font_rotation
+                            .is_some_and(|previous| previous != rotation)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent data-table font rotations; make all txPr bodyPr values identical"
+                            )));
+                        }
+                        table.font_rotation = Some(rotation);
                     }
                 }
                 if tag == "bodyPr"
@@ -19003,6 +19037,15 @@ fn audit_chart_attributes(
                     "charset" => value.parse::<u8>().is_ok_and(|charset| charset <= 127),
                     _ => false,
                 }
+            } else if tag == "bodyPr" {
+                match (key.as_str(), value.as_str()) {
+                    ("rot", value) => value.parse::<i32>().is_ok_and(|rotation| {
+                        (-5_400_000..=5_400_000).contains(&rotation)
+                            && (rotation == 0 || rotation % 60_000 == 0)
+                    }),
+                    ("vert", "horz" | "wordArtVert" | "eaVert") => true,
+                    _ => false,
+                }
             } else if tag == "endParaRPr" {
                 key == "lang" && value == "en-US"
             } else {
@@ -19072,7 +19115,7 @@ fn audit_chart_attributes(
             && !is_supported_chart_attribute(tag, &key, &value, chart_type)
         {
             return Err(Error::Reverse(format!(
-                "chart part `{part}` has unsupported data-table font attribute `{tag}@{key}={value}`; only point size, bold, italic, single underline, opaque RGB color, Latin typeface, pitch-family, and charset are represented, so remove rotation or other font metadata"
+                "chart part `{part}` has unsupported data-table font attribute `{tag}@{key}={value}`; only point size, bold, italic, single underline, opaque RGB color, Latin typeface, pitch-family, charset, and supported bodyPr rotation are represented, so remove the unsupported font metadata"
             )));
         }
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
@@ -22444,6 +22487,7 @@ struct WorksheetChartDataTable {
     font_name: Option<String>,
     font_pitch_family: Option<u8>,
     font_charset: Option<u8>,
+    font_rotation: Option<i16>,
     fill_color: Option<String>,
     fill_transparency: Option<u8>,
     line_style: Option<WorksheetChartGridlineStyle>,

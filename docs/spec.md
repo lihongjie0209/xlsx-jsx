@@ -206,9 +206,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   gradients, effects, and other shape content.
   `fontSize` (1–4000 points), `fontBold`, `fontItalic`, `fontUnderline`,
   `fontColor` (opaque `#RRGGBB`), `fontName` (1–255 XML-safe characters),
-  `fontPitchFamily` (0–255), and `fontCharset` (0–127) style data-table text
-  through `ChartDataTable::set_font`; reverse preserves this subset from
-  external charts. Font rotation and other text properties remain rejected.
+  `fontPitchFamily` (0–255), `fontCharset` (0–127), and `fontRotation`
+  (integer degrees -90 through 90, or 270/271 for vertical text) style
+  data-table text through `ChartDataTable::set_font`; reverse preserves this
+  subset from external charts. Other text properties remain rejected.
 - `cell` is an A1 cell anchor. `width` and `height` are positive integer pixels
   (1–1790); omission uses the writer defaults of 480×288 pixels. `Series` has
   required `values` and optional `categories` and `name` sheet-qualified A1
