@@ -3080,16 +3080,25 @@ fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
 }
 
 fn configure_chart_gridlines(chart: &mut Chart, component: &Node) {
-    for (property, axis, minor) in [
-        ("horizontalAxisMajorGridlines", true, false),
-        ("horizontalAxisMinorGridlines", true, true),
-        ("verticalAxisMajorGridlines", false, false),
-        ("verticalAxisMinorGridlines", false, true),
+    for (property, horizontal, minor, secondary) in [
+        ("horizontalAxisMajorGridlines", true, false, false),
+        ("horizontalAxisMinorGridlines", true, true, false),
+        ("verticalAxisMajorGridlines", false, false, false),
+        ("verticalAxisMinorGridlines", false, true, false),
+        ("x2AxisMajorGridlines", true, false, true),
+        ("x2AxisMinorGridlines", true, true, true),
+        ("y2AxisMajorGridlines", false, false, true),
+        ("y2AxisMinorGridlines", false, true, true),
     ] {
         let Some(setting) = component.props.get(property) else {
             continue;
         };
-        let chart_axis = if axis { chart.x_axis() } else { chart.y_axis() };
+        let chart_axis = match (secondary, horizontal) {
+            (true, true) => chart.x2_axis(),
+            (true, false) => chart.y2_axis(),
+            (false, true) => chart.x_axis(),
+            (false, false) => chart.y_axis(),
+        };
         if let Some(style) = setting.as_object() {
             let mut line = ChartLine::new();
             if let Some(color) = style.get("color").and_then(Value::as_str) {
@@ -7336,6 +7345,26 @@ fn append_chart_gridline_properties(properties: &mut String, chart: &WorksheetCh
             chart.vertical_axis_minor_gridlines,
             chart.gridline_styles[3].as_ref(),
         ),
+        (
+            "x2AxisMajorGridlines",
+            chart.x2_axis_major_gridlines,
+            chart.secondary_gridline_styles[0].as_ref(),
+        ),
+        (
+            "x2AxisMinorGridlines",
+            chart.x2_axis_minor_gridlines,
+            chart.secondary_gridline_styles[1].as_ref(),
+        ),
+        (
+            "y2AxisMajorGridlines",
+            chart.y2_axis_major_gridlines,
+            chart.secondary_gridline_styles[2].as_ref(),
+        ),
+        (
+            "y2AxisMinorGridlines",
+            chart.y2_axis_minor_gridlines,
+            chart.secondary_gridline_styles[3].as_ref(),
+        ),
     ] {
         if let Some(style) = style {
             let mut fields = Vec::new();
@@ -10213,6 +10242,8 @@ struct ParsedSecondaryChartGroups {
     y2_axis_number_format: Option<String>,
     x2_axis_title: Option<String>,
     y2_axis_title: Option<String>,
+    secondary_gridlines: [Option<bool>; 4],
+    secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4],
     secondary_value_axis_min: Option<f64>,
     secondary_value_axis_max: Option<f64>,
     secondary_value_axis_major_unit: Option<f64>,
@@ -10229,7 +10260,191 @@ struct ParsedChartAxisInfo {
     title: Option<String>,
     has_title: bool,
     title_is_simple: bool,
+    gridlines: [ParsedAxisGridline; 2],
     tags: Vec<(String, BTreeMap<String, String>)>,
+}
+
+#[derive(Default, PartialEq, Eq)]
+enum ParsedGridlinePresence {
+    #[default]
+    Absent,
+    Visible,
+    Hidden,
+}
+
+#[derive(Default)]
+struct ParsedAxisGridline {
+    presence: ParsedGridlinePresence,
+    shape_seen: bool,
+    line_seen: bool,
+    style: Option<WorksheetChartGridlineStyle>,
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "The bounded secondary-gridline OOXML grammar is handled in one contextual parser."
+)]
+fn parse_secondary_gridline_element(
+    axis: &mut ParsedChartAxisInfo,
+    stack: &[String],
+    tag: &str,
+    attributes: &BTreeMap<String, String>,
+    part: &str,
+) -> xlsx_jsx::Result<()> {
+    if matches!(tag, "majorGridlines" | "minorGridlines")
+        && stack
+            .last()
+            .is_some_and(|parent| matches!(parent.as_str(), "catAx" | "dateAx" | "valAx"))
+    {
+        let index = usize::from(tag == "minorGridlines");
+        if axis.gridlines[index].presence != ParsedGridlinePresence::Absent {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` repeats secondary {tag}; retain one declaration per axis"
+            )));
+        }
+        axis.gridlines[index].presence = ParsedGridlinePresence::Visible;
+        return Ok(());
+    }
+
+    let Some(gridline_name) = stack
+        .iter()
+        .rev()
+        .find(|name| matches!(name.as_str(), "majorGridlines" | "minorGridlines"))
+    else {
+        return Ok(());
+    };
+    let index = usize::from(gridline_name == "minorGridlines");
+    let gridline = &mut axis.gridlines[index];
+    let supported_child = match tag {
+        "spPr" => stack.last().is_some_and(|parent| parent == gridline_name),
+        "ln" => stack.last().is_some_and(|parent| parent == "spPr"),
+        "solidFill" => stack.last().is_some_and(|parent| parent == "ln"),
+        "srgbClr" => {
+            stack.last().is_some_and(|parent| parent == "solidFill")
+                && stack.iter().any(|parent| parent == "ln")
+        }
+        "alpha" => {
+            stack.last().is_some_and(|parent| parent == "srgbClr")
+                && stack.iter().any(|parent| parent == "ln")
+        }
+        "prstDash" | "noFill" => stack.last().is_some_and(|parent| parent == "ln"),
+        _ => false,
+    };
+    if !supported_child {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has unsupported secondary {gridline_name} child `<{tag}>`; retain only supported ChartLine properties"
+        )));
+    }
+    match tag {
+        "spPr" if stack.last().is_some_and(|parent| parent == gridline_name) => {
+            if std::mem::replace(&mut gridline.shape_seen, true) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats secondary {gridline_name} shape properties"
+                )));
+            }
+        }
+        "ln" if stack.last().is_some_and(|parent| parent == "spPr") => {
+            if std::mem::replace(&mut gridline.line_seen, true) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats secondary {gridline_name} line formatting"
+                )));
+            }
+            if let Some(raw_width) = attributes.get("w") {
+                let width_emu = raw_width
+                    .parse::<u32>()
+                    .ok()
+                    .filter(|width| *width > 0 && *width <= 20_116_800 && *width % 3175 == 0)
+                    .ok_or_else(|| Error::Reverse(format!(
+                        "chart part `{part}` has a secondary gridline width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments"
+                    )))?;
+                gridline.style.get_or_insert_default().width = Some(f64::from(width_emu) / 12700.0);
+            }
+        }
+        "srgbClr"
+            if stack.last().is_some_and(|parent| parent == "solidFill")
+                && stack.iter().any(|parent| parent == "ln") =>
+        {
+            let color = attributes.get("val").ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` has a secondary gridline RGB color without val; use six-digit RGB"
+            )))?;
+            if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has a non-RGB secondary gridline color; use six-digit RGB"
+                )));
+            }
+            if gridline
+                .style
+                .get_or_insert_default()
+                .color
+                .replace(format!("#{color}").to_ascii_uppercase())
+                .is_some()
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats a secondary gridline color"
+                )));
+            }
+        }
+        "alpha"
+            if stack.last().is_some_and(|parent| parent == "srgbClr")
+                && stack.iter().any(|parent| parent == "ln") =>
+        {
+            let alpha = attributes
+                .get("val")
+                .and_then(|value| value.parse::<u32>().ok())
+                .filter(|value| *value <= 100_000 && *value % 1000 == 0)
+                .ok_or_else(|| Error::Reverse(format!(
+                    "chart part `{part}` has secondary gridline alpha that cannot be represented as whole-percent transparency"
+                )))?;
+            let transparency = 100 - alpha / 1000;
+            if gridline
+                .style
+                .get_or_insert_default()
+                .transparency
+                .replace(transparency)
+                .is_some()
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats secondary gridline transparency"
+                )));
+            }
+        }
+        "prstDash" if stack.last().is_some_and(|parent| parent == "ln") => {
+            let raw = attributes.get("val").ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` has a secondary gridline dash without val; use a supported preset"
+            )))?;
+            let dash = match raw.as_str() {
+                "solid" => "solid",
+                "sysDot" => "roundDot",
+                "sysDash" => "squareDot",
+                "dash" => "dash",
+                "dashDot" => "dashDot",
+                "lgDash" => "longDash",
+                "lgDashDot" => "longDashDot",
+                "lgDashDotDot" => "longDashDotDot",
+                _ => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported secondary gridline dash `{raw}`; use a standard preset"
+                    )));
+                }
+            };
+            if gridline
+                .style
+                .get_or_insert_default()
+                .dash
+                .replace(dash)
+                .is_some()
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats a secondary gridline dash"
+                )));
+            }
+        }
+        "noFill" if stack.last().is_some_and(|parent| parent == "ln") => {
+            gridline.presence = ParsedGridlinePresence::Hidden;
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 #[expect(
@@ -10349,6 +10564,13 @@ fn parse_secondary_chart_groups(
                             .into_owned();
                         attributes.insert(key, value);
                     }
+                    parse_secondary_gridline_element(
+                        &mut axes[index],
+                        &stack,
+                        &tag,
+                        &attributes,
+                        part,
+                    )?;
                     if tag == "delete" {
                         axes[index].deleted = attributes
                             .get("val")
@@ -10479,6 +10701,9 @@ fn parse_secondary_chart_groups(
     let mut y2_axis_number_format = None;
     let mut x2_axis_title = None;
     let mut y2_axis_title = None;
+    let mut secondary_gridlines = [None; 4];
+    let mut secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4] =
+        std::array::from_fn(|_| None);
     let mut secondary_value_axis_min = None;
     let mut secondary_value_axis_max = None;
     let mut secondary_value_axis_major_unit = None;
@@ -10487,6 +10712,54 @@ fn parse_secondary_chart_groups(
     let mut secondary_value_axis_reversed = None;
     for index in &secondary_axis_indices {
         let parsed_axis = &axes[*index];
+        let position = parsed_axis
+            .tags
+            .iter()
+            .find(|(tag, _)| tag == "axPos")
+            .and_then(|(_, attributes)| attributes.get("val"))
+            .map(String::as_str);
+        let gridline_base = match position {
+            Some("b" | "t") => Some(0),
+            Some("l" | "r") => Some(2),
+            _ => None,
+        };
+        for (local_index, gridline) in parsed_axis.gridlines.iter().enumerate() {
+            if gridline.presence == ParsedGridlinePresence::Absent {
+                continue;
+            }
+            let base = gridline_base.ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` has secondary gridlines on an axis without a mappable axPos; restore b/t for x2 or l/r for y2"
+            )))?;
+            if gridline.shape_seen && !gridline.line_seen {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has secondary gridline shape metadata without an a:ln line; remove the shape metadata"
+                )));
+            }
+            if gridline.presence == ParsedGridlinePresence::Hidden
+                && gridline
+                    .style
+                    .as_ref()
+                    .is_some_and(|style| !style.is_empty())
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` combines a hidden secondary gridline with visible line formatting; remove noFill or remove its RGB style"
+                )));
+            }
+            if gridline
+                .style
+                .as_ref()
+                .is_some_and(|style| style.transparency.is_some() && style.color.is_none())
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has secondary gridline transparency without an RGB color; add a color or remove alpha"
+                )));
+            }
+            let target_index = base + local_index;
+            secondary_gridlines[target_index] =
+                Some(gridline.presence != ParsedGridlinePresence::Hidden);
+            secondary_gridline_styles[target_index] =
+                gridline.style.clone().filter(|style| !style.is_empty());
+        }
         if parsed_axis.has_title {
             if !parsed_axis.title_is_simple {
                 return Err(Error::Reverse(format!(
@@ -10693,6 +10966,8 @@ fn parse_secondary_chart_groups(
         y2_axis_number_format,
         x2_axis_title,
         y2_axis_title,
+        secondary_gridlines,
+        secondary_gridline_styles,
         secondary_value_axis_min,
         secondary_value_axis_max,
         secondary_value_axis_major_unit,
@@ -10732,6 +11007,15 @@ fn validate_secondary_axis_defaults(
         "majorUnit",
         "minorUnit",
         "logBase",
+        "majorGridlines",
+        "minorGridlines",
+        "spPr",
+        "ln",
+        "solidFill",
+        "srgbClr",
+        "alpha",
+        "prstDash",
+        "noFill",
         "title",
         "layout",
         "tx",
@@ -10763,10 +11047,11 @@ fn validate_secondary_axis_defaults(
         let allowed_attributes: &[&str] = match tag.as_str() {
             "axId" | "crossAx" | "orientation" | "delete" | "axPos" | "tickLblPos" | "crosses"
             | "auto" | "lblAlgn" | "lblOffset" | "crossBetween" | "min" | "max" | "majorUnit"
-            | "minorUnit" | "logBase" => &["val"],
+            | "minorUnit" | "logBase" | "srgbClr" | "alpha" | "prstDash" => &["val"],
             "numFmt" => &["formatCode", "sourceLinked"],
             "bodyPr" => &["rot", "vert"],
             "rPr" => &["lang"],
+            "ln" => &["w"],
             _ => &[],
         };
         if attributes
@@ -10833,6 +11118,32 @@ fn validate_secondary_axis_defaults(
                 .get("val")
                 .and_then(|value| value.parse::<u16>().ok())
                 .is_some_and(|base| (2..=1000).contains(&base)),
+            "ln" => attributes.get("w").is_none_or(|width| {
+                width
+                    .parse::<u32>()
+                    .ok()
+                    .is_some_and(|width| width > 0 && width <= 20_116_800 && width % 3175 == 0)
+            }),
+            "srgbClr" => attributes.get("val").is_some_and(|color| {
+                color.len() == 6 && color.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }),
+            "alpha" => attributes
+                .get("val")
+                .and_then(|value| value.parse::<u32>().ok())
+                .is_some_and(|alpha| alpha <= 100_000 && alpha % 1000 == 0),
+            "prstDash" => attributes.get("val").is_some_and(|dash| {
+                matches!(
+                    dash.as_str(),
+                    "solid"
+                        | "sysDot"
+                        | "sysDash"
+                        | "dash"
+                        | "dashDot"
+                        | "lgDash"
+                        | "lgDashDot"
+                        | "lgDashDotDot"
+                )
+            }),
             "bodyPr" => attributes.iter().all(|(key, value)| match key.as_str() {
                 "rot" => matches!(value.as_str(), "0" | "-5400000"),
                 "vert" => value == "horz",
@@ -19273,6 +19584,11 @@ fn parse_chart_xml(
         .then_some(vertical_major_gridlines),
         vertical_axis_minor_gridlines: vertical_minor_gridlines.then_some(true),
         gridline_styles,
+        x2_axis_major_gridlines: secondary_chart_groups.secondary_gridlines[0],
+        x2_axis_minor_gridlines: secondary_chart_groups.secondary_gridlines[1],
+        y2_axis_major_gridlines: secondary_chart_groups.secondary_gridlines[2],
+        y2_axis_minor_gridlines: secondary_chart_groups.secondary_gridlines[3],
+        secondary_gridline_styles: secondary_chart_groups.secondary_gridline_styles,
         show_legend,
         auto_title_deleted,
         legend_position: legend_position.filter(|position| *position != "right"),
@@ -23702,6 +24018,11 @@ struct WorksheetChart {
     vertical_axis_major_gridlines: Option<bool>,
     vertical_axis_minor_gridlines: Option<bool>,
     gridline_styles: [Option<WorksheetChartGridlineStyle>; 4],
+    x2_axis_major_gridlines: Option<bool>,
+    x2_axis_minor_gridlines: Option<bool>,
+    y2_axis_major_gridlines: Option<bool>,
+    y2_axis_minor_gridlines: Option<bool>,
+    secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4],
     horizontal_axis_major_tick_type: Option<&'static str>,
     horizontal_axis_minor_tick_type: Option<&'static str>,
     vertical_axis_major_tick_type: Option<&'static str>,

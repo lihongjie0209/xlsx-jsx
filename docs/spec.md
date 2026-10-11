@@ -108,6 +108,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   swap. Only a single static title string is represented; formula/multi-run
   titles and secondary title styling/layout remain unsupported and fail with
   repair guidance. These properties require a secondary series.
+  `Chart.x2AxisMajorGridlines`, `x2AxisMinorGridlines`, `y2AxisMajorGridlines`,
+  and `y2AxisMinorGridlines` control gridlines on the secondary horizontal and
+  vertical axes. Each accepts a boolean or the same `{color, width, dash,
+  transparency}` line-style object as primary gridlines. A style object means
+  visible; transparency requires color. Reverse maps by secondary axis IDs and
+  physical `axPos`, including bar-axis swaps, and preserves the supported RGB
+  `ChartLine` subset. Gridline fills, effects, and extensions remain rejected.
   `Chart.secondaryValueAxisMin?` and `Chart.secondaryValueAxisMax?` set finite
   numeric bounds on the secondary value axis only. Both bounds may be omitted
   for automatic scaling; if both are present, minimum must be less than maximum.

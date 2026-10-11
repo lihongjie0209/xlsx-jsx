@@ -2069,6 +2069,10 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "horizontalAxisMinorGridlines",
             "verticalAxisMajorGridlines",
             "verticalAxisMinorGridlines",
+            "x2AxisMajorGridlines",
+            "x2AxisMinorGridlines",
+            "y2AxisMajorGridlines",
+            "y2AxisMinorGridlines",
             "horizontalAxisMajorTickType",
             "horizontalAxisMinorTickType",
             "verticalAxisMajorTickType",
@@ -4173,6 +4177,10 @@ fn validate_chart_gridlines(chart: &Node, chart_type: &str) -> Result<()> {
         "horizontalAxisMinorGridlines",
         "verticalAxisMajorGridlines",
         "verticalAxisMinorGridlines",
+        "x2AxisMajorGridlines",
+        "x2AxisMinorGridlines",
+        "y2AxisMajorGridlines",
+        "y2AxisMinorGridlines",
     ];
     if matches!(chart_type, "pie" | "doughnut")
         && properties
@@ -4180,7 +4188,7 @@ fn validate_chart_gridlines(chart: &Node, chart_type: &str) -> Result<()> {
             .any(|property| chart.props.contains_key(*property))
     {
         return Err(Error::Compile(
-            "pie and doughnut Charts have no axes; remove horizontalAxisMajorGridlines, horizontalAxisMinorGridlines, verticalAxisMajorGridlines, and verticalAxisMinorGridlines or use a chart type with axes".into(),
+            "pie and doughnut Charts have no axes; remove primary and secondary axis gridline properties or use a chart type with axes".into(),
         ));
     }
     for property in properties {
@@ -4679,6 +4687,10 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
             "y2AxisNumberFormat",
             "x2AxisTitle",
             "y2AxisTitle",
+            "x2AxisMajorGridlines",
+            "x2AxisMinorGridlines",
+            "y2AxisMajorGridlines",
+            "y2AxisMinorGridlines",
             "secondaryValueAxisMin",
             "secondaryValueAxisMax",
             "secondaryValueAxisMajorUnit",
@@ -4690,7 +4702,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
         .any(|property| chart.props.contains_key(*property))
     {
         return Err(Error::Compile(
-            "secondary-axis titles, number formats, bounds, units, logarithmic base, and reversal require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties".into(),
+            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, and gridlines require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties".into(),
         ));
     }
     validate_chart_series_spacing(chart)?;

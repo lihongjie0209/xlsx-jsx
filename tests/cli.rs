@@ -46,6 +46,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("secondaryAxis"))
         .stdout(predicate::str::contains("x2AxisTitle"))
         .stdout(predicate::str::contains("y2AxisTitle"))
+        .stdout(predicate::str::contains("x2AxisMajorGridlines"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
         .stdout(predicate::str::contains("lineColor"))
@@ -4059,6 +4060,153 @@ fn secondary_bar_axis_titles_map_by_position_not_handle_order() {
         rebuilt.contains("y2AxisTitle={\"Secondary vertical\"}"),
         "{rebuilt}"
     );
+}
+
+#[test]
+fn secondary_axis_gridline_style_round_trips_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("secondary-gridlines.xlsx");
+    let output_path = directory.path().join("secondary-gridlines.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart.add_series().set_values("Data!B2:B4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_secondary_axis(true);
+    chart.x2_axis().set_minor_gridlines(true);
+    chart.y2_axis().set_major_gridlines_line(
+        ChartLine::new()
+            .set_color("#336699")
+            .set_width(1.25)
+            .set_dash_type(ChartLineDashType::DashDot)
+            .set_transparency(25),
+    );
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("x2AxisMinorGridlines={true}"), "{source}");
+    assert!(
+        source.contains("y2AxisMajorGridlines={{color: \"#336699\", width: 1.25, dash: \"dashDot\", transparency: 25}}"),
+        "{source}"
+    );
+
+    let rebuilt_path = directory.path().join("rebuilt-secondary-gridlines.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        rebuilt_xml.contains("#336699") || rebuilt_xml.contains("336699"),
+        "{rebuilt_xml}"
+    );
+    assert!(
+        rebuilt_xml.contains("prstDash val=\"dashDot\""),
+        "{rebuilt_xml}"
+    );
+    assert!(rebuilt_xml.contains("alpha val=\"75000\""), "{rebuilt_xml}");
+}
+
+#[test]
+fn secondary_bar_gridlines_map_by_axis_position_and_rebuild() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("secondary-bar-gridlines.xlsx");
+    let output_path = directory.path().join("secondary-bar-gridlines.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Bar);
+    chart.add_series().set_values("Data!B2:B4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_secondary_axis(true);
+    chart.x2_axis().set_major_gridlines(true);
+    chart.y2_axis().set_minor_gridlines_line(
+        ChartLine::new()
+            .set_color("#CC5500")
+            .set_width(0.75)
+            .set_dash_type(ChartLineDashType::Dash),
+    );
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("x2AxisMajorGridlines={true}"), "{source}");
+    assert!(
+        source.contains("y2AxisMinorGridlines={{color: \"#CC5500\", width: 0.75, dash: \"dash\"}}"),
+        "{source}"
+    );
+
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-secondary-bar-gridlines.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt_source = directory.path().join("rebuilt-secondary-bar-gridlines.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(&rebuilt_source)
+        .assert()
+        .success();
+    let rebuilt = std::fs::read_to_string(rebuilt_source).expect("rebuilt JSX exists");
+    assert!(rebuilt.contains("x2AxisMajorGridlines={true}"), "{rebuilt}");
+    assert!(
+        rebuilt
+            .contains("y2AxisMinorGridlines={{color: \"#CC5500\", width: 0.75, dash: \"dash\"}}"),
+        "{rebuilt}"
+    );
+}
+
+#[test]
+fn secondary_axis_gridlines_require_a_secondary_series() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("gridlines-without-secondary.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" y2AxisMinorGridlines={true}><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(source)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, and gridlines require at least one Series with secondaryAxis={true}",
+        ));
 }
 
 #[test]
@@ -9766,7 +9914,7 @@ fn rejects_gridline_properties_for_pie_charts_with_guidance() {
             "pie and doughnut Charts have no axes",
         ))
         .stderr(predicate::str::contains(
-            "remove horizontalAxisMajorGridlines",
+            "remove primary and secondary axis gridline properties",
         ));
 }
 
@@ -9805,9 +9953,11 @@ fn reverse_rejects_unsupported_gridline_effects_with_repair_guidance() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "unsupported `<schemeClr>` gridline formatting",
+            "unsupported secondary majorGridlines child `<schemeClr>`",
         ))
-        .stderr(predicate::str::contains("retain only RGB color"));
+        .stderr(predicate::str::contains(
+            "retain only supported ChartLine properties",
+        ));
 }
 
 #[test]

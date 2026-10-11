@@ -632,6 +632,10 @@
             "horizontalAxisMinorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
             "verticalAxisMajorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
             "verticalAxisMinorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
+            "x2AxisMajorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
+            "x2AxisMinorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
+            "y2AxisMajorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
+            "y2AxisMinorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
             "showLegend": { "type": "boolean" },
             "autoTitleDeleted": { "type": "boolean" },
             "titleOverlay": { "type": "boolean" },
@@ -1126,7 +1130,11 @@
                     { "required": ["horizontalAxisMajorGridlines"] },
                     { "required": ["horizontalAxisMinorGridlines"] },
                     { "required": ["verticalAxisMajorGridlines"] },
-                    { "required": ["verticalAxisMinorGridlines"] }
+                    { "required": ["verticalAxisMinorGridlines"] },
+                    { "required": ["x2AxisMajorGridlines"] },
+                    { "required": ["x2AxisMinorGridlines"] },
+                    { "required": ["y2AxisMajorGridlines"] },
+                    { "required": ["y2AxisMinorGridlines"] }
                   ]
                 }
               }
