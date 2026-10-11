@@ -238,6 +238,20 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.legendFillTransparency?: integer` sets whole-percent fill alpha from
   0 through 100 and requires `legendFillColor`; the legend must be visible and
   cannot use `legendOverlay={true}`.
+- `Chart.legendFontSize?: number`, `legendFontBold?: boolean`,
+  `legendFontItalic?: boolean`, `legendFontUnderline?: boolean`,
+  `legendFontColor?: "#RRGGBB"`, `legendFontName?: string`,
+  `legendFontPitchFamily?: integer`, `legendFontCharset?: integer`, and
+  `legendFontRotation?: integer` format visible legend text through
+  `ChartLegend::set_font()`. Size is in points (1–4000); colors are opaque
+  RGB; names are 1–255 XML-safe characters; pitch-family is 0–255; charset is
+  0–127 (larger values serialize schema-invalid OOXML); rotation accepts -90
+  through 90, 270 (stacked), or 271 (East Asian vertical). Each property
+  requires a visible legend. Reverse preserves uniform text properties across
+  the legend's default and explicit runs; mixed formatting, unsupported
+  typefaces/metadata, and unsupported rotation forms are rejected rather than
+  flattened. Omitted/default false underline and zero pitch/charset fold to
+  omission.
 - `Chart.titleLayout?: { x, y }` manually positions a static chart title using
   finite relative fractions in `[0, 1]` of the chart width and height. The
   writer uses outer/default layout target and edge positioning. It requires

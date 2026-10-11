@@ -1900,6 +1900,15 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleLineTransparency",
             "legendFillColor",
             "legendFillTransparency",
+            "legendFontSize",
+            "legendFontBold",
+            "legendFontItalic",
+            "legendFontUnderline",
+            "legendFontColor",
+            "legendFontName",
+            "legendFontPitchFamily",
+            "legendFontCharset",
+            "legendFontRotation",
             "xAxisTitle",
             "yAxisTitle",
             "xAxisTitleLayout",
@@ -2297,6 +2306,7 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_title_font_properties(chart)?;
+    validate_chart_legend_font_properties(chart)?;
     validate_chart_title_shape_format(chart)?;
     validate_chart_legend_shape_format(chart)?;
     validate_chart_area_shape_formats(chart)?;
@@ -2458,6 +2468,102 @@ fn validate_chart_title_font_properties(chart: &Node) -> Result<()> {
             return Err(Error::Compile(format!(
                 "Chart.{property} requires Chart.title; add a static title or remove {property}"
             )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_legend_font_properties(chart: &Node) -> Result<()> {
+    let properties = [
+        "legendFontSize",
+        "legendFontBold",
+        "legendFontItalic",
+        "legendFontUnderline",
+        "legendFontColor",
+        "legendFontName",
+        "legendFontPitchFamily",
+        "legendFontCharset",
+        "legendFontRotation",
+    ];
+    let Some(property) = properties
+        .iter()
+        .find(|property| chart.props.contains_key(**property))
+    else {
+        return Ok(());
+    };
+    if chart.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
+        return Err(Error::Compile(format!(
+            "Chart.{property} requires a visible legend; remove showLegend={{false}} or remove the legend font property"
+        )));
+    }
+    if chart.props.get("legendFontSize").is_some_and(|value| {
+        value
+            .as_f64()
+            .is_none_or(|size| !size.is_finite() || !(1.0..=4000.0).contains(&size))
+    }) {
+        return Err(Error::Compile(
+            "Chart.legendFontSize must be between 1 and 4000 points; choose a numeric size in that range".into(),
+        ));
+    }
+    for property in ["legendFontBold", "legendFontItalic", "legendFontUnderline"] {
+        if chart
+            .props
+            .get(property)
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be a boolean; use true or false"
+            )));
+        }
+    }
+    if chart.props.get("legendFontColor").is_some_and(|value| {
+        value.as_str().is_none_or(|color| {
+            color.len() != 7
+                || !color.starts_with('#')
+                || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    }) {
+        return Err(Error::Compile(
+            "Chart.legendFontColor must be an opaque RGB color like #336699; use exactly six hexadecimal digits after #".into(),
+        ));
+    }
+    if chart.props.get("legendFontName").is_some_and(|value| {
+        value.as_str().is_none_or(|name| {
+            name.is_empty()
+                || name.chars().count() > 255
+                || !name.chars().all(is_valid_xml_character)
+        })
+    }) {
+        return Err(Error::Compile(
+            "Chart.legendFontName must contain 1–255 valid XML characters; use a non-empty font name without control characters".into(),
+        ));
+    }
+    for property in ["legendFontPitchFamily", "legendFontCharset"] {
+        let maximum = if property == "legendFontCharset" {
+            127
+        } else {
+            255
+        };
+        if chart
+            .props
+            .get(property)
+            .is_some_and(|value| value.as_u64().is_none_or(|number| number > maximum))
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be an integer from 0 to {maximum}; provide a schema-valid byte value"
+            )));
+        }
+    }
+    if let Some(value) = chart.props.get("legendFontRotation") {
+        let Some(rotation) = value.as_i64() else {
+            return Err(Error::Compile(
+                "Chart.legendFontRotation must be an integer; use -90 through 90, 270, or 271 degrees".into(),
+            ));
+        };
+        if !(-90..=90).contains(&rotation) && !matches!(rotation, 270 | 271) {
+            return Err(Error::Compile(
+                "Chart.legendFontRotation must be from -90 through 90, or 270/271 for vertical text; choose one of those writer-supported values".into(),
+            ));
         }
     }
     Ok(())

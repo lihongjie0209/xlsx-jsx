@@ -757,6 +757,7 @@ fn compile_chart(
             .legend()
             .set_format(ChartFormat::new().set_solid_fill(&fill));
     }
+    configure_chart_legend_font(&mut chart, component);
     if let Some(mut format) = chart_shape_format(component, "plotAreaFillColor", "plotAreaLine") {
         chart.plot_area().set_format(&mut format);
     }
@@ -1260,6 +1261,29 @@ fn chart_axis_font(component: &Node, prefix: &str) -> ChartFont {
         font.set_rotation(i16::try_from(rotation).expect("validated axis font rotation"));
     }
     font
+}
+
+fn chart_has_legend_font(component: &Node) -> bool {
+    [
+        "Size",
+        "Bold",
+        "Italic",
+        "Underline",
+        "Color",
+        "Name",
+        "PitchFamily",
+        "Charset",
+        "Rotation",
+    ]
+    .iter()
+    .any(|suffix| component.props.contains_key(&format!("legendFont{suffix}")))
+}
+
+fn configure_chart_legend_font(chart: &mut Chart, component: &Node) {
+    if chart_has_legend_font(component) {
+        let font = chart_axis_font(component, "legendFont");
+        chart.legend().set_font(&font);
+    }
 }
 
 fn has_chart_axis_font(component: &Node, prefix: &str) -> bool {
@@ -5683,6 +5707,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
         properties.push_str(" autoTitleDeleted={true}");
     }
     append_chart_title_font_properties(&mut properties, chart);
+    append_chart_legend_font_properties(&mut properties, chart);
     append_chart_title_shape_properties(&mut properties, chart);
     append_chart_area_line_properties(&mut properties, chart);
     if !chart.legend_deleted_entries.is_empty() {
@@ -5742,6 +5767,37 @@ fn append_chart_title_font_properties(properties: &mut String, chart: &Worksheet
     }
     if let Some(rotation) = chart.title_font_rotation {
         let _ = write!(properties, " titleFontRotation={{{rotation}}}");
+    }
+}
+
+fn append_chart_legend_font_properties(properties: &mut String, chart: &WorksheetChart) {
+    let font = &chart.legend_font;
+    if let Some(size) = font.size {
+        let _ = write!(properties, " legendFontSize={{{size}}}");
+    }
+    if let Some(bold) = font.bold {
+        let _ = write!(properties, " legendFontBold={{{bold}}}");
+    }
+    if let Some(italic) = font.italic {
+        let _ = write!(properties, " legendFontItalic={{{italic}}}");
+    }
+    if font.underline == Some(true) {
+        properties.push_str(" legendFontUnderline={true}");
+    }
+    if let Some(color) = &font.color {
+        let _ = write!(properties, " legendFontColor={color:?}");
+    }
+    if let Some(name) = &font.name {
+        let _ = write!(properties, " legendFontName={name:?}");
+    }
+    if let Some(family) = font.pitch_family {
+        let _ = write!(properties, " legendFontPitchFamily={{{family}}}");
+    }
+    if let Some(charset) = font.charset {
+        let _ = write!(properties, " legendFontCharset={{{charset}}}");
+    }
+    if let Some(rotation) = font.rotation {
+        let _ = write!(properties, " legendFontRotation={{{rotation}}}");
     }
 }
 
@@ -8768,6 +8824,7 @@ fn parse_chart_xml(
     const PX_EMU: u32 = 9_525;
     const DEFAULT_COLUMN_PIXELS: u32 = 64;
     const DEFAULT_ROW_PIXELS: u32 = 20;
+    let legend_font = parse_chart_legend_font(xml, part)?;
     if anchor.edit_as.is_some() {
         return Err(Error::Reverse(format!(
             "chart drawing in `{part}` has a non-default editAs anchor mode; remove custom movement semantics"
@@ -15291,6 +15348,7 @@ fn parse_chart_xml(
         legend_layout,
         legend_fill_color,
         legend_fill_transparency,
+        legend_font,
         title_layout,
         x_axis_title_layout,
         y_axis_title_layout,
@@ -15364,6 +15422,217 @@ fn parse_chart_xml(
         data_table,
         series,
     })
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "Legend text properties are parsed in one pass to preserve uniform OOXML run/default values."
+)]
+fn parse_chart_legend_font(xml: &str, part: &str) -> xlsx_jsx::Result<WorksheetChartAxisFont> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut stack = Vec::<String>::new();
+    let mut font = WorksheetChartAxisFont::default();
+    let mut txpr_seen = false;
+    loop {
+        match reader.read_event() {
+            Ok(event @ (Event::Start(_) | Event::Empty(_))) => {
+                let empty = matches!(event, Event::Empty(_));
+                let (Event::Start(event) | Event::Empty(event)) = event else {
+                    unreachable!()
+                };
+                let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                let in_legend = stack.iter().any(|item| item == "legend");
+                let in_text_properties = stack.iter().any(|item| item == "txPr");
+                if tag == "txPr" && stack.last().is_some_and(|item| item == "legend") {
+                    if txpr_seen {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats legend txPr; retain one uniform legend font block"
+                        )));
+                    }
+                    txpr_seen = true;
+                }
+                if in_legend && in_text_properties {
+                    match tag.as_str() {
+                        "rPr" | "defRPr" => {
+                            if let Some(raw) = chart_xml_attribute(&event, "sz", reader.decoder())?
+                            {
+                                let size = raw.parse::<u32>().ok().filter(|size| (100..=400_000).contains(size)).ok_or_else(|| Error::Reverse(format!(
+                                    "chart part `{part}` has invalid legend font size `{raw}`; use 1–4000 points"
+                                )))?;
+                                let size = f64::from(size) / 100.0;
+                                set_consistent_chart_font(&mut font.size, size, part, "size")?;
+                                font.size_seen = true;
+                            }
+                            for (attribute, target) in
+                                [("b", &mut font.bold), ("i", &mut font.italic)]
+                            {
+                                if let Some(raw) =
+                                    chart_xml_attribute(&event, attribute, reader.decoder())?
+                                {
+                                    let value = parse_xml_bool(
+                                        &raw,
+                                        part,
+                                        &format!("legend font {attribute}"),
+                                    )?;
+                                    set_consistent_chart_font(target, value, part, attribute)?;
+                                }
+                            }
+                            if let Some(raw) = chart_xml_attribute(&event, "u", reader.decoder())? {
+                                let underline = match raw.as_str() {
+                                    "sng" => true,
+                                    "none" => false,
+                                    _ => {
+                                        return Err(Error::Reverse(format!(
+                                            "chart part `{part}` has unsupported legend underline `{raw}`; use single underline or none"
+                                        )));
+                                    }
+                                };
+                                set_consistent_chart_font(
+                                    &mut font.underline,
+                                    underline,
+                                    part,
+                                    "underline",
+                                )?;
+                            }
+                        }
+                        "latin" => {
+                            let name = chart_xml_attribute(&event, "typeface", reader.decoder())?;
+                            if name.as_ref().is_some_and(|name| {
+                                name.is_empty()
+                                    || name.starts_with('+')
+                                    || !name.chars().all(is_valid_xml_character)
+                            }) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an empty, theme-linked, or invalid legend Latin typeface; use a literal XML-safe font name"
+                                )));
+                            }
+                            let pitch = chart_xml_attribute(
+                                &event,
+                                "pitchFamily",
+                                reader.decoder(),
+                            )?
+                            .map(|value| value.parse::<u8>())
+                            .transpose()
+                            .map_err(|_| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has invalid legend pitchFamily; use 0–255"
+                                ))
+                            })?
+                            .filter(|value| *value != 0);
+                            let charset = chart_xml_attribute(&event, "charset", reader.decoder())?
+                                .map(|value| value.parse::<u8>())
+                                .transpose()
+                                .map_err(|_| {
+                                    Error::Reverse(format!(
+                                        "chart part `{part}` has invalid legend charset; use 0–127"
+                                    ))
+                                })?;
+                            if charset.is_some_and(|value| value > 127) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has legend charset above 127, which is schema-invalid; correct the OOXML charset"
+                                )));
+                            }
+                            if font
+                                .name
+                                .as_ref()
+                                .is_some_and(|previous| Some(previous) != name.as_ref())
+                                || (font.latin_seen
+                                    && (font.pitch_family != pitch || font.charset != charset))
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has inconsistent legend typeface metadata; make all txPr Latin values identical"
+                                )));
+                            }
+                            font.name = name.or(font.name);
+                            font.pitch_family = pitch;
+                            font.charset = charset;
+                            font.latin_seen = true;
+                        }
+                        "srgbClr" if stack.last().is_some_and(|parent| parent == "solidFill") => {
+                            let raw = chart_xml_attribute(&event, "val", reader.decoder())?.ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a legend font RGB color without val")))?;
+                            if raw.len() != 6 || !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a non-RGB legend font color; use an opaque six-digit RGB color"
+                                )));
+                            }
+                            set_consistent_chart_font(
+                                &mut font.color,
+                                format!("#{}", raw.to_ascii_uppercase()),
+                                part,
+                                "color",
+                            )?;
+                        }
+                        "alpha" => {
+                            let alpha = chart_xml_attribute(&event, "val", reader.decoder())?
+                                .and_then(|value| value.parse::<u32>().ok())
+                                .ok_or_else(|| Error::Reverse(format!(
+                                    "chart part `{part}` has an invalid legend font alpha; use an opaque color"
+                                )))?;
+                            if alpha != 100_000 {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has translucent legend font color; only opaque RGB font colors can be represented"
+                                )));
+                            }
+                        }
+                        "schemeClr" | "sysClr" | "prstClr" | "gradFill" | "pattFill" | "noFill"
+                        | "ea" | "cs" | "sym" | "strike" | "highlight" | "outline" | "shadow"
+                        | "glow" | "effectLst" => {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported legend font `{tag}` formatting; use literal Latin typeface, opaque RGB, and the documented font properties"
+                            )));
+                        }
+                        "bodyPr" => {
+                            let rotation = parse_chart_text_rotation(
+                                chart_xml_attribute(&event, "rot", reader.decoder())?.as_deref(),
+                                chart_xml_attribute(&event, "vert", reader.decoder())?.as_deref(),
+                                part,
+                                "legend",
+                            )?;
+                            if let Some(rotation) = rotation {
+                                set_consistent_chart_font(
+                                    &mut font.rotation,
+                                    rotation,
+                                    part,
+                                    "rotation",
+                                )?;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if !empty {
+                    stack.push(tag);
+                }
+            }
+            Ok(Event::End(_)) => {
+                stack.pop();
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => {
+                return Err(Error::Reverse(format!(
+                    "cannot parse chart legend font in `{part}` at byte {}: {error}",
+                    reader.error_position()
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(font)
+}
+
+fn set_consistent_chart_font<T: PartialEq>(
+    target: &mut Option<T>,
+    value: T,
+    part: &str,
+    property: &str,
+) -> xlsx_jsx::Result<()> {
+    if target.as_ref().is_some_and(|previous| *previous != value) {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has inconsistent legend font {property} values; make default/run values identical"
+        )));
+    }
+    *target = Some(value);
+    Ok(())
 }
 
 fn chart_area_sppr_context(stack: &[String]) -> Option<&'static str> {
@@ -16055,6 +16324,41 @@ fn audit_chart_attributes(
                 && stack.iter().any(|ancestor| ancestor == "txPr");
         let is_chart_data_table_font_context = stack.iter().any(|ancestor| ancestor == "dTable")
             && stack.iter().any(|ancestor| ancestor == "txPr");
+        let is_chart_legend_font_context = stack.iter().any(|ancestor| ancestor == "legend")
+            && stack.iter().any(|ancestor| ancestor == "txPr");
+        let is_supported_chart_legend_font_attribute = is_chart_legend_font_context
+            && if matches!(tag, "rPr" | "defRPr") {
+                match (key.as_str(), value.as_str()) {
+                    ("sz", value) => value
+                        .parse::<u32>()
+                        .is_ok_and(|size| (100..=400_000).contains(&size)),
+                    ("b" | "i", "0" | "1" | "true" | "false")
+                    | ("u", "sng" | "none")
+                    | ("baseline", "0") => true,
+                    _ => false,
+                }
+            } else if tag == "latin" {
+                match key.as_str() {
+                    "typeface" => !value.is_empty() && value.chars().all(is_valid_xml_character),
+                    "pitchFamily" => value.parse::<u8>().is_ok(),
+                    "charset" => value.parse::<u8>().is_ok_and(|charset| charset <= 127),
+                    _ => false,
+                }
+            } else if tag == "bodyPr" {
+                match (key.as_str(), value.as_str()) {
+                    ("rot", value) => value.parse::<i32>().is_ok_and(|rotation| {
+                        (-5_400_000..=5_400_000).contains(&rotation)
+                            && (rotation == 0 || rotation % 60_000 == 0)
+                    }),
+                    ("vert", "horz" | "wordArtVert" | "eaVert")
+                    | ("rtl", "0" | "1" | "true" | "false") => true,
+                    _ => false,
+                }
+            } else if tag == "endParaRPr" {
+                key == "lang" && value == "en-US"
+            } else {
+                false
+            };
         let is_supported_chart_label_font_attribute = is_series_data_label_font_context
             && if matches!(tag, "rPr" | "defRPr") {
                 match (key.as_str(), value.as_str()) {
@@ -16207,6 +16511,7 @@ fn audit_chart_attributes(
             && !is_supported_data_table_font_attribute
             && !is_supported_chart_title_font_attribute
             && !is_supported_chart_axis_label_font_attribute
+            && !is_supported_chart_legend_font_attribute
         {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` has unsupported `{tag}@{key}={value}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
@@ -19424,6 +19729,7 @@ struct WorksheetChart {
     legend_layout: Option<[f64; 4]>,
     legend_fill_color: Option<String>,
     legend_fill_transparency: Option<u8>,
+    legend_font: WorksheetChartAxisFont,
     title_layout: Option<[f64; 2]>,
     x_axis_title_layout: Option<[f64; 2]>,
     y_axis_title_layout: Option<[f64; 2]>,

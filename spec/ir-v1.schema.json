@@ -600,6 +600,15 @@
             "titleLineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "legendFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "legendFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "legendFontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
+            "legendFontBold": { "type": "boolean" },
+            "legendFontItalic": { "type": "boolean" },
+            "legendFontUnderline": { "type": "boolean" },
+            "legendFontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "legendFontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "legendFontPitchFamily": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "legendFontCharset": { "type": "integer", "minimum": 0, "maximum": 127 },
+            "legendFontRotation": { "oneOf": [{ "type": "integer", "minimum": -90, "maximum": 90 }, { "enum": [270, 271] }] },
             "xAxisLabelFontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
             "xAxisLabelFontBold": { "type": "boolean" },
             "xAxisLabelFontItalic": { "type": "boolean" },
@@ -759,6 +768,28 @@
         }
       },
       "allOf": [
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": { "showLegend": { "const": false } },
+                "required": ["showLegend"],
+                "anyOf": [
+                  { "required": ["legendFontSize"] },
+                  { "required": ["legendFontBold"] },
+                  { "required": ["legendFontItalic"] },
+                  { "required": ["legendFontUnderline"] },
+                  { "required": ["legendFontColor"] },
+                  { "required": ["legendFontName"] },
+                  { "required": ["legendFontPitchFamily"] },
+                  { "required": ["legendFontCharset"] },
+                  { "required": ["legendFontRotation"] }
+                ]
+              }
+            },
+            "required": ["props"]
+          }
+        },
         {
           "not": {
             "properties": {

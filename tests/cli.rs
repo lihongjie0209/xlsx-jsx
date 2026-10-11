@@ -518,6 +518,26 @@ fn spec_exposes_chart_title_font_properties() {
 }
 
 #[test]
+fn spec_exposes_chart_legend_font_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("legendFontSize"))
+        .stdout(predicate::str::contains("legendFontColor"))
+        .stdout(predicate::str::contains("legendFontCharset"))
+        .stdout(predicate::str::contains("legendFontRotation"));
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("legendFontSize"))
+        .stdout(predicate::str::contains("legendFontCharset"));
+}
+
+#[test]
 fn spec_exposes_embedded_image_component_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -1792,6 +1812,146 @@ fn chart_title_font_styling_round_trips_without_a_manifest() {
         .assert()
         .success();
     assert_eq!(std::fs::read_to_string(second).unwrap(), source);
+}
+
+#[test]
+fn chart_legend_font_styling_round_trips_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-legend-font.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" legendFontSize={13} legendFontBold={false} legendFontItalic={true} legendFontUnderline={true} legendFontRotation={30} legendFontColor="#336699" legendFontName="Aptos" legendFontPitchFamily={34} legendFontCharset={127}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    let external = directory.path().join("chart-legend-font.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    let reversed = directory.path().join("chart-legend-font-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output reads");
+    for property in [
+        "legendFontSize={13}",
+        "legendFontBold={false}",
+        "legendFontItalic={true}",
+        "legendFontUnderline={true}",
+        "legendFontRotation={30}",
+        "legendFontColor=\"#336699\"",
+        "legendFontName=\"Aptos\"",
+        "legendFontPitchFamily={34}",
+        "legendFontCharset={127}",
+    ] {
+        assert!(source.contains(property), "missing {property}: {source}");
+    }
+    let rebuilt = directory.path().join("chart-legend-font-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second = directory.path().join("chart-legend-font-second.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(rebuilt)
+        .args(["-o"])
+        .arg(&second)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read_to_string(second).unwrap(), source);
+}
+
+#[test]
+fn chart_legend_font_requires_a_visible_legend() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("hidden-legend-font.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" showLegend={false} legendFontSize={12}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "legendFontSize requires a visible legend",
+        ));
+}
+
+#[test]
+fn chart_legend_font_rejects_schema_invalid_charset() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-legend-font-charset.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" legendFontCharset={128}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.legendFontCharset must be an integer from 0 to 127",
+        ));
+}
+
+#[test]
+fn reverse_rejects_schema_invalid_legend_font_charset() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-external-legend-charset.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" legendFontName="Aptos" legendFontCharset={127}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    let workbook = directory
+        .path()
+        .join("invalid-external-legend-charset.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
+        xml.replace("charset=\"127\"", "charset=\"128\"")
+    });
+    let reversed = directory
+        .path()
+        .join("invalid-external-legend-charset-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook)
+        .args(["-o"])
+        .arg(reversed)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("legend charset above 127"))
+        .stderr(predicate::str::contains("schema-invalid"));
 }
 
 #[test]
