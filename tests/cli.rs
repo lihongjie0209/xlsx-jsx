@@ -1028,6 +1028,159 @@ fn builds_reverses_and_rebuilds_basic_chart_parts() {
 }
 
 #[test]
+fn chart_decorative_accessibility_round_trips_without_alt_text() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("decorative-chart.tsx");
+    let workbook_path = directory.path().join("decorative-chart.xlsx");
+    let reversed_path = directory.path().join("decorative-chart-reversed.tsx");
+    let rebuilt_path = directory.path().join("decorative-chart-rebuilt.xlsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Row, Cell, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" decorative={true}><Series values="Data!B2:B3" categories="Data!A2:A3" /></Chart><Row><Cell>Label</Cell><Cell>Value</Cell></Row><Row><Cell>A</Cell><Cell value={2} /></Row><Row><Cell>B</Cell><Cell value={3} /></Row></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&workbook_path)
+        .assert()
+        .success();
+    let drawing = read_zip_part_for_test(&workbook_path, "xl/drawings/drawing1.xml");
+    assert!(drawing.contains("decorative"), "{drawing}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&reversed_path)
+        .assert()
+        .success();
+    let reversed = std::fs::read_to_string(&reversed_path).unwrap();
+    assert!(reversed.contains("decorative={true}"), "{reversed}");
+    assert!(!reversed.contains("altText="), "{reversed}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&reversed_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt_drawing = read_zip_part_for_test(&rebuilt_path, "xl/drawings/drawing1.xml");
+    assert!(rebuilt_drawing.contains("decorative"), "{rebuilt_drawing}");
+}
+
+#[test]
+fn rejects_chart_alt_text_combined_with_decorative_flag() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-alt-text-and-decorative.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" altText="Sales trend" decorative={true}><Series values="Data!B2:B3" categories="Data!A2:A3" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.altText cannot be combined with Chart.decorative={true}",
+        ))
+        .stderr(predicate::str::contains("keep altText or decorative"));
+}
+
+#[test]
+fn agent_spec_exposes_chart_decorative_accessibility() {
+    let output = Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("decorative"));
+}
+
+#[test]
+fn reverses_external_decorative_chart_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-decorative-chart.xlsx");
+    let source_path = directory.path().join("external-decorative-chart.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-decorative-chart.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_string(0, 0, "Label").unwrap();
+    worksheet.write_string(1, 0, "A").unwrap();
+    worksheet.write_string(2, 0, "B").unwrap();
+    worksheet.write_number(0, 1, 2).unwrap();
+    worksheet.write_number(1, 1, 3).unwrap();
+    worksheet.write_number(2, 1, 4).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart.set_decorative(true);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3");
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(source.contains("decorative={true}"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let drawing = read_zip_part_for_test(&rebuilt_path, "xl/drawings/drawing1.xml");
+    assert!(drawing.contains("decorative"), "{drawing}");
+}
+
+#[test]
+fn reverse_rejects_external_chart_with_both_alt_text_and_decorative_marker() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("ambiguous-chart-accessibility.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_number(0, 0, 2).unwrap();
+    worksheet.write_number(1, 0, 3).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart.set_alt_text("Sales trend").set_decorative(true);
+    chart.add_series().set_values("Data!A1:A2");
+    worksheet.insert_chart(0, 2, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(workbook_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "combines alt text with the decorative accessibility marker",
+        ))
+        .stderr(predicate::str::contains(
+            "keep a description or mark the chart decorative",
+        ));
+}
+
+#[test]
 fn reverses_external_chart_and_plot_area_rgb_fills_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("chart-area-fills.xlsx");

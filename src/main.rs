@@ -1197,6 +1197,9 @@ fn compile_chart(
     if let Some(alt_text) = component.props.get("altText").and_then(Value::as_str) {
         chart.set_alt_text(alt_text);
     }
+    if component.props.get("decorative").and_then(Value::as_bool) == Some(true) {
+        chart.set_decorative(true);
+    }
     if let Some(title) = component.props.get("title").and_then(Value::as_str) {
         chart.title().set_name(title);
     }
@@ -5872,19 +5875,26 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
     reason = "The JSX chart renderer emits chart and series properties in deterministic order."
 )]
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
+    let alt_text = chart
+        .alt_text
+        .as_ref()
+        .map(|value| format!(" altText={{{value:?}}}"))
+        .unwrap_or_default();
+    let decorative = if chart.decorative == Some(true) {
+        " decorative={true}"
+    } else {
+        ""
+    };
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
         chart.height,
         chart.name,
-        chart
-            .alt_text
-            .as_ref()
-            .map(|value| format!(" altText={{{value:?}}}"))
-            .unwrap_or_default(),
+        alt_text,
+        decorative,
         chart
             .title
             .as_ref()
@@ -9635,6 +9645,16 @@ fn parse_chart_xml(
     if anchor.edit_as.is_some() {
         return Err(Error::Reverse(format!(
             "chart drawing in `{part}` has a non-default editAs anchor mode; remove custom movement semantics"
+        )));
+    }
+    if anchor.decorative
+        && anchor
+            .alt_text
+            .as_deref()
+            .is_some_and(|text| !text.is_empty())
+    {
+        return Err(Error::Reverse(format!(
+            "chart drawing in `{part}` combines alt text with the decorative accessibility marker; keep a description or mark the chart decorative, not both"
         )));
     }
     let from_row = anchor
@@ -17592,6 +17612,7 @@ fn parse_chart_xml(
         first_slice_angle: first_slice_angle.filter(|angle| *angle != 0),
         style: chart_style,
         alt_text: anchor.alt_text,
+        decorative: anchor.decorative.then_some(true),
         data_table,
         series,
     })
@@ -21971,6 +21992,7 @@ struct WorksheetChart {
     first_slice_angle: Option<u16>,
     style: Option<u8>,
     alt_text: Option<String>,
+    decorative: Option<bool>,
     data_table: Option<WorksheetChartDataTable>,
     series: Vec<WorksheetChartSeries>,
 }

@@ -500,6 +500,7 @@
             "cell": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
             "name": { "type": "string", "minLength": 1, "maxLength": 255 },
             "altText": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "decorative": { "type": "boolean" },
             "title": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
@@ -783,6 +784,17 @@
         }
       },
       "allOf": [
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": { "altText": { "type": "string" }, "decorative": { "const": true } },
+                "required": ["altText", "decorative"]
+              }
+            },
+            "required": ["props"]
+          }
+        },
         {
           "not": {
             "properties": {

@@ -1927,6 +1927,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "height",
             "name",
             "altText",
+            "decorative",
             "title",
             "titleFillColor",
             "titleFillTransparency",
@@ -2093,6 +2094,22 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
         ],
         "Chart",
     )?;
+    if chart
+        .props
+        .get("decorative")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(Error::Compile(
+            "Chart.decorative must be a boolean; use true or false".into(),
+        ));
+    }
+    if chart.props.get("decorative").and_then(Value::as_bool) == Some(true)
+        && chart.props.contains_key("altText")
+    {
+        return Err(Error::Compile(
+            "Chart.altText cannot be combined with Chart.decorative={true}; keep altText or decorative, not both".into(),
+        ));
+    }
     let chart_type = chart
         .props
         .get("type")

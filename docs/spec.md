@@ -704,8 +704,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   writer omits the hidden legend and its position.
 - `Chart.name?: string` preserves the workbook chart object name and
   `Chart.altText?: string` preserves its accessibility description. Both are
-  limited to 255 valid XML characters. Reverse emits an explicit name because
-  the writer otherwise assigns one automatically.
+  limited to 255 valid XML characters. `Chart.decorative?: boolean` marks a
+  chart as decorative for assistive technology; only `true` is emitted because
+  false is the default. Reverse preserves the drawing's decorative extension
+  without relying on an embedded manifest. `altText` and `decorative={true}`
+  are mutually exclusive because the decorative flag indicates that no
+  description is needed. Reverse reports charts containing both markers as
+  ambiguous and suggests keeping either a description or the decorative flag.
+  Reverse emits an explicit name because the writer otherwise assigns one
+  automatically.
 - Pie charts require exactly one `Series`; other chart types support one or more
   series. Series order, chart type, anchor, pixel size, and formulas survive
   reverse/recompile.
