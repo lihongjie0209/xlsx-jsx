@@ -11,23 +11,24 @@ use quick_xml::{
     events::{BytesStart, Event},
 };
 use rust_xlsxwriter::{
-    Chart, ChartAxisCrossing, ChartAxisDisplayUnitType, ChartAxisLabelAlignment,
-    ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
-    ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars, ChartErrorBarsDirection,
-    ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartLineDashType, ChartMarker,
-    ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType,
-    Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
-    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
-    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
-    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
-    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
-    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
-    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
-    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
-    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
-    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
-    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
-    TableColumn, TableStyle, Url, Workbook,
+    Chart, ChartAxisCrossing, ChartAxisDateUnitType, ChartAxisDisplayUnitType,
+    ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
+    ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartLineDashType,
+    ChartMarker, ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType,
+    ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
+    ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
+    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
+    ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
+    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
+    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
+    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
+    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
+    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
+    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
+    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
+    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
+    Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -1444,30 +1445,71 @@ fn configure_chart_category_axis_settings(
     chart: &mut Chart,
     component: &Node,
 ) -> xlsx_jsx::Result<()> {
+    let is_bar = component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|chart_type| chart_type.starts_with("bar"));
     configure_chart_category_axis_intervals(chart, component);
     configure_chart_axis_tick_types(chart, component)?;
     configure_chart_axis_label_positions(chart, component)?;
     configure_chart_category_axis_label_alignment(chart, component)?;
     if component
         .props
+        .get("categoryAxisType")
+        .and_then(Value::as_str)
+        == Some("date")
+    {
+        // rust_xlsxwriter selects date-axis serialization from X, but swaps
+        // the unit-bearing axis data for bars before writing the plot area.
+        configure_chart_date_axis(chart, component, is_bar);
+    }
+    if component
+        .props
         .get("categoryAxisOnTickMarks")
         .and_then(Value::as_bool)
         .unwrap_or(false)
     {
-        let category_axis = if component
-            .props
-            .get("type")
-            .and_then(Value::as_str)
-            .is_some_and(|chart_type| chart_type.starts_with("bar"))
-        {
-            chart.y_axis()
+        if is_bar {
+            chart.y_axis().set_position_between_ticks(false);
         } else {
-            chart.x_axis()
-        };
-        category_axis.set_position_between_ticks(false);
+            chart.x_axis().set_position_between_ticks(false);
+        }
     }
     configure_chart_axis_hidden(chart, component);
     Ok(())
+}
+
+fn configure_chart_date_axis(chart: &mut Chart, component: &Node, is_bar: bool) {
+    chart.x_axis().set_date_axis(true);
+    let axis = if is_bar {
+        chart.y_axis()
+    } else {
+        chart.x_axis()
+    };
+    if let Some(unit) = component
+        .props
+        .get("categoryAxisMajorTimeUnit")
+        .and_then(Value::as_str)
+    {
+        axis.set_major_unit_date_type(parse_chart_date_unit(unit));
+    }
+    if let Some(unit) = component
+        .props
+        .get("categoryAxisMinorTimeUnit")
+        .and_then(Value::as_str)
+    {
+        axis.set_minor_unit_date_type(parse_chart_date_unit(unit));
+    }
+}
+
+fn parse_chart_date_unit(unit: &str) -> ChartAxisDateUnitType {
+    match unit {
+        "days" => ChartAxisDateUnitType::Days,
+        "months" => ChartAxisDateUnitType::Months,
+        "years" => ChartAxisDateUnitType::Years,
+        _ => unreachable!("validated chart date unit"),
+    }
 }
 
 fn configure_chart_visual_properties(chart: &mut Chart, component: &Node) {
@@ -4629,6 +4671,23 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     append_chart_axis_value_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
     append_chart_axis_label_properties(&mut properties, chart);
+    if chart.category_axis_type == Some("date") {
+        properties.push_str(" categoryAxisType=\"date\"");
+    }
+    for (name, value) in [
+        (
+            "categoryAxisMajorTimeUnit",
+            chart.category_axis_major_time_unit,
+        ),
+        (
+            "categoryAxisMinorTimeUnit",
+            chart.category_axis_minor_time_unit,
+        ),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}=\"{value}\"");
+        }
+    }
     if let Some(value) = chart.category_axis_label_alignment {
         let _ = write!(properties, " categoryAxisLabelAlignment=\"{value}\"");
     }
@@ -7525,6 +7584,8 @@ fn parse_chart_xml(
         "axId",
         "catAx",
         "dateAx",
+        "majorTimeUnit",
+        "minorTimeUnit",
         "scaling",
         "orientation",
         "logBase",
@@ -7641,6 +7702,11 @@ fn parse_chart_xml(
     let mut nonstandard_axis_position_seen = false;
     let mut category_axis_label_interval = None;
     let mut category_axis_tick_interval = None;
+    let mut category_axis_type: Option<&'static str> = None;
+    let mut category_axis_major_time_unit: Option<&'static str> = None;
+    let mut category_axis_minor_time_unit: Option<&'static str> = None;
+    let mut category_axis_major_time_unit_seen = false;
+    let mut category_axis_minor_time_unit_seen = false;
     let mut category_axis_label_interval_seen = false;
     let mut category_axis_tick_interval_seen = false;
     let mut y_axis_min_seen = false;
@@ -8077,6 +8143,13 @@ fn parse_chart_xml(
                         chart_axis_count += 1;
                         if tag == "valAx" {
                             value_axis_count += 1;
+                        } else if tag == "dateAx" {
+                            if category_axis_type.is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has multiple date axes; keep one primary date category axis"
+                                )));
+                            }
+                            category_axis_type = Some("date");
                         }
                         if chart_axis_count > 2 {
                             return Err(Error::Reverse(format!(
@@ -9167,7 +9240,7 @@ fn parse_chart_xml(
                                     || (format_code == "0%"
                                         && chart_type.is_some_and(is_percent_stacked_chart_type))
                                     || (format_code == "dd/mm/yyyy"
-                                        && chart_type == Some("stock")
+                                        && category_axis_type == Some("date")
                                         && category_axis_context);
                                 if !is_writer_default {
                                     return Err(Error::Reverse(format!(
@@ -9458,6 +9531,43 @@ fn parse_chart_xml(
                         if *seen {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats {tag}; keep at most one interval of each kind"
+                            )));
+                        }
+                        *seen = true;
+                        *target = Some(unit);
+                    }
+                    "majorTimeUnit" | "minorTimeUnit" => {
+                        if !stack.iter().any(|ancestor| ancestor == "dateAx") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} outside a date axis; use categoryAxisType=\"date\" or remove the time unit"
+                            )));
+                        }
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), &tag)?;
+                        let unit = match raw.as_str() {
+                            "days" => "days",
+                            "months" => "months",
+                            "years" => "years",
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported {tag} `{raw}`; use days, months, or years"
+                                )));
+                            }
+                        };
+                        let (seen, target) = if tag == "majorTimeUnit" {
+                            (
+                                &mut category_axis_major_time_unit_seen,
+                                &mut category_axis_major_time_unit,
+                            )
+                        } else {
+                            (
+                                &mut category_axis_minor_time_unit_seen,
+                                &mut category_axis_minor_time_unit,
+                            )
+                        };
+                        if *seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats {tag}; keep at most one date-axis time unit of each kind"
                             )));
                         }
                         *seen = true;
@@ -10816,6 +10926,9 @@ fn parse_chart_xml(
         name: anchor.name,
         title: chart_title,
         title_overlay,
+        category_axis_type,
+        category_axis_major_time_unit,
+        category_axis_minor_time_unit,
         x_axis_title,
         y_axis_title,
         x_axis_number_format,
@@ -11667,6 +11780,9 @@ fn is_supported_chart_attribute(
         ("majorUnit" | "minorUnit", "val") => value
             .parse::<f64>()
             .is_ok_and(|unit| unit.is_finite() && unit > 0.0),
+        ("majorTimeUnit" | "minorTimeUnit", "val") => {
+            matches!(value, "days" | "months" | "years")
+        }
         ("tickLblSkip" | "tickMarkSkip", "val") => {
             value.parse::<u16>().is_ok_and(|interval| interval > 0)
         }
@@ -14357,6 +14473,9 @@ struct WorksheetChart {
     name: String,
     title: Option<String>,
     title_overlay: bool,
+    category_axis_type: Option<&'static str>,
+    category_axis_major_time_unit: Option<&'static str>,
+    category_axis_minor_time_unit: Option<&'static str>,
     x_axis_title: Option<String>,
     y_axis_title: Option<String>,
     x_axis_number_format: Option<String>,

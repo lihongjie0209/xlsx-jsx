@@ -2,11 +2,11 @@ use assert_cmd::Command;
 use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
-    Chart as XlsxChart, ChartAxisCrossing, ChartAxisDisplayUnitType, ChartAxisLabelAlignment,
-    ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
-    ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars, ChartErrorBarsDirection,
-    ChartErrorBarsType, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartTrendline,
-    ChartTrendlineType, ChartType, Workbook as XlsxWorkbook,
+    Chart as XlsxChart, ChartAxisCrossing, ChartAxisDateUnitType, ChartAxisDisplayUnitType,
+    ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
+    ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartLine, ChartLineDashType, ChartMarker,
+    ChartMarkerType, ChartTrendline, ChartTrendlineType, ChartType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -148,6 +148,9 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("showNaAsEmptyCell"))
         .stdout(predicate::str::contains("autoTitleDeleted"))
         .stdout(predicate::str::contains("titleOverlay"))
+        .stdout(predicate::str::contains("categoryAxisMajorTimeUnit"))
+        .stdout(predicate::str::contains("categoryAxisMinorTimeUnit"))
+        .stdout(predicate::str::contains("categoryAxisType"))
         .stdout(predicate::str::contains("legendOverlay"))
         .stdout(predicate::str::contains("legendDeletedEntries"))
         .stdout(predicate::str::contains("deleteFromLegend"))
@@ -2067,6 +2070,82 @@ fn rejects_chart_title_overlay_without_explicit_title() {
         .stderr(predicate::str::contains(
             "Chart.titleOverlay=true requires Chart.title",
         ));
+}
+
+#[test]
+fn reverses_and_rebuilds_external_date_category_axis_units_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-date-axis.xlsx");
+    let source_path = directory.path().join("external-date-axis.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-date-axis.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Bar);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_name("Data!B1");
+    chart.x_axis().set_date_axis(true);
+    chart
+        .y_axis()
+        .set_major_unit_date_type(ChartAxisDateUnitType::Months)
+        .set_minor_unit_date_type(ChartAxisDateUnitType::Days);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("categoryAxisType=\"date\""), "{source}");
+    assert!(
+        source.contains("categoryAxisMajorTimeUnit=\"months\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("categoryAxisMinorTimeUnit=\"days\""),
+        "{source}"
+    );
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:dateAx>"), "{xml}");
+    assert!(xml.contains("<c:majorTimeUnit val=\"months\"/>"), "{xml}");
+    assert!(xml.contains("<c:minorTimeUnit val=\"days\"/>"), "{xml}");
+}
+
+#[test]
+fn rejects_date_axis_time_unit_without_date_axis_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("time-unit-with-category-axis.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" categoryAxisMajorTimeUnit="months"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.categoryAxisMajorTimeUnit requires Chart.categoryAxisType=\"date\"",
+        ))
+        .stderr(predicate::str::contains("set that property"));
 }
 
 #[test]

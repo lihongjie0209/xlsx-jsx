@@ -1922,6 +1922,9 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "verticalAxisLabelPosition",
             "categoryAxisLabelAlignment",
             "categoryAxisOnTickMarks",
+            "categoryAxisType",
+            "categoryAxisMajorTimeUnit",
+            "categoryAxisMinorTimeUnit",
             "horizontalAxisHidden",
             "verticalAxisHidden",
             "showLegend",
@@ -2124,6 +2127,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_log_base(chart, chart_type)?;
     validate_chart_value_axis_reversed(chart, chart_type)?;
     validate_chart_category_axis_intervals(chart, chart_type)?;
+    validate_chart_category_axis_date_properties(chart, chart_type)?;
     validate_chart_axis_tick_types(chart, chart_type)?;
     validate_chart_axis_label_positions(chart, chart_type)?;
     validate_chart_category_axis_label_alignment(chart, chart_type)?;
@@ -2375,6 +2379,57 @@ fn validate_chart_category_axis_intervals(chart: &Node, chart_type: &str) -> Res
         {
             return Err(Error::Compile(format!(
                 "Chart.{property} must be an integer from 1 through 65535; omit it to use the default interval"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_category_axis_date_properties(chart: &Node, chart_type: &str) -> Result<()> {
+    let has_category_axis = !chart_type.starts_with("scatter")
+        && !matches!(
+            chart_type,
+            "pie" | "doughnut" | "radar" | "radarWithMarkers" | "radarFilled"
+        );
+    if let Some(value) = chart.props.get("categoryAxisType") {
+        let Some(axis_type) = value.as_str() else {
+            return Err(Error::Compile(
+                "Chart.categoryAxisType must be `category` or `date`; use one of these quoted values".into(),
+            ));
+        };
+        if !has_category_axis {
+            return Err(Error::Compile(
+                "Chart.categoryAxisType requires a Cartesian category axis; omit it for scatter, radar, pie, or doughnut charts".into(),
+            ));
+        }
+        if !matches!(axis_type, "category" | "date") {
+            return Err(Error::Compile(
+                "Chart.categoryAxisType is unsupported; use `category` or `date`".into(),
+            ));
+        }
+    }
+    for property in ["categoryAxisMajorTimeUnit", "categoryAxisMinorTimeUnit"] {
+        let Some(value) = chart.props.get(property) else {
+            continue;
+        };
+        if !has_category_axis {
+            return Err(Error::Compile(format!(
+                "Chart.{property} requires a Cartesian date category axis; omit it for scatter, radar, pie, or doughnut charts"
+            )));
+        }
+        let Some(unit) = value.as_str() else {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be `days`, `months`, or `years`; use a quoted value"
+            )));
+        };
+        if !matches!(unit, "days" | "months" | "years") {
+            return Err(Error::Compile(format!(
+                "Chart.{property} `{unit}` is unsupported; use `days`, `months`, or `years`"
+            )));
+        }
+        if chart.props.get("categoryAxisType").and_then(Value::as_str) != Some("date") {
+            return Err(Error::Compile(format!(
+                "Chart.{property} requires Chart.categoryAxisType=\"date\"; set that property or remove the time unit"
             )));
         }
     }

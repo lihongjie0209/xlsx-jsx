@@ -107,4 +107,13 @@ export default <Workbook>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue (log scale)" />
     </Chart>
   </Worksheet>
+  <Worksheet name="Timeline">
+    <Chart type="line" cell="D2" title="Monthly revenue" categoryAxisType="date" categoryAxisMajorTimeUnit="months" categoryAxisMinorTimeUnit="days">
+      <Series values="Timeline!$B$2:$B$4" categories="Timeline!$A$2:$A$4" title="Revenue" />
+    </Chart>
+    <Row><Cell>Date</Cell><Cell>Revenue</Cell></Row>
+    <Row><Cell date="2026-01-01" /><Cell value={120} /></Row>
+    <Row><Cell date="2026-02-01" /><Cell value={135} /></Row>
+    <Row><Cell date="2026-03-01" /><Cell value={142} /></Row>
+  </Worksheet>
 </Workbook>;

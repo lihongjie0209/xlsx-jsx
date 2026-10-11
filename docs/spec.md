@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.76
+Version: 1.77
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -281,6 +281,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   and maps it back to the logical category axis (including the swapped axes in
   bar charts); writer-default `crossBetween=between` is omitted. Other values
   or ambiguous/secondary axis structures are rejected rather than discarded.
+- `Chart.categoryAxisType?: "category" | "date"` selects the chart's logical
+  category axis type. The default is `category`; date axes are supported for
+  area, bar, column, line, and stock charts. Scatter, pie, and doughnut charts
+  reject this property because they have no category axis.
+- `Chart.categoryAxisMajorTimeUnit?: "days" | "months" | "years"` and
+  `categoryAxisMinorTimeUnit?: "days" | "months" | "years"` set date-axis
+  major/minor time units and require `categoryAxisType="date"`. Reverse
+  preserves `dateAx`, `majorTimeUnit`, and `minorTimeUnit`; numeric date-axis
+  major/minor units remain unsupported and fail with repair guidance.
 - `Chart.style?: integer` selects the built-in Excel chart style written as
   `<c:style val="…">`; valid values are 1–48. Omission uses
   `rust_xlsxwriter` style 2, and reverse omits style 2 while preserving other
