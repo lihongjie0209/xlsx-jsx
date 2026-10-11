@@ -43,6 +43,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
         .stdout(predicate::str::contains("lineColor"))
+        .stdout(predicate::str::contains("markerFillColor"))
+        .stdout(predicate::str::contains("markerFillTransparency"))
         .stdout(predicate::str::contains("wrapText"))
         .stdout(predicate::str::contains("shrinkToFit"))
         .stdout(predicate::str::contains("rowSpan"))
@@ -3916,6 +3918,71 @@ fn reverses_external_chart_series_marker_type_and_size_without_a_manifest() {
 }
 
 #[test]
+fn reverses_and_rebuilds_external_chart_marker_solid_fill_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-marker-fill.xlsx");
+    let output_path = directory.path().join("external-marker-fill.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-marker-fill.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut marker_format = ChartFormat::new();
+    marker_format.set_solid_fill(
+        ChartSolidFill::new()
+            .set_color("#4472C4")
+            .set_transparency(25),
+    );
+    let mut marker = ChartMarker::new();
+    marker
+        .set_type(ChartMarkerType::Circle)
+        .set_size(8)
+        .set_format(&mut marker_format);
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_marker(&marker);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("markerFillColor=\"#4472C4\""));
+    assert!(source.contains("markerFillTransparency={25}"));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<a:srgbClr val=\"4472C4\">"));
+    assert!(chart_xml.contains("<a:alpha val=\"75000\"/>"));
+
+    let roundtrip_path = directory.path().join("roundtrip-marker-fill.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(&roundtrip_path)
+        .assert()
+        .success();
+    let roundtrip = std::fs::read_to_string(roundtrip_path).expect("roundtrip JSX exists");
+    assert_eq!(roundtrip, source);
+}
+
+#[test]
 fn reverses_and_rebuilds_external_chart_legend_overlay_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("external-chart-legend-overlay.xlsx");
@@ -5186,9 +5253,9 @@ fn reverse_rejects_custom_chart_series_marker_formatting_with_guidance() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "unsupported `<spPr>` marker formatting",
+            "unsupported `<ln>` marker formatting",
         ))
-        .stderr(predicate::str::contains("remove custom marker formatting"));
+        .stderr(predicate::str::contains("remove marker outlines"));
 }
 
 #[test]

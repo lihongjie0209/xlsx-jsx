@@ -4025,6 +4025,8 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "labelFontRotation",
                 "markerType",
                 "markerSize",
+                "markerFillColor",
+                "markerFillTransparency",
                 "lineColor",
                 "lineWidth",
                 "lineDash",
@@ -4846,6 +4848,8 @@ fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize
         .and_then(Value::as_str)
         .unwrap_or_default();
     let marker_type = series.props.get("markerType");
+    let has_marker_format = series.props.contains_key("markerFillColor")
+        || series.props.contains_key("markerFillTransparency");
     if let Some(value) = marker_type {
         let Some(marker_type) = value.as_str() else {
             return Err(Error::Compile(format!(
@@ -4881,7 +4885,27 @@ fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize
             "Series.markerSize must be an integer from 2 through 72; adjust the marker size".into(),
         ));
     }
-    if (marker_type.is_some() || series.props.contains_key("markerSize"))
+    if let Some(value) = series.props.get("markerFillColor") {
+        validate_rgb_color(value, "Series.markerFillColor", 0, 0)?;
+    }
+    if let Some(value) = series.props.get("markerFillTransparency")
+        && value.as_u64().is_none_or(|transparency| transparency > 100)
+    {
+        return Err(Error::Compile(
+            "Series.markerFillTransparency must be an integer from 0 through 100; use whole-percent transparency".into(),
+        ));
+    }
+    if has_marker_format && !series.props.contains_key("markerFillColor") {
+        return Err(Error::Compile(
+            "Series.markerFillTransparency requires markerFillColor; add an opaque #RRGGBB color or remove transparency".into(),
+        ));
+    }
+    if has_marker_format && marker_type.and_then(Value::as_str) == Some("none") {
+        return Err(Error::Compile(
+            "Series.markerFillColor cannot be used with markerType=\"none\"; choose a visible marker type or remove marker fill properties".into(),
+        ));
+    }
+    if (marker_type.is_some() || series.props.contains_key("markerSize") || has_marker_format)
         && !matches!(
             chart_type,
             "line"
@@ -9498,6 +9522,46 @@ mod tests {
 
         let validation = input.validate();
         assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_chart_series_solid_marker_fill_and_transparency() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"line","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3",
+                    "markerType":"circle",
+                    "markerFillColor":"#4472C4",
+                    "markerFillTransparency":25
+                },"children":[]}]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn rejects_marker_fill_transparency_without_color_with_repair_guidance() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"line","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3",
+                    "markerType":"circle",
+                    "markerFillTransparency":25
+                },"children":[]}]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("marker fill transparency needs a fill color");
+        assert!(error.to_string().contains("markerFillColor"), "{error}");
+        assert!(error.to_string().contains("add"), "{error}");
     }
 
     #[test]

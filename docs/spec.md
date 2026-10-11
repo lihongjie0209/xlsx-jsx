@@ -107,10 +107,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Series.markerType?: "automatic" | "square" | "diamond" | "triangle" | "x" | "star" |
   "shortDash" | "longDash" | "circle" | "plusSign" | "none"` selects an
   OOXML marker symbol; `Series.markerSize?: number` accepts integer sizes from
-  2 through 72. Omission preserves each chart type's writer default. Marker
-  shape and size overrides are only valid for line, radar, and scatter charts;
-  marker shape formatting is currently rejected during reverse rather than
-  discarded.
+  2 through 72. `Series.markerFillColor?: "#RRGGBB"` and
+  `markerFillTransparency?: integer` add a solid RGB marker fill and optional
+  whole-percent alpha (0–100); transparency requires the fill color. Marker
+  format properties require an active marker and cannot accompany
+  `markerType="none"`. Omission preserves each chart type's writer default.
+  Marker symbol, size, and fill overrides are only valid for line, radar, and
+  scatter charts. Pattern/gradient fills and marker outlines remain unsupported
+  and are rejected during reverse rather than discarded.
 - `Series.lineColor?: "#RRGGBB"`, `lineWidth?: number`, `lineDash?: "solid" |
   "roundDot" | "squareDot" | "dash" | "dashDot" | "longDash" |
   "longDashDot" | "longDashDotDot"`, `lineTransparency?: number`, and
