@@ -1394,6 +1394,14 @@ fn compile_chart(
     if has_chart_axis_font(component, "yAxisLabelFont") {
         chart.y_axis().set_font(&y_axis_label_font);
     }
+    let second_horizontal_label_font = chart_axis_font(component, "x2AxisLabelFont");
+    if has_chart_axis_font(component, "x2AxisLabelFont") {
+        chart.x2_axis().set_font(&second_horizontal_label_font);
+    }
+    let second_vertical_label_font = chart_axis_font(component, "y2AxisLabelFont");
+    if has_chart_axis_font(component, "y2AxisLabelFont") {
+        chart.y2_axis().set_font(&second_vertical_label_font);
+    }
     configure_chart_axis_number_formats(&mut chart, component);
     configure_chart_axis_bounds(&mut chart, component);
     configure_chart_axis_log_base(&mut chart, component);
@@ -7275,6 +7283,8 @@ fn append_chart_axis_label_font_properties(properties: &mut String, chart: &Work
     for (axis, font) in [
         ("x", &chart.x_axis_label_font),
         ("y", &chart.y_axis_label_font),
+        ("x2", &chart.x2_axis_label_font),
+        ("y2", &chart.y2_axis_label_font),
     ] {
         let prefix = format!("{axis}AxisLabelFont");
         if let Some(value) = font.size {
@@ -10264,6 +10274,8 @@ struct ParsedSecondaryChartGroups {
     y2_axis_number_format: Option<String>,
     x2_axis_title: Option<String>,
     y2_axis_title: Option<String>,
+    x2_axis_label_font: WorksheetChartAxisFont,
+    y2_axis_label_font: WorksheetChartAxisFont,
     secondary_gridlines: [Option<bool>; 4],
     secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4],
     secondary_value_axis_min: Option<f64>,
@@ -10288,6 +10300,7 @@ struct ParsedChartAxisInfo {
     title_is_simple: bool,
     gridlines: [ParsedAxisGridline; 2],
     tags: Vec<(String, BTreeMap<String, String>)>,
+    label_font: WorksheetChartAxisFont,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -10606,6 +10619,19 @@ fn parse_secondary_chart_groups(
                             .get("val")
                             .is_some_and(|value| matches!(value.as_str(), "1" | "true"));
                     }
+                    if stack.iter().any(|ancestor| ancestor == "txPr") {
+                        if tag == "alpha" {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has alpha on a secondary-axis tick-label font color; use an opaque RGB color"
+                            )));
+                        }
+                        capture_secondary_axis_label_font(
+                            &mut axes[index].label_font,
+                            &tag,
+                            &attributes,
+                            part,
+                        )?;
+                    }
                     axes[index].tags.push((tag.clone(), attributes));
                 }
                 if tag == "barDir"
@@ -10752,6 +10778,8 @@ fn parse_secondary_chart_groups(
     let mut y2_axis_number_format = None;
     let mut x2_axis_title = None;
     let mut y2_axis_title = None;
+    let mut x2_axis_label_font = WorksheetChartAxisFont::default();
+    let mut y2_axis_label_font = WorksheetChartAxisFont::default();
     let mut secondary_gridlines = [None; 4];
     let mut secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4] =
         std::array::from_fn(|_| None);
@@ -10809,6 +10837,23 @@ fn parse_secondary_chart_groups(
         } else {
             (&mut y2_axis_crossing, &mut y2_axis_crossing_value)
         };
+        // `Chart::x2_axis()` / `y2_axis()` follow the pinned writer's axis
+        // handles, whose category/value roles are swapped for bar charts.
+        let font_horizontal_handle = if secondary_is_scatter {
+            horizontal_handle
+        } else {
+            match parsed_axis.kind.as_deref() {
+                Some("catAx" | "dateAx") => !secondary_is_bar,
+                Some("valAx") => secondary_is_bar,
+                _ => horizontal_handle,
+            }
+        };
+        let font_target = if font_horizontal_handle {
+            &mut x2_axis_label_font
+        } else {
+            &mut y2_axis_label_font
+        };
+        *font_target = parsed_axis.label_font.clone();
         let crossing_at = parsed_axis.tags.iter().find(|(tag, _)| tag == "crossesAt");
         let crossing_kind = parsed_axis.tags.iter().find(|(tag, _)| tag == "crosses");
         if secondary_is_bar
@@ -11122,6 +11167,8 @@ fn parse_secondary_chart_groups(
         y2_axis_number_format,
         x2_axis_title,
         y2_axis_title,
+        x2_axis_label_font,
+        y2_axis_label_font,
         secondary_gridlines,
         secondary_gridline_styles,
         secondary_value_axis_min,
@@ -11188,6 +11235,9 @@ fn validate_secondary_axis_defaults(
         "defRPr",
         "r",
         "rPr",
+        "txPr",
+        "latin",
+        "endParaRPr",
         "t",
     ];
     let mut tag_counts = BTreeMap::<&str, usize>::new();
@@ -11211,7 +11261,8 @@ fn validate_secondary_axis_defaults(
             | "minorUnit" | "logBase" | "crossesAt" | "srgbClr" | "alpha" | "prstDash" => &["val"],
             "numFmt" => &["formatCode", "sourceLinked"],
             "bodyPr" => &["rot", "vert"],
-            "rPr" => &["lang"],
+            "rPr" | "defRPr" | "endParaRPr" => &["lang", "b", "i", "u", "sz", "baseline"],
+            "latin" => &["typeface", "pitchFamily", "charset"],
             "ln" => &["w"],
             _ => &[],
         };
@@ -11310,8 +11361,11 @@ fn validate_secondary_axis_defaults(
                 )
             }),
             "bodyPr" => attributes.iter().all(|(key, value)| match key.as_str() {
-                "rot" => matches!(value.as_str(), "0" | "-5400000"),
-                "vert" => value == "horz",
+                "rot" => value.parse::<i32>().ok().is_some_and(|raw| {
+                    raw % 60000 == 0 && (-90..=90).contains(&(raw / 60000))
+                        || matches!(raw, 16_200_000 | 16_260_000)
+                }),
+                "vert" => matches!(value.as_str(), "horz" | "vert" | "vert270"),
                 _ => false,
             }),
             _ => true,
@@ -11322,7 +11376,21 @@ fn validate_secondary_axis_defaults(
             )));
         }
     }
-    if tag_counts.values().any(|count| *count > 1) {
+    if tag_counts.iter().any(|(tag, count)| {
+        *count > 1
+            && !matches!(
+                *tag,
+                "bodyPr"
+                    | "p"
+                    | "pPr"
+                    | "defRPr"
+                    | "rPr"
+                    | "endParaRPr"
+                    | "solidFill"
+                    | "srgbClr"
+                    | "latin"
+            )
+    }) {
         return Err(Error::Reverse(format!(
             "chart part `{part}` repeats an element on a secondary axis; keep one declaration for each supported default axis property"
         )));
@@ -11363,6 +11431,140 @@ fn validate_secondary_axis_defaults(
             )));
         }
         _ => {}
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "This parser validates and captures the writer-supported secondary tick-label font subset in one pass."
+)]
+fn capture_secondary_axis_label_font(
+    font: &mut WorksheetChartAxisFont,
+    tag: &str,
+    attributes: &BTreeMap<String, String>,
+    part: &str,
+) -> xlsx_jsx::Result<()> {
+    let set_bool = |key: &str| -> xlsx_jsx::Result<Option<bool>> {
+        attributes.get(key).map_or(Ok(None), |raw| match raw.as_str() {
+            "1" | "true" => Ok(Some(true)),
+            "0" | "false" => Ok(Some(false)),
+            _ => Err(Error::Reverse(format!("chart part `{part}` has invalid secondary-axis font {tag}@{key}; use true or false"))),
+        })
+    };
+    if matches!(tag, "rPr" | "defRPr" | "endParaRPr") {
+        if attributes.get("baseline").is_some_and(|value| value != "0") {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has secondary-axis font baseline formatting; remove baseline shift to preserve tick-label layout"
+            )));
+        }
+        for (key, target) in [("b", &mut font.bold), ("i", &mut font.italic)] {
+            if let Some(value) = set_bool(key)? {
+                if target.is_some_and(|previous| previous != value) {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has inconsistent secondary-axis font {key} values; make default/run formatting identical"
+                    )));
+                }
+                *target = Some(value);
+            }
+        }
+        if let Some(raw) = attributes.get("u") {
+            let value = match raw.as_str() {
+                "sng" => true,
+                "none" => false,
+                _ => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported secondary-axis font underline `{raw}`; use single or none"
+                    )));
+                }
+            };
+            if font.underline.is_some_and(|previous| previous != value) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has inconsistent secondary-axis font underline values"
+                )));
+            }
+            font.underline = Some(value);
+        }
+        if let Some(raw) = attributes.get("sz") {
+            let points = raw.parse::<f64>().ok().filter(|value| value.is_finite() && (100.0..=400_000.0).contains(value)).map(|value| value / 100.0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has secondary-axis font size outside 1–4000 points; use a representable point size")))?;
+            if font.size_seen && font.size != Some(points) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has inconsistent secondary-axis font sizes; make default/run values identical"
+                )));
+            }
+            font.size = Some(points);
+            font.size_seen = true;
+        }
+    } else if tag == "latin" {
+        let name = attributes.get("typeface").cloned();
+        if name.as_ref().is_some_and(|value| {
+            value.is_empty()
+                || value.chars().count() > 255
+                || !value.chars().all(is_valid_xml_character)
+        }) {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has invalid secondary-axis Latin typeface metadata; use a non-empty XML-safe font name"
+            )));
+        }
+        let pitch = attributes
+            .get("pitchFamily")
+            .and_then(|value| value.parse().ok());
+        let charset = attributes
+            .get("charset")
+            .and_then(|value| value.parse::<u8>().ok());
+        if attributes.get("pitchFamily").is_some() && pitch.is_none()
+            || attributes.get("charset").is_some() && charset.is_none_or(|value| value > 127)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has invalid secondary-axis font typeface metadata; pitchFamily must be 0–255 and charset 0–127"
+            )));
+        }
+        let pitch = pitch.filter(|value| *value != 0);
+        if (font.name.is_some() && font.name != name)
+            || (font.latin_seen && (font.pitch_family != pitch || font.charset != charset))
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has inconsistent secondary-axis Latin typeface metadata; make txPr values identical"
+            )));
+        }
+        font.name = name;
+        font.pitch_family = pitch;
+        font.charset = charset;
+        font.latin_seen = true;
+    } else if tag == "srgbClr" {
+        if let Some(color) = attributes.get("val") {
+            if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has non-RGB secondary-axis label color; use opaque six-digit RGB"
+                )));
+            }
+            let color = format!("#{color}").to_ascii_uppercase();
+            if font
+                .color
+                .as_ref()
+                .is_some_and(|previous| previous != &color)
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has inconsistent secondary-axis label colors; make txPr values identical"
+                )));
+            }
+            font.color = Some(color);
+        }
+    } else if tag == "bodyPr" {
+        let rotation = parse_chart_text_rotation(
+            attributes.get("rot").map(String::as_str),
+            attributes.get("vert").map(String::as_str),
+            part,
+            "secondary-axis label",
+        )?;
+        if rotation.is_some_and(|value| font.rotation.is_some_and(|previous| previous != value)) {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has inconsistent secondary-axis label rotations; make txPr bodyPr values identical"
+            )));
+        }
+        if rotation.is_some() {
+            font.rotation = rotation;
+        }
     }
     Ok(())
 }
@@ -19660,6 +19862,8 @@ fn parse_chart_xml(
         y_axis_title_line,
         x_axis_label_font,
         y_axis_label_font,
+        x2_axis_label_font: secondary_chart_groups.x2_axis_label_font,
+        y2_axis_label_font: secondary_chart_groups.y2_axis_label_font,
         title_overlay,
         chart_area_fill_color,
         chart_area_fill_transparency,
@@ -24119,6 +24323,8 @@ struct WorksheetChart {
     y_axis_title_line: Option<WorksheetChartGridlineStyle>,
     x_axis_label_font: WorksheetChartAxisFont,
     y_axis_label_font: WorksheetChartAxisFont,
+    x2_axis_label_font: WorksheetChartAxisFont,
+    y2_axis_label_font: WorksheetChartAxisFont,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     chart_area_fill_transparency: Option<u8>,

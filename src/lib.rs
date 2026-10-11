@@ -2025,6 +2025,24 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisLabelFontPitchFamily",
             "yAxisLabelFontCharset",
             "yAxisLabelFontRotation",
+            "x2AxisLabelFontSize",
+            "x2AxisLabelFontBold",
+            "x2AxisLabelFontItalic",
+            "x2AxisLabelFontUnderline",
+            "x2AxisLabelFontColor",
+            "x2AxisLabelFontName",
+            "x2AxisLabelFontPitchFamily",
+            "x2AxisLabelFontCharset",
+            "x2AxisLabelFontRotation",
+            "y2AxisLabelFontSize",
+            "y2AxisLabelFontBold",
+            "y2AxisLabelFontItalic",
+            "y2AxisLabelFontUnderline",
+            "y2AxisLabelFontColor",
+            "y2AxisLabelFontName",
+            "y2AxisLabelFontPitchFamily",
+            "y2AxisLabelFontCharset",
+            "y2AxisLabelFontRotation",
             "xAxisNumberFormat",
             "yAxisNumberFormat",
             "x2AxisNumberFormat",
@@ -2854,7 +2872,7 @@ fn validate_chart_axis_font_properties(
     kind: &str,
     require_title: bool,
 ) -> Result<()> {
-    for axis in ["x", "y"] {
+    for axis in ["x", "y", "x2", "y2"] {
         let title = format!("{axis}AxisTitle");
         let prefix = format!("{axis}Axis{kind}Font");
         for suffix in [
@@ -3041,7 +3059,7 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
             })
         }) {
             return Err(Error::Compile(
-                "pie and doughnut Charts have no X/Y axis labels; remove xAxisLabelFont* and yAxisLabelFont* or use a chart type with axes".into(),
+                "pie and doughnut Charts have no X/Y axis labels; remove xAxisLabelFont*, yAxisLabelFont*, x2AxisLabelFont*, and y2AxisLabelFont* or use a chart type with axes".into(),
             ));
         }
     }
@@ -4727,6 +4745,24 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
             "x2AxisMinorGridlines",
             "y2AxisMajorGridlines",
             "y2AxisMinorGridlines",
+            "x2AxisLabelFontSize",
+            "x2AxisLabelFontBold",
+            "x2AxisLabelFontItalic",
+            "x2AxisLabelFontUnderline",
+            "x2AxisLabelFontColor",
+            "x2AxisLabelFontName",
+            "x2AxisLabelFontPitchFamily",
+            "x2AxisLabelFontCharset",
+            "x2AxisLabelFontRotation",
+            "y2AxisLabelFontSize",
+            "y2AxisLabelFontBold",
+            "y2AxisLabelFontItalic",
+            "y2AxisLabelFontUnderline",
+            "y2AxisLabelFontColor",
+            "y2AxisLabelFontName",
+            "y2AxisLabelFontPitchFamily",
+            "y2AxisLabelFontCharset",
+            "y2AxisLabelFontRotation",
             "x2AxisCrossing",
             "y2AxisCrossing",
             "secondaryValueAxisMin",
@@ -4740,7 +4776,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
         .any(|property| chart.props.contains_key(*property))
     {
         return Err(Error::Compile(
-            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, gridlines, and crossings require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties".into(),
+            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, gridlines, and crossings require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties (including secondary-axis label fonts)".into(),
         ));
     }
     validate_chart_series_spacing(chart)?;

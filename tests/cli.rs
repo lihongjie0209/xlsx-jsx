@@ -46,6 +46,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("secondaryAxis"))
         .stdout(predicate::str::contains("x2AxisTitle"))
         .stdout(predicate::str::contains("y2AxisTitle"))
+        .stdout(predicate::str::contains("x2AxisLabelFontSize"))
+        .stdout(predicate::str::contains("y2AxisLabelFontRotation"))
         .stdout(predicate::str::contains("x2AxisMajorGridlines"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
@@ -8451,6 +8453,130 @@ fn reverses_external_category_and_value_axis_label_fonts_without_a_manifest() {
     assert!(source.contains("xAxisLabelFontBold={true}"), "{source}");
     assert!(source.contains("yAxisLabelFontSize={9}"), "{source}");
     assert!(source.contains("yAxisLabelFontItalic={true}"), "{source}");
+}
+
+#[test]
+fn reverses_and_rebuilds_external_secondary_axis_label_fonts_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-secondary-axis-fonts.xlsx");
+    let output_path = directory.path().join("external-secondary-axis-fonts.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_values("Data!B2:B4")
+        .set_categories("Data!A2:A4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_categories("Data!A2:A4")
+        .set_secondary_axis(true);
+    chart.x2_axis().set_font(
+        ChartFont::new()
+            .set_size(11.0)
+            .set_bold()
+            .set_color("#336699")
+            .set_name("Aptos"),
+    );
+    chart.x2_axis().set_major_gridlines(true);
+    chart
+        .y2_axis()
+        .set_font(ChartFont::new().set_size(9.0).set_italic().set_rotation(45));
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("x2AxisLabelFontSize={11}"), "{source}");
+    assert!(source.contains("x2AxisLabelFontBold={true}"), "{source}");
+    assert!(
+        source.contains("x2AxisLabelFontColor=\"#336699\""),
+        "{source}"
+    );
+    assert!(source.contains("x2AxisLabelFontName=\"Aptos\""), "{source}");
+    assert!(source.contains("y2AxisLabelFontSize={9}"), "{source}");
+    assert!(source.contains("y2AxisLabelFontItalic={true}"), "{source}");
+    assert!(source.contains("y2AxisLabelFontRotation={45}"), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-secondary-axis-fonts.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("sz=\"1100\" b=\"1\""), "{xml}");
+    assert!(xml.contains("rot=\"2700000\""), "{xml}");
+    assert!(xml.contains("val=\"336699\""), "{xml}");
+    assert!(xml.contains("typeface=\"Aptos\""), "{xml}");
+}
+
+#[test]
+fn rejects_secondary_axis_label_font_without_secondary_series_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("secondary-axis-font-without-series.tsx");
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" x2AxisLabelFontBold={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("add a secondary series"));
+}
+
+#[test]
+fn secondary_bar_axis_label_fonts_follow_writer_handles_after_axis_swap() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("secondary-bar-axis-fonts.xlsx");
+    let output_path = directory.path().join("secondary-bar-axis-fonts.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Bar);
+    chart
+        .add_series()
+        .set_values("Data!B2:B4")
+        .set_categories("Data!A2:A4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_categories("Data!A2:A4")
+        .set_secondary_axis(true);
+    chart
+        .x2_axis()
+        .set_font(ChartFont::new().set_size(10.0).set_bold());
+    chart
+        .y2_axis()
+        .set_font(ChartFont::new().set_size(8.0).set_italic());
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(output_path).expect("reversed source reads");
+    assert!(source.contains("x2AxisLabelFontSize={10}"), "{source}");
+    assert!(source.contains("x2AxisLabelFontBold={true}"), "{source}");
+    assert!(source.contains("y2AxisLabelFontSize={8}"), "{source}");
+    assert!(source.contains("y2AxisLabelFontItalic={true}"), "{source}");
 }
 
 #[test]

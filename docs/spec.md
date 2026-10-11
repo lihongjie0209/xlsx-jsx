@@ -108,6 +108,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   swap. Only a single static title string is represented; formula/multi-run
   titles and secondary title styling/layout remain unsupported and fail with
   repair guidance. These properties require a secondary series.
+  `Chart.x2AxisLabelFont*` and `Chart.y2AxisLabelFont*` set the secondary-axis
+  tick-label font properties using the same supported subset as the primary
+  `xAxisLabelFont*` / `yAxisLabelFont*`: size, bold, italic, single/none
+  underline, opaque RGB color, Latin typeface/pitch-family/charset, and text
+  rotation. They require a secondary series and reverse through the secondary
+  axis pair's IDs and physical position, including horizontal-bar axis swaps.
+  Unsupported text-property metadata and schema-invalid charset values remain
+  rejected.
   `Chart.x2AxisMajorGridlines`, `x2AxisMinorGridlines`, `y2AxisMajorGridlines`,
   and `y2AxisMinorGridlines` control gridlines on the secondary horizontal and
   vertical axes. Each accepts a boolean or the same `{color, width, dash,
