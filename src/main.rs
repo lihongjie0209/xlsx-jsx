@@ -835,6 +835,14 @@ fn compile_chart(
         if let Some(smooth) = series.props.get("smooth").and_then(Value::as_bool) {
             chart_series.set_smooth(smooth);
         }
+        if series
+            .props
+            .get("invertIfNegative")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            chart_series.set_invert_if_negative();
+        }
         configure_chart_series_trendline(chart_series, &series);
         configure_chart_series_error_bars(chart_series, &series)?;
         if component.props.get("type").and_then(Value::as_str) == Some("stock") {
@@ -4357,6 +4365,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(smooth) = series.smooth {
             let _ = write!(output, " smooth={{{smooth}}}");
         }
+        if series.invert_if_negative == Some(true) {
+            output.push_str(" invertIfNegative={true}");
+        }
         for (name, enabled) in [
             ("showValue", series.show_value),
             ("showCategoryName", series.show_category_name),
@@ -7278,6 +7289,7 @@ fn parse_chart_xml(
         "scatterChart",
         "scatterStyle",
         "smooth",
+        "invertIfNegative",
         "trendline",
         "trendlineType",
         "dispEq",
@@ -8961,6 +8973,7 @@ fn parse_chart_xml(
                         marker_type: None,
                         marker_size: None,
                         smooth: None,
+                        invert_if_negative: None,
                         line_hidden: None,
                         line_color: None,
                         line_width: None,
@@ -8983,6 +8996,38 @@ fn parse_chart_xml(
                         label_separator_seen: false,
                         error_bars: Vec::new(),
                     }),
+                    "invertIfNegative" => {
+                        if stack.last().is_none_or(|parent| parent != "ser") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has invertIfNegative outside a data series; attach it to one bar/column Series"
+                            )));
+                        }
+                        let value = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "invertIfNegative",
+                        )?;
+                        let enabled = match value.as_str() {
+                            "1" | "true" => true,
+                            "0" | "false" => false,
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has invalid invertIfNegative val `{value}`; use 0/1 or true/false"
+                                )));
+                            }
+                        };
+                        let Some(current) = series.last_mut() else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has invertIfNegative without a series"
+                            )));
+                        };
+                        if current.invert_if_negative.replace(enabled).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats invertIfNegative for one series; retain at most one value"
+                            )));
+                        }
+                    }
                     "errBars" => {
                         if stack.last().is_none_or(|parent| parent != "ser") {
                             return Err(Error::Reverse(format!(
@@ -9854,6 +9899,23 @@ fn parse_chart_xml(
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
+    if series
+        .iter()
+        .any(|item| item.invert_if_negative == Some(true))
+        && !matches!(
+            chart_type,
+            "bar"
+                | "barStacked"
+                | "barPercentStacked"
+                | "column"
+                | "columnStacked"
+                | "columnPercentStacked"
+        )
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` enables invertIfNegative on `{chart_type}`; remove it or use a bar/column chart"
+        )));
+    }
     if chart_gap.is_some() || chart_overlap.is_some() {
         if !matches!(
             chart_type,
@@ -10961,6 +11023,7 @@ fn is_supported_chart_attribute(
             matches!(value, "0" | "1" | "false" | "true")
         }
         ("smooth", "val") => matches!(value, "0" | "1" | "false" | "true"),
+        ("invertIfNegative", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("symbol" | "size", "val") => is_supported_chart_marker_attribute(tag, value),
         ("lblAlgn", "val") => matches!(value, "ctr" | "l" | "r"),
         ("lblOffset", "val") => value == "100",
@@ -13662,6 +13725,7 @@ struct WorksheetChartSeries {
     marker_type: Option<&'static str>,
     marker_size: Option<u8>,
     smooth: Option<bool>,
+    invert_if_negative: Option<bool>,
     line_hidden: Option<bool>,
     line_color: Option<String>,
     line_width: Option<f64>,

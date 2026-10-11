@@ -3390,6 +3390,78 @@ fn rejects_smoothing_override_the_writer_would_drop_for_smooth_scatter() {
 }
 
 #[test]
+fn reverses_external_invert_if_negative_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-invert-negative.xlsx");
+    let source_path = directory.path().join("external-invert-negative.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-invert-negative.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_values("Data!B2:B5")
+        .set_invert_if_negative();
+    chart.add_series().set_values("Data!C2:C5");
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    rewrite_part(&workbook_path, "xl/charts/chart1.xml", |mut xml| {
+        let second_series_end = xml
+            .match_indices("</c:ser>")
+            .nth(1)
+            .map(|(index, _)| index)
+            .expect("chart has two series");
+        xml.insert_str(second_series_end, "<c:invertIfNegative val=\"0\"/>");
+        xml
+    });
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("values={\"Data!$B$2:$B$5\"} invertIfNegative={true}"));
+    assert!(!source.contains("values={\"Data!$C$2:$C$5\"} invertIfNegative"));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:invertIfNegative val=\"1\"/>"));
+    assert!(!xml.contains("<c:invertIfNegative val=\"0\"/>"));
+}
+
+#[test]
+fn rejects_invert_if_negative_for_line_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("line-invert-negative.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" invertIfNegative={true} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "invertIfNegative is supported only",
+        ))
+        .stderr(predicate::str::contains("bar and column chart families"));
+}
+
+#[test]
 fn rejects_non_positive_chart_axis_units_with_repair_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-chart-axis-unit.tsx");

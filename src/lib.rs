@@ -2656,6 +2656,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "showSeriesName",
                 "showPercentage",
                 "smooth",
+                "invertIfNegative",
                 "labelPosition",
                 "showLegendKey",
                 "showLeaderLines",
@@ -2802,6 +2803,7 @@ fn validate_chart_series_properties(
     series: &Node,
     series_index: usize,
 ) -> Result<()> {
+    validate_chart_series_invert_if_negative(chart, series)?;
     validate_chart_series_smoothing(chart, series)?;
     validate_series_data_label_props(chart, series)?;
     validate_chart_series_marker(chart, series, series_index)?;
@@ -2809,6 +2811,32 @@ fn validate_chart_series_properties(
     validate_chart_series_point_colors(series)?;
     validate_chart_series_trendline(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
+}
+
+fn validate_chart_series_invert_if_negative(chart: &Node, series: &Node) -> Result<()> {
+    let Some(setting) = series.props.get("invertIfNegative") else {
+        return Ok(());
+    };
+    let Some(enabled) = setting.as_bool() else {
+        return Err(Error::Compile(
+            "Series.invertIfNegative must be a boolean; use true/false or omit it for the default"
+                .into(),
+        ));
+    };
+    if !enabled {
+        return Ok(());
+    }
+    let chart_type = chart
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !chart_type.starts_with("bar") && !chart_type.starts_with("column") {
+        return Err(Error::Compile(format!(
+            "Series.invertIfNegative is supported only for bar and column chart families, not `{chart_type}`; remove it or choose a bar/column Chart.type"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_chart_series_smoothing(chart: &Node, series: &Node) -> Result<()> {

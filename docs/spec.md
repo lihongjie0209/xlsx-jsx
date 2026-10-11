@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.67
+Version: 1.68
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -288,6 +288,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   omits that default when rebuilding. `false` cannot override a smoothed scatter
   chart because the pinned writer omits that OOXML override. This property is
   supported only on line and scatter chart families.
+- `Series.invertIfNegative?: boolean` enables Excel's inverted fill for
+  negative values on bar/column charts. Omission and `false` use the writer's
+  default; reverse preserves `true` and folds explicit `false`. Custom
+  `c14:invertSolidFillFmt` colors are not represented and are rejected.
 - `ErrorBars` is an optional child of `Series`, with at most one each for the
   `x` and `y` axes. `axis` is required and selects horizontal (`x`) or vertical
   (`y`) error bars; X error bars are valid only for scatter and bar charts,

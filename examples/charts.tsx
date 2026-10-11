@@ -21,7 +21,7 @@ export default <Workbook>
       </Series>
     </Chart>
     <Chart type="bar" cell="D20" width={480} height={288} verticalAxisHidden={true}>
-      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1">
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" invertIfNegative={true}>
         <ErrorBars axis="x" type="standardError" />
       </Series>
     </Chart>
