@@ -509,13 +509,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   opposite axis crosses each `ChartAxis` handle. The string values map to
   OOXML `crosses` values `autoZero`, `min`, and `max`; omission and
   `automatic` use the default and are folded on reverse. A numeric value maps
-  to `crossesAt`: `xAxisCrossing` is a 1-based integer category number on
-  column/area/line charts, and a finite numeric value on scatter charts;
-  numeric category crossing is rejected for bar charts because the pinned writer
-  silently ignores `CategoryNumber` on that axis. `yAxisCrossing`
-  is a finite numeric value on Cartesian/scatter value axes. Values must be
-  finite, and category numbers must be positive. The names follow
-  rust_xlsxwriter's x/y axis handles, including its bar-chart axis swap.
+  to `crossesAt`: on column/area/line charts, `xAxisCrossing` is a 1-based
+  integer category number and `yAxisCrossing` is a finite value-axis number.
+  Bar charts swap the handles: `xAxisCrossing` is a finite value-axis number
+  and `yAxisCrossing` is a 1-based integer category number. Scatter charts use
+  finite numeric values on both axes. Values must be finite, and category
+  numbers must be positive integers. The names follow rust_xlsxwriter's x/y
+  axis handles, including its bar-chart axis swap.
   Scatter reverse maps crossings by bottom/top versus left/right axis
   orientation. Crossings on date, secondary, or ambiguous axes remain rejected
   with repair guidance because their date-serial or axis identity semantics

@@ -2171,6 +2171,11 @@ fn configure_chart_visual_properties(chart: &mut Chart, component: &Node) {
 }
 
 fn configure_chart_axis_crossings(chart: &mut Chart, component: &Node) {
+    let is_bar = component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|chart_type| chart_type.starts_with("bar"));
     for (property, horizontal_handle) in [("xAxisCrossing", true), ("yAxisCrossing", false)] {
         let Some(value) = component.props.get(property) else {
             continue;
@@ -2183,13 +2188,17 @@ fn configure_chart_axis_crossings(chart: &mut Chart, component: &Node) {
                 _ => unreachable!("Chart axis crossings were validated"),
             }
         } else if let Some(value) = value.as_f64() {
-            if horizontal_handle
-                && !component
-                    .props
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .is_some_and(|chart_type| chart_type.starts_with("scatter"))
-            {
+            let is_scatter = component
+                .props
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|chart_type| chart_type.starts_with("scatter"));
+            let category_handle = if is_bar {
+                !horizontal_handle
+            } else {
+                horizontal_handle
+            };
+            if category_handle && !is_scatter {
                 ChartAxisCrossing::CategoryNumber(
                     u32::try_from(
                         component.props[property]
@@ -11250,7 +11259,12 @@ fn parse_chart_xml(
                                 _ => unreachable!("date axes were rejected above"),
                             }
                         };
-                        if horizontal_handle
+                        let category_handle = if chart_type.starts_with("bar") {
+                            !horizontal_handle
+                        } else {
+                            horizontal_handle
+                        };
+                        if category_handle
                             && !chart_type.starts_with("scatter")
                             && (value.fract() != 0.0 || !(1.0..=1_048_576.0).contains(&value))
                         {

@@ -5431,8 +5431,10 @@ fn reverses_numeric_crosses_at_for_category_and_scatter_axes() {
     bar.add_series()
         .set_categories("Data!A2:A4")
         .set_values("Data!B2:B4");
+    bar.x_axis()
+        .set_crossing(ChartAxisCrossing::AxisValue(20.0));
     bar.y_axis()
-        .set_crossing(ChartAxisCrossing::AxisValue(25.0));
+        .set_crossing(ChartAxisCrossing::CategoryNumber(3));
     worksheet.insert_chart(36, 5, &bar).unwrap();
     workbook.save(&workbook_path).unwrap();
 
@@ -5448,7 +5450,8 @@ fn reverses_numeric_crosses_at_for_category_and_scatter_axes() {
     assert!(source.contains("xAxisCrossing={2}"), "{source}");
     assert!(source.contains("yAxisCrossing={15}"), "{source}");
     assert!(source.contains("xAxisCrossing={2.5}"), "{source}");
-    assert!(source.contains("yAxisCrossing={25}"), "{source}");
+    assert!(source.contains("xAxisCrossing={20}"), "{source}");
+    assert!(source.contains("yAxisCrossing={3}"), "{source}");
 
     let rebuilt = directory.path().join("numeric-crossings-rebuilt.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -5474,7 +5477,8 @@ fn reverses_numeric_crosses_at_for_category_and_scatter_axes() {
         scatter_xml.contains("<c:crossesAt val=\"2.5\"/>"),
         "{scatter_xml}"
     );
-    assert!(bar_xml.contains("<c:crossesAt val=\"25\"/>"), "{bar_xml}");
+    assert!(bar_xml.contains("<c:crossesAt val=\"20\"/>"), "{bar_xml}");
+    assert!(bar_xml.contains("<c:crossesAt val=\"3\"/>"), "{bar_xml}");
 }
 
 #[test]
@@ -5498,12 +5502,12 @@ fn rejects_fractional_category_axis_crossing_number() {
 }
 
 #[test]
-fn rejects_numeric_category_crossing_on_bar_chart() {
+fn rejects_fractional_category_crossing_on_bar_chart() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("bar-category-crossing.tsx");
     std::fs::write(
         &input,
-        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="bar" cell="D2" xAxisCrossing={2}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="bar" cell="D2" yAxisCrossing={2.5}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
     )
     .expect("source writes");
     Command::cargo_bin("xlsx-jsx")
@@ -5512,8 +5516,9 @@ fn rejects_numeric_category_crossing_on_bar_chart() {
         .arg(input)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("pinned rust_xlsxwriter writer"))
-        .stderr(predicate::str::contains("use `automatic`, `min`, or `max`"));
+        .stderr(predicate::str::contains(
+            "yAxisCrossing must be a positive integer category number",
+        ));
 }
 
 #[test]

@@ -2309,20 +2309,22 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
                 "Chart.{property} numeric crossing is unsupported with categoryAxisType=\"date\"; use automatic/min/max or remove the numeric crossing"
             )));
         }
-        if property == "xAxisCrossing" && !chart_type.starts_with("scatter") {
-            if chart_type.starts_with("bar") {
-                return Err(Error::Compile(format!(
-                    "Chart.{property} numeric category crossing is not supported for bar charts by the pinned rust_xlsxwriter writer; use `automatic`, `min`, or `max`"
-                )));
-            }
-            if value
+        let is_scatter = chart_type.starts_with("scatter");
+        let is_bar = chart_type.starts_with("bar");
+        let is_category_handle = if is_bar {
+            property == "yAxisCrossing"
+        } else {
+            property == "xAxisCrossing"
+        };
+        if is_category_handle
+            && !is_scatter
+            && value
                 .as_u64()
                 .is_none_or(|index| index == 0 || index > 1_048_576)
-            {
-                return Err(Error::Compile(
-                    "Chart.xAxisCrossing must be a positive integer category number from 1 through 1048576 for category charts; use an integer category index".into(),
-                ));
-            }
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be a positive integer category number from 1 through 1048576 for category charts; use an integer category index"
+            )));
         }
     }
     Ok(())
