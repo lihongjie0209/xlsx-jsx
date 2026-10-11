@@ -21,7 +21,7 @@ export default <Workbook>
         <Trendline type="linear" name="Forecast" forward={2} displayEquation={true} displayRSquared={true} labelFontSize={12} labelFontBold={true} labelFontColor="#336699" />
       </Series>
     </Chart>
-    <Chart type="bar" cell="D20" width={480} height={288} verticalAxisHidden={true} autoTitleDeleted={true}>
+    <Chart type="bar" cell="D20" width={480} height={288} verticalAxisHidden={true} autoTitleDeleted={true} legendFillColor="#F2F2F2">
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" invertIfNegative={true}>
         <ErrorBars axis="x" type="standardError" />
       </Series>

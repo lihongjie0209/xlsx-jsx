@@ -98,6 +98,7 @@ xlsx-jsx spec --format json
 | Scatter axis direction | yes | yes | `xAxisReversed={true}` / `yAxisReversed={true}` reverse the horizontal and vertical value scales independently |
 | Scatter axis display units | yes | yes | `xAxisDisplayUnit` / `yAxisDisplayUnit` independently scale each value axis; corresponding `*Label={false}` hides that unit label |
 | Chart legend layout and overlay | yes | yes (supported subset) | `legendLayout={{x: 0.2, y: 0.3, width: 0.4, height: 0.5}}` positions a visible legend with reversible fractional geometry; `legendOverlay={true}` overlays it on the plot area; neither works with `showLegend={false}` |
+| Chart legend shape fill | yes | yes (supported subset) | `legendFillColor="#F2F2F2"` applies an opaque RGB solid fill to the visible legend; patterns, gradients, transparency, and borders are rejected; the pinned writer's overlay + shape-format ordering is schema-invalid, so that combination is rejected |
 | Chart legend entry visibility | yes | yes | `legendDeletedEntries={[1, 3]}` hides zero-based legend entries (pie/doughnut point indices); duplicate indices and hidden legends are rejected |
 | Chart series and trendline legend entries | yes | yes | `Series` / `Trendline deleteFromLegend={true}` hides the corresponding entry; chart-level indices reverse to these properties when unambiguous |
 | Chart series markers | yes | yes (supported subset) | `Series markerType="circle" markerSize={9}` preserves supported marker symbols and size on line, radar, and scatter charts; custom marker formatting remains rejected |

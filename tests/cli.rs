@@ -305,6 +305,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("categoryAxisMinorTimeUnit"))
         .stdout(predicate::str::contains("categoryAxisType"))
         .stdout(predicate::str::contains("legendOverlay"))
+        .stdout(predicate::str::contains("legendFillColor"))
         .stdout(predicate::str::contains("legendDeletedEntries"))
         .stdout(predicate::str::contains("deleteFromLegend"))
         .stdout(predicate::str::contains("valueAxisReversed"))
@@ -1328,6 +1329,95 @@ fn reverses_and_rebuilds_external_chart_title_shape_formatting_without_a_manifes
     assert!(xml.contains("w=\"19050\""), "{xml}");
     assert!(xml.contains("prstDash val=\"dashDot\""), "{xml}");
     assert!(xml.contains("alpha val=\"75000\""), "{xml}");
+}
+
+#[test]
+fn reverses_external_chart_legend_shape_formatting_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-legend-shape-format.xlsx");
+    let reversed = directory.path().join("chart-legend-shape-format.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_string(0, 0, "Quarter").unwrap();
+    worksheet.write_string(1, 0, "Q1").unwrap();
+    worksheet.write_string(2, 0, "Q2").unwrap();
+    worksheet.write_number(1, 1, 10).unwrap();
+    worksheet.write_number(2, 1, 20).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3");
+    chart
+        .legend()
+        .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0")));
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("legendFillColor=\"#F0E0D0\""), "{source}");
+
+    let rebuilt = directory
+        .path()
+        .join("chart-legend-shape-format-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
+    assert!(xml.contains("val=\"F0E0D0\""), "{xml}");
+}
+
+#[test]
+fn validate_rejects_legend_fill_when_legend_is_hidden() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("hidden-legend-fill.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" showLegend={false} legendFillColor="#F0E0D0"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.legendFillColor requires a visible legend",
+        ));
+}
+
+#[test]
+fn validate_rejects_legend_fill_with_schema_invalid_overlay_combination() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("legend-fill-overlay.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" legendOverlay={true} legendFillColor="#F0E0D0"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "cannot be combined with legendOverlay={true}",
+        ));
 }
 
 #[test]

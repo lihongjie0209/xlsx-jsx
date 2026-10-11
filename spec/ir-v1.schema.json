@@ -595,6 +595,7 @@
             "titleLineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
             "titleLineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
             "titleLineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "legendFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "xAxisLabelFontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
             "xAxisLabelFontBold": { "type": "boolean" },
             "xAxisLabelFontItalic": { "type": "boolean" },
@@ -716,6 +717,34 @@
         }
       },
       "allOf": [
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": {
+                  "legendFillColor": { "type": "string" },
+                  "legendOverlay": { "const": true }
+                },
+                "required": ["legendFillColor", "legendOverlay"]
+              }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": {
+                  "legendFillColor": { "type": "string" },
+                  "showLegend": { "const": false }
+                },
+                "required": ["legendFillColor", "showLegend"]
+              }
+            },
+            "required": ["props"]
+          }
+        },
         {
           "if": { "properties": { "props": { "properties": { "dropLines": { "const": true } }, "required": ["dropLines"] } }, "required": ["props"] },
           "then": { "properties": { "props": { "properties": { "type": { "enum": ["area", "areaStacked", "areaPercentStacked", "line", "lineStacked", "linePercentStacked", "stock"] } } } } }

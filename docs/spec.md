@@ -219,6 +219,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   dash uses the supported chart-line presets, and transparency is 0–100 and
   requires an RGB line color. All require `title`; reverse rejects patterns,
   gradients, effects, theme/indexed colors, and unsupported line children.
+- `Chart.legendFillColor?: "#RRGGBB"` sets an opaque RGB solid fill on the
+  visible legend using `ChartLegend::set_format()`. Reverse accepts one solid
+  fill and rejects patterns, gradients, transparency, effects, borders, and
+  extension markup. The property requires a visible legend and cannot be
+  combined with `showLegend={false}`. It also cannot be combined with
+  `legendOverlay={true}`: the pinned writer serializes that combination in an
+  Open XML schema-invalid child order.
 - `Chart.titleLayout?: { x, y }` manually positions a static chart title using
   finite relative fractions in `[0, 1]` of the chart width and height. The
   writer uses outer/default layout target and edge positioning. It requires

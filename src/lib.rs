@@ -1897,6 +1897,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleLineWidth",
             "titleLineDash",
             "titleLineTransparency",
+            "legendFillColor",
             "xAxisTitle",
             "yAxisTitle",
             "xAxisTitleFillColor",
@@ -2223,6 +2224,7 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_title_font_properties(chart)?;
     validate_chart_title_shape_format(chart)?;
+    validate_chart_legend_shape_format(chart)?;
     validate_chart_axis_title_fonts(chart)?;
     validate_chart_axis_title_fill_colors(chart)?;
     validate_chart_axis_title_lines(chart)?;
@@ -2762,6 +2764,29 @@ fn validate_chart_title_shape_format(chart: &Node) -> Result<()> {
                 "Chart.titleLineTransparency requires Chart.titleLineColor; add an RGB line color or remove transparency".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_chart_legend_shape_format(chart: &Node) -> Result<()> {
+    let Some(value) = chart.props.get("legendFillColor") else {
+        return Ok(());
+    };
+    if !value.as_str().is_some_and(is_opaque_rgb_color) {
+        return Err(Error::Compile(
+            "Chart.legendFillColor must be an opaque RGB color like #336699".into(),
+        ));
+    }
+    if chart.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
+        return Err(Error::Compile(
+            "Chart.legendFillColor requires a visible legend; remove it or set showLegend={true}"
+                .into(),
+        ));
+    }
+    if chart.props.get("legendOverlay").and_then(Value::as_bool) == Some(true) {
+        return Err(Error::Compile(
+            "Chart.legendFillColor cannot be combined with legendOverlay={true}; rust_xlsxwriter emits schema-invalid legend child order for this combination, so remove legendFillColor or set legendOverlay={false}".into(),
+        ));
     }
     Ok(())
 }

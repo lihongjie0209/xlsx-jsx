@@ -747,6 +747,15 @@ fn compile_chart(
     }
     if let Some(color) = component
         .props
+        .get("legendFillColor")
+        .and_then(Value::as_str)
+    {
+        chart
+            .legend()
+            .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)));
+    }
+    if let Some(color) = component
+        .props
         .get("plotAreaFillColor")
         .and_then(Value::as_str)
     {
@@ -5204,7 +5213,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -5264,6 +5273,11 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .map(|[x, y, width, height]| {
                 format!(" legendLayout={{{{x: {x}, y: {y}, width: {width}, height: {height}}}}}")
             })
+            .unwrap_or_default(),
+        chart
+            .legend_fill_color
+            .as_ref()
+            .map(|value| format!(" legendFillColor={value:?}"))
             .unwrap_or_default(),
         chart
             .title_layout
@@ -9114,6 +9128,8 @@ fn parse_chart_xml(
     let mut current_axis_hidden_declared = false;
     let mut pending_axis_hidden: Option<bool> = None;
     let mut legend_seen = false;
+    let mut legend_sppr_seen = false;
+    let mut legend_fill_color: Option<String> = None;
     let mut legend_deleted = false;
     let mut legend_delete_seen = false;
     let mut legend_position: Option<&'static str> = None;
@@ -9693,6 +9709,13 @@ fn parse_chart_xml(
                     )));
                 }
                 if tag == "spPr" {
+                    if stack.last().is_some_and(|ancestor| ancestor == "legend")
+                        && std::mem::replace(&mut legend_sppr_seen, true)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats legend shape properties; keep one opaque RGB solid fill"
+                        )));
+                    }
                     let area_kind = match stack.last().map(String::as_str) {
                         Some("chartSpace") => Some("chartArea"),
                         Some("plotArea") => Some("plotArea"),
@@ -13245,7 +13268,7 @@ fn parse_chart_xml(
                                 || stack.last().is_some_and(|ancestor| ancestor == "trendline")
                                 || matches!(
                                     stack.last().map(String::as_str),
-                                    Some("chartSpace" | "plotArea")
+                                    Some("chartSpace" | "plotArea" | "legend")
                                 )
                                 || (stack.iter().any(|ancestor| ancestor == "dPt")
                                     && matches!(
@@ -13397,6 +13420,24 @@ fn parse_chart_xml(
                                 }
                                 current.line_width = Some(f64::from(width_emu) / 12700.0);
                             }
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|item| item == "legend")
+                            && stack.iter().any(|item| item == "spPr")
+                            && !stack.iter().any(|item| item == "ln") =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "chart legend fill",
+                        )?;
+                        if legend_fill_color.replace(format!("#{color}")).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a legend RGB fill; retain one opaque solid fill"
+                            )));
                         }
                     }
                     "srgbClr"
@@ -14675,6 +14716,21 @@ fn parse_chart_xml(
         }
     }
     let show_legend = legend_seen && !legend_deleted;
+    if legend_sppr_seen && legend_fill_color.is_none() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has legend shape properties without one opaque RGB solid fill; add the supported fill or remove the shape properties"
+        )));
+    }
+    if legend_fill_color.is_some() && !show_legend {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` formats a hidden legend; restore a visible legend or remove its shape fill"
+        )));
+    }
+    if legend_fill_color.is_some() && legend_overlay {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` combines legend shape fill with overlay, which the pinned writer serializes in schema-invalid child order; remove the fill or overlay before reversing"
+        )));
+    }
     if !legend_deleted_entries.is_empty() && !show_legend {
         return Err(Error::Reverse(format!(
             "chart part `{part}` deletes legend entries while its legend is hidden; restore a visible legend or remove the legendEntry elements"
@@ -14799,6 +14855,7 @@ fn parse_chart_xml(
         plot_area_fill_color,
         plot_area_layout,
         legend_layout,
+        legend_fill_color,
         title_layout,
         category_axis_type,
         category_axis_major_time_unit,
@@ -18921,6 +18978,7 @@ struct WorksheetChart {
     plot_area_fill_color: Option<String>,
     plot_area_layout: Option<[f64; 4]>,
     legend_layout: Option<[f64; 4]>,
+    legend_fill_color: Option<String>,
     title_layout: Option<[f64; 2]>,
     category_axis_type: Option<&'static str>,
     category_axis_major_time_unit: Option<&'static str>,
