@@ -1896,6 +1896,14 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisTitle",
             "xAxisTitleFillColor",
             "yAxisTitleFillColor",
+            "xAxisTitleLineColor",
+            "xAxisTitleLineWidth",
+            "xAxisTitleLineDash",
+            "xAxisTitleLineTransparency",
+            "yAxisTitleLineColor",
+            "yAxisTitleLineWidth",
+            "yAxisTitleLineDash",
+            "yAxisTitleLineTransparency",
             "xAxisTitleFontSize",
             "xAxisTitleFontBold",
             "xAxisTitleFontItalic",
@@ -2211,6 +2219,7 @@ fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_title_font_properties(chart)?;
     validate_chart_axis_title_fonts(chart)?;
     validate_chart_axis_title_fill_colors(chart)?;
+    validate_chart_axis_title_lines(chart)?;
     validate_chart_axis_label_fonts(chart)?;
     if chart.props.contains_key("titleLayout") && !chart.props.contains_key("title") {
         return Err(Error::Compile(
@@ -2527,6 +2536,14 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
             "yAxisTitle",
             "xAxisTitleFillColor",
             "yAxisTitleFillColor",
+            "xAxisTitleLineColor",
+            "xAxisTitleLineWidth",
+            "xAxisTitleLineDash",
+            "xAxisTitleLineTransparency",
+            "yAxisTitleLineColor",
+            "yAxisTitleLineWidth",
+            "yAxisTitleLineDash",
+            "yAxisTitleLineTransparency",
         ];
         if axis_titles
             .iter()
@@ -2589,6 +2606,78 @@ fn validate_chart_axis_title_fill_colors(chart: &Node) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_chart_axis_title_lines(chart: &Node) -> Result<()> {
+    for axis in ["x", "y"] {
+        let prefix = format!("{axis}AxisTitleLine");
+        let property_names = ["Color", "Width", "Dash", "Transparency"];
+        if !property_names
+            .iter()
+            .any(|suffix| chart.props.contains_key(&format!("{prefix}{suffix}")))
+        {
+            continue;
+        }
+        if !chart.props.contains_key(&format!("{axis}AxisTitle")) {
+            return Err(Error::Compile(format!(
+                "Chart.{prefix}* requires Chart.{axis}AxisTitle; add the matching axis title or remove the line properties"
+            )));
+        }
+        if let Some(value) = chart.props.get(&format!("{prefix}Color"))
+            && !value.as_str().is_some_and(is_opaque_rgb_color)
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{prefix}Color must be an opaque RGB color like #336699"
+            )));
+        }
+        if let Some(value) = chart.props.get(&format!("{prefix}Width"))
+            && !value.as_f64().is_some_and(|width| {
+                (0.25..=1584.0).contains(&width) && (width * 4.0).fract() == 0.0
+            })
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{prefix}Width must be 0.25–1584 points in quarter-point increments"
+            )));
+        }
+        if let Some(value) = chart.props.get(&format!("{prefix}Dash"))
+            && !value.as_str().is_some_and(|dash| {
+                matches!(
+                    dash,
+                    "solid"
+                        | "roundDot"
+                        | "squareDot"
+                        | "dash"
+                        | "dashDot"
+                        | "longDash"
+                        | "longDashDot"
+                        | "longDashDotDot"
+                )
+            })
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{prefix}Dash must be a supported chart-line preset"
+            )));
+        }
+        if let Some(value) = chart.props.get(&format!("{prefix}Transparency")) {
+            if value.as_u64().is_none_or(|transparency| transparency > 100) {
+                return Err(Error::Compile(format!(
+                    "Chart.{prefix}Transparency must be an integer from 0 to 100"
+                )));
+            }
+            if !chart.props.contains_key(&format!("{prefix}Color")) {
+                return Err(Error::Compile(format!(
+                    "Chart.{prefix}Transparency requires Chart.{prefix}Color; add an RGB line color or remove transparency"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_opaque_rgb_color(color: &str) -> bool {
+    color.len() == 7
+        && color.starts_with('#')
+        && color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 fn validate_chart_axis_number_formats(chart: &Node, chart_type: &str) -> Result<()> {

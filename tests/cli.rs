@@ -386,7 +386,12 @@ fn spec_exposes_chart_axis_title_font_properties() {
         .stdout(predicate::str::contains("yAxisTitleFontColor"))
         .stdout(predicate::str::contains("yAxisTitleFontName"))
         .stdout(predicate::str::contains("xAxisTitleFillColor"))
-        .stdout(predicate::str::contains("yAxisTitleFillColor"));
+        .stdout(predicate::str::contains("yAxisTitleFillColor"))
+        .stdout(predicate::str::contains("xAxisTitleLineColor"))
+        .stdout(predicate::str::contains("xAxisTitleLineWidth"))
+        .stdout(predicate::str::contains("xAxisTitleLineDash"))
+        .stdout(predicate::str::contains("xAxisTitleLineTransparency"))
+        .stdout(predicate::str::contains("yAxisTitleLineTransparency"));
 }
 
 #[test]
@@ -4692,10 +4697,20 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
             .set_color("#993366"),
     );
     chart.x_axis().set_name_format(
-        ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0")),
+        ChartFormat::new()
+            .set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0"))
+            .set_border(
+                ChartLine::new()
+                    .set_color("#123456")
+                    .set_width(1.5)
+                    .set_dash_type(ChartLineDashType::DashDot)
+                    .set_transparency(25),
+            ),
     );
     chart.y_axis().set_name_format(
-        ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#D0E0F0")),
+        ChartFormat::new()
+            .set_solid_fill(ChartSolidFill::new().set_color("#D0E0F0"))
+            .set_border(ChartLine::new().set_color("#654321").set_width(0.75)),
     );
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
@@ -4741,6 +4756,24 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
         source.contains("yAxisTitleFillColor=\"#D0E0F0\""),
         "{source}"
     );
+    assert!(
+        source.contains("xAxisTitleLineColor=\"#123456\""),
+        "{source}"
+    );
+    assert!(source.contains("xAxisTitleLineWidth={1.5}"), "{source}");
+    assert!(
+        source.contains("xAxisTitleLineDash=\"dashDot\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("xAxisTitleLineTransparency={25}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("yAxisTitleLineColor=\"#654321\""),
+        "{source}"
+    );
+    assert!(source.contains("yAxisTitleLineWidth={0.75}"), "{source}");
 
     let rebuilt_path = directory.path().join("rebuilt-scatter-titles.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -4763,6 +4796,9 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     assert!(xml.contains("sz=\"1200\" i=\"1\" u=\"sng\""), "{xml}");
     assert!(xml.contains("val=\"F0E0D0\""), "{xml}");
     assert!(xml.contains("val=\"D0E0F0\""), "{xml}");
+    assert!(xml.contains("w=\"19050\""), "{xml}");
+    assert!(xml.contains("prstDash val=\"dashDot\""), "{xml}");
+    assert!(xml.contains("alpha val=\"75000\""), "{xml}");
 }
 
 #[test]
@@ -4996,6 +5032,46 @@ fn rejects_non_rgb_axis_title_fill_colors() {
         .failure()
         .stderr(predicate::str::contains(
             "Chart.xAxisTitleFillColor must be an opaque RGB color",
+        ));
+}
+
+#[test]
+fn rejects_axis_title_line_transparency_without_line_color() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-title-line-transparency.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisTitle="X" xAxisTitleLineTransparency={25}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitleLineTransparency requires Chart.xAxisTitleLineColor",
+        ));
+}
+
+#[test]
+fn rejects_axis_title_outline_width_outside_quarter_points() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-title-line-width.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisTitle="X" xAxisTitleLineWidth={1.1}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitleLineWidth must be 0.25–1584 points in quarter-point increments",
         ));
 }
 

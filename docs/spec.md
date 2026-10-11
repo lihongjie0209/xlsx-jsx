@@ -269,8 +269,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.xAxisTitleFillColor` and `Chart.yAxisTitleFillColor` set a solid opaque
   RGB background on the matching axis-title shape via
   `ChartAxis::set_name_format()`. Colors use `#RRGGBB`; each property requires
-  its matching axis title. Reverse supports only this solid-fill subset and
-  rejects title outlines, effects, patterns, gradients, and transparency.
+  its matching axis title. `xAxisTitleLineColor`, `xAxisTitleLineWidth`,
+  `xAxisTitleLineDash`, and `xAxisTitleLineTransparency` (and their `yAxis`
+  counterparts) control the title-shape outline through `ChartLine`; width is
+  0.25–1584 points in quarter-point steps, dash uses the supported chart-line
+  presets, and transparency is 0–100 and requires an opaque RGB line color.
+  Reverse supports these RGB line properties and rejects effects,
+  patterns, gradients, theme/indexed colors, and unsupported line children.
 - `Chart.xAxisLabelFont*` and `Chart.yAxisLabelFont*` style axis tick labels,
   separately from axis titles. X means the category/date axis on category
   charts and the top/bottom value axis on scatter charts; Y means the value
