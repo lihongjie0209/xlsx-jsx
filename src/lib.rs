@@ -4329,6 +4329,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     "fontRotation",
                     "fontRightToLeft",
                     "fillColor",
+                    "fillHidden",
                     "fillTransparency",
                     "fillPattern",
                     "fillForegroundColor",
@@ -4356,6 +4357,15 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                         "ChartDataTable.{property} must be a boolean; use true/false or omit it"
                     )));
                 }
+            }
+            if child
+                .props
+                .get("fillHidden")
+                .is_some_and(|value| !value.is_boolean())
+            {
+                return Err(Error::Compile(
+                    "ChartDataTable.fillHidden must be a boolean; use true/false or omit it".into(),
+                ));
             }
             validate_chart_data_table_properties(&child)?;
             continue;
@@ -4510,6 +4520,26 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
 
 fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
     validate_chart_data_table_line_style(data_table)?;
+    let hidden_fill = data_table
+        .props
+        .get("fillHidden")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if hidden_fill
+        && [
+            "fillColor",
+            "fillTransparency",
+            "fillPattern",
+            "fillForegroundColor",
+            "fillBackgroundColor",
+        ]
+        .iter()
+        .any(|property| data_table.props.contains_key(*property))
+    {
+        return Err(Error::Compile(
+            "ChartDataTable.fillHidden cannot combine with fillColor, fillTransparency, fillPattern, fillForegroundColor, or fillBackgroundColor; remove the other fill properties".into(),
+        ));
+    }
     let has_pattern = data_table.props.contains_key("fillPattern");
     let has_pattern_color = data_table.props.contains_key("fillForegroundColor")
         || data_table.props.contains_key("fillBackgroundColor");

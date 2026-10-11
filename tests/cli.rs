@@ -30,6 +30,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("fillPattern"))
         .stdout(predicate::str::contains("fillForegroundColor"))
         .stdout(predicate::str::contains("fillBackgroundColor"))
+        .stdout(predicate::str::contains("fillHidden"))
         .stdout(predicate::str::contains("hyperlinkTooltip"))
         .stdout(predicate::str::contains("formulaResult"))
         .stdout(predicate::str::contains("fontColor"))
@@ -4460,6 +4461,70 @@ fn reverses_default_colors_for_external_chart_data_table_pattern_fill() {
         std::fs::read_to_string(&rebuilt_source_path).expect("rebuilt source exists"),
         source
     );
+}
+
+#[test]
+fn validate_rejects_hidden_chart_data_table_fill_conflicting_with_fill() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-hidden-data-table-fill.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series, ChartDataTable } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" /><ChartDataTable fillHidden={true} fillColor="#112233" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("fillHidden cannot combine"))
+        .stderr(predicate::str::contains("remove the other fill properties"));
+}
+
+#[test]
+fn reverses_and_rebuilds_external_chart_data_table_no_fill_with_outline() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-data-table-no-fill.xlsx");
+    let output_path = directory.path().join("external-data-table-no-fill.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-data-table-no-fill.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    let mut format = ChartFormat::new();
+    format.set_no_fill();
+    format.set_line(ChartLine::new().set_color("#4472C4"));
+    chart.set_data_table(&XlsxChartDataTable::new().set_format(&mut format));
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("fillHidden={true}"), "{source}");
+    assert!(source.contains("lineColor=\"#4472C4\""), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<a:noFill/>"), "{chart_xml}");
 }
 
 #[test]

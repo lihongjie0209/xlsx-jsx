@@ -206,7 +206,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   foreground color is supplied without a background, the pinned writer
   materializes its default white background; reverse emits that resulting
   `fillBackgroundColor="#FFFFFF"` explicitly. A pattern with neither color
-  remains colorless.
+  remains colorless. `fillHidden={true}` selects `ChartFormat::set_no_fill()`;
+  it cannot be combined with any solid or pattern fill property, but may be
+  combined with the outline properties. Reverse preserves an external
+  `a:noFill` fill marker without confusing it with a hidden outline.
   `lineColor`, `lineWidth`, `lineDash`,
   `lineTransparency`, and `lineHidden` describe the supported `ChartLine`
   outline; widths use 0.25–1584 points in quarter-point increments, dashes use

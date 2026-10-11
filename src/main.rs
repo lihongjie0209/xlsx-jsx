@@ -1527,6 +1527,16 @@ fn compile_chart(
                 format.set_pattern_fill(&pattern_fill);
                 shape_format = Some(format);
             }
+            if child
+                .props
+                .get("fillHidden")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                let mut format = shape_format.take().unwrap_or_default();
+                format.set_no_fill();
+                shape_format = Some(format);
+            }
             if let Some(mut format) = shape_format {
                 data_table = data_table.set_format(&mut format);
             }
@@ -6470,6 +6480,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(color) = &table.fill_color {
             let _ = write!(output, " fillColor={color:?}");
         }
+        if table.fill_hidden {
+            output.push_str(" fillHidden={true}");
+        }
         if let Some(pattern) = &table.fill_pattern {
             let _ = write!(output, " fillPattern={pattern:?}");
         }
@@ -11179,7 +11192,7 @@ fn parse_chart_xml(
                         && std::mem::replace(&mut data_table_sppr_seen, true)
                     {
                         return Err(Error::Reverse(format!(
-                            "chart part `{part}` repeats data-table shape properties; keep one solid or pattern fill"
+                            "chart part `{part}` repeats data-table shape properties; keep one no-fill, solid, or pattern fill"
                         )));
                     }
                     if stack.last().is_some_and(|ancestor| ancestor == "legend")
@@ -12076,9 +12089,10 @@ fn parse_chart_xml(
                         })?;
                         if table.fill_pattern.replace(pattern).is_some()
                             || table.fill_color.is_some()
+                            || table.fill_hidden
                         {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has duplicate or conflicting data-table fills; keep one solid or pattern fill"
+                                "chart part `{part}` has duplicate or conflicting data-table fills; keep one no-fill, solid, or pattern fill"
                             )));
                         }
                     }
@@ -15640,9 +15654,9 @@ fn parse_chart_xml(
                                 "chart part `{part}` has a data-table fill without a dTable"
                             ))
                         })?;
-                        if table.fill_pattern.is_some() {
+                        if table.fill_pattern.is_some() || table.fill_hidden {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` combines data-table solid and pattern fills; keep one fill representation"
+                                "chart part `{part}` combines data-table fill representations; keep one no-fill, solid, or pattern fill"
                             )));
                         }
                         if table.fill_color.replace(format!("#{color}")).is_some() {
@@ -16626,6 +16640,25 @@ fn parse_chart_xml(
                                 "chart part `{part}` repeats hidden marker line fill; keep one noFill"
                             )));
                         }
+                    }
+                    "noFill"
+                        if stack.last().is_some_and(|parent| parent == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "dTable") =>
+                    {
+                        let table = data_table.as_mut().ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has a data-table noFill without a dTable"
+                            ))
+                        })?;
+                        if table.fill_hidden
+                            || table.fill_color.is_some()
+                            || table.fill_pattern.is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or conflicting data-table fills; keep one no-fill, solid, or pattern fill"
+                            )));
+                        }
+                        table.fill_hidden = true;
                     }
                     "noFill" => {
                         if stack.iter().any(|ancestor| {
@@ -17845,7 +17878,8 @@ fn parse_chart_xml(
         }
     }
     let data_table_has_supported_shape = data_table.as_ref().is_some_and(|table| {
-        table.fill_color.is_some()
+        table.fill_hidden
+            || table.fill_color.is_some()
             || table.fill_pattern.is_some()
             || table.line_hidden
             || table
@@ -22701,6 +22735,7 @@ struct WorksheetChartDataTable {
     font_rotation: Option<i16>,
     font_right_to_left: Option<bool>,
     fill_color: Option<String>,
+    fill_hidden: bool,
     fill_transparency: Option<u8>,
     fill_pattern: Option<String>,
     fill_foreground_color: Option<String>,
