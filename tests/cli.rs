@@ -446,6 +446,17 @@ fn spec_exposes_chart_legend_shape_fill() {
 }
 
 #[test]
+fn spec_exposes_chart_area_outline_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("chartAreaLineColor"))
+        .stdout(predicate::str::contains("plotAreaLineTransparency"));
+}
+
+#[test]
 fn spec_exposes_trendline_equation_flags() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -1029,6 +1040,90 @@ fn reverses_external_chart_and_plot_area_rgb_fills_without_a_manifest() {
 }
 
 #[test]
+fn reverses_and_rebuilds_external_chart_area_outlines_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-area-outlines.xlsx");
+    let reversed = directory.path().join("chart-area-outlines.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_string(0, 0, "Quarter").unwrap();
+    worksheet.write_string(1, 0, "Q1").unwrap();
+    worksheet.write_string(2, 0, "Q2").unwrap();
+    worksheet.write_number(1, 1, 10).unwrap();
+    worksheet.write_number(2, 1, 20).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3");
+    chart.chart_area().set_format(
+        ChartFormat::new()
+            .set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0"))
+            .set_line(
+                ChartLine::new()
+                    .set_color("#123456")
+                    .set_width(1.5)
+                    .set_dash_type(ChartLineDashType::DashDot)
+                    .set_transparency(25),
+            ),
+    );
+    chart.plot_area().set_format(
+        ChartFormat::new().set_line(
+            ChartLine::new()
+                .set_color("#654321")
+                .set_width(0.75)
+                .set_dash_type(ChartLineDashType::Dash)
+                .set_transparency(10),
+        ),
+    );
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(
+        source.contains("chartAreaFillColor=\"#F0E0D0\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("chartAreaLineColor=\"#123456\""),
+        "{source}"
+    );
+    assert!(source.contains("chartAreaLineWidth={1.5}"), "{source}");
+    assert!(source.contains("chartAreaLineDash=\"dashDot\""), "{source}");
+    assert!(
+        source.contains("chartAreaLineTransparency={25}"),
+        "{source}"
+    );
+    assert!(source.contains("plotAreaLineColor=\"#654321\""), "{source}");
+    assert!(source.contains("plotAreaLineWidth={0.75}"), "{source}");
+    assert!(source.contains("plotAreaLineDash=\"dash\""), "{source}");
+    assert!(source.contains("plotAreaLineTransparency={10}"), "{source}");
+
+    let rebuilt = directory.path().join("chart-area-outlines-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
+    assert!(xml.contains("val=\"123456\""), "{xml}");
+    assert!(xml.contains("val=\"654321\""), "{xml}");
+    assert!(xml.contains("prstDash val=\"dashDot\""), "{xml}");
+    assert!(xml.contains("alpha val=\"75000\""), "{xml}");
+}
+
+#[test]
 fn reverses_external_plot_area_manual_layout_and_rebuilds_it() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("plot-area-layout.xlsx");
@@ -1427,6 +1522,26 @@ fn validate_rejects_legend_fill_with_schema_invalid_overlay_combination() {
         .failure()
         .stderr(predicate::str::contains(
             "cannot be combined with legendOverlay={true}",
+        ));
+}
+
+#[test]
+fn validate_rejects_chart_area_line_transparency_without_color() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-area-line-alpha.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" chartAreaLineTransparency={20}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.chartAreaLineTransparency requires Chart.chartAreaLineColor",
         ));
 }
 

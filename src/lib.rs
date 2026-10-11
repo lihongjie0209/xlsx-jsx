@@ -2006,7 +2006,15 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleFontUnderline",
             "titleFontRotation",
             "chartAreaFillColor",
+            "chartAreaLineColor",
+            "chartAreaLineWidth",
+            "chartAreaLineDash",
+            "chartAreaLineTransparency",
             "plotAreaFillColor",
+            "plotAreaLineColor",
+            "plotAreaLineWidth",
+            "plotAreaLineDash",
+            "plotAreaLineTransparency",
             "plotAreaLayout",
             "legendOverlay",
             "legendDeletedEntries",
@@ -2225,6 +2233,7 @@ fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_title_font_properties(chart)?;
     validate_chart_title_shape_format(chart)?;
     validate_chart_legend_shape_format(chart)?;
+    validate_chart_area_shape_formats(chart)?;
     validate_chart_axis_title_fonts(chart)?;
     validate_chart_axis_title_fill_colors(chart)?;
     validate_chart_axis_title_lines(chart)?;
@@ -2787,6 +2796,64 @@ fn validate_chart_legend_shape_format(chart: &Node) -> Result<()> {
         return Err(Error::Compile(
             "Chart.legendFillColor cannot be combined with legendOverlay={true}; rust_xlsxwriter emits schema-invalid legend child order for this combination, so remove legendFillColor or set legendOverlay={false}".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_chart_area_shape_formats(chart: &Node) -> Result<()> {
+    for prefix in ["chartAreaLine", "plotAreaLine"] {
+        let properties =
+            ["Color", "Width", "Dash", "Transparency"].map(|suffix| format!("{prefix}{suffix}"));
+        let [color_key, width_key, dash_key, transparency_key] = properties.as_slice() else {
+            unreachable!();
+        };
+        if let Some(value) = chart.props.get(color_key)
+            && !value.as_str().is_some_and(is_opaque_rgb_color)
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{color_key} must be an opaque RGB color like #336699"
+            )));
+        }
+        if let Some(value) = chart.props.get(width_key)
+            && !value.as_f64().is_some_and(|width| {
+                (0.25..=1584.0).contains(&width) && (width * 4.0).fract() == 0.0
+            })
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{width_key} must be 0.25–1584 points in quarter-point increments"
+            )));
+        }
+        if let Some(value) = chart.props.get(dash_key)
+            && !value.as_str().is_some_and(|dash| {
+                matches!(
+                    dash,
+                    "solid"
+                        | "roundDot"
+                        | "squareDot"
+                        | "dash"
+                        | "dashDot"
+                        | "longDash"
+                        | "longDashDot"
+                        | "longDashDotDot"
+                )
+            })
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{dash_key} must be a supported chart-line preset"
+            )));
+        }
+        if let Some(value) = chart.props.get(transparency_key) {
+            if value.as_u64().is_none_or(|transparency| transparency > 100) {
+                return Err(Error::Compile(format!(
+                    "Chart.{transparency_key} must be an integer from 0 to 100"
+                )));
+            }
+            if !chart.props.contains_key(color_key) {
+                return Err(Error::Compile(format!(
+                    "Chart.{transparency_key} requires Chart.{color_key}; add an RGB line color or remove transparency"
+                )));
+            }
+        }
     }
     Ok(())
 }

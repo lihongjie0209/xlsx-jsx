@@ -243,8 +243,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `ChartArea::set_format()` and `ChartPlotArea::set_format()`. Both properties
   are optional, independent, and valid for every chart type. Reverse preserves
   chart-space and plot-area fills without a manifest. Pattern/gradient fills,
-  transparency, theme/indexed colors, no-fill overrides, and area borders are
-  not represented and are rejected rather than discarded.
+  transparency, theme/indexed colors, no-fill overrides, and unsupported area
+  properties are rejected rather than discarded.
+- `Chart.chartAreaLineColor`, `chartAreaLineWidth`, `chartAreaLineDash`, and
+  `chartAreaLineTransparency` format the chart-area outline; the corresponding
+  `plotAreaLine*` properties format the plot-area outline. Colors are opaque
+  RGB, widths are 0.25–1584 points in quarter-point increments, dash values use
+  the supported chart-line presets, and integer transparency is 0–100 and
+  requires the matching line color. These can be used independently of each
+  area's fill. Reverse preserves one outline per area and rejects no-fill,
+  pattern/gradient, theme/indexed colors, effects, and unsupported line children.
 - `Chart.plotAreaLayout?: { x, y, width, height }` manually positions the plot
   area using x/y position fractions in `[0, 1]` and width/height fractions in
   `(0, 1]` of the chart dimensions.

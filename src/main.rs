@@ -720,14 +720,8 @@ fn compile_chart(
         .expect("validated Chart.cell");
     let (row, column) = parse_a1_cell_reference(cell).expect("validated Chart.cell");
     let mut chart = Chart::new(chart_type);
-    if let Some(color) = component
-        .props
-        .get("chartAreaFillColor")
-        .and_then(Value::as_str)
-    {
-        chart
-            .chart_area()
-            .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)));
+    if let Some(mut format) = chart_shape_format(component, "chartAreaFillColor", "chartAreaLine") {
+        chart.chart_area().set_format(&mut format);
     }
     if let Some(layout) = component.props.get("plotAreaLayout") {
         let fraction = |key: &str| layout[key].as_f64().expect("validated plotAreaLayout");
@@ -754,14 +748,8 @@ fn compile_chart(
             .legend()
             .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)));
     }
-    if let Some(color) = component
-        .props
-        .get("plotAreaFillColor")
-        .and_then(Value::as_str)
-    {
-        chart
-            .plot_area()
-            .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)));
+    if let Some(mut format) = chart_shape_format(component, "plotAreaFillColor", "plotAreaLine") {
+        chart.plot_area().set_format(&mut format);
     }
     if component.props.get("type").and_then(Value::as_str) == Some("stock") {
         chart.set_high_low_lines(true);
@@ -5629,6 +5617,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     }
     append_chart_title_font_properties(&mut properties, chart);
     append_chart_title_shape_properties(&mut properties, chart);
+    append_chart_area_line_properties(&mut properties, chart);
     if !chart.legend_deleted_entries.is_empty() {
         let entries = chart
             .legend_deleted_entries
@@ -5707,6 +5696,30 @@ fn append_chart_title_shape_properties(properties: &mut String, chart: &Workshee
     }
     if let Some(transparency) = style.transparency {
         let _ = write!(properties, " titleLineTransparency={{{transparency}}}");
+    }
+}
+
+fn append_chart_area_line_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (area, style) in [
+        ("chartArea", &chart.chart_area_line),
+        ("plotArea", &chart.plot_area_line),
+    ] {
+        let Some(style) = style else {
+            continue;
+        };
+        let prefix = format!("{area}Line");
+        if let Some(color) = &style.color {
+            let _ = write!(properties, " {prefix}Color={color:?}");
+        }
+        if let Some(width) = style.width {
+            let _ = write!(properties, " {prefix}Width={{{width}}}");
+        }
+        if let Some(dash) = style.dash {
+            let _ = write!(properties, " {prefix}Dash={dash:?}");
+        }
+        if let Some(transparency) = style.transparency {
+            let _ = write!(properties, " {prefix}Transparency={{{transparency}}}");
+        }
     }
 }
 
@@ -9158,6 +9171,8 @@ fn parse_chart_xml(
     let mut chart_style_seen = false;
     let mut chart_area_fill_color: Option<String> = None;
     let mut plot_area_fill_color: Option<String> = None;
+    let mut chart_area_line: Option<WorksheetChartGridlineStyle> = None;
+    let mut plot_area_line: Option<WorksheetChartGridlineStyle> = None;
     let mut plot_area_layout: Option<[f64; 4]> = None;
     let mut legend_layout: Option<[f64; 4]> = None;
     let mut title_layout: Option<[f64; 2]> = None;
@@ -9173,6 +9188,8 @@ fn parse_chart_xml(
     let mut manual_layout_values = [None; 4];
     let mut chart_area_sppr_seen = false;
     let mut plot_area_sppr_seen = false;
+    let mut chart_area_line_seen = false;
+    let mut plot_area_line_seen = false;
     let mut chart_area_fill_seen = false;
     let mut plot_area_fill_seen = false;
     let mut x_axis_crossing = None;
@@ -9712,9 +9729,13 @@ fn parse_chart_xml(
                     }
                 }
                 let area_sppr_context = chart_area_sppr_context(&stack);
-                if area_sppr_context.is_some() && !matches!(tag.as_str(), "solidFill" | "srgbClr") {
+                let supported_area_shape_tag = matches!(tag.as_str(), "solidFill" | "srgbClr")
+                    || tag == "ln" && stack.last().is_some_and(|parent| parent == "spPr")
+                    || matches!(tag.as_str(), "alpha" | "prstDash")
+                        && stack.iter().any(|ancestor| ancestor == "ln");
+                if area_sppr_context.is_some() && !supported_area_shape_tag {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported chart-area formatting `<{tag}>`; retain one opaque RGB solid fill and remove transparency, borders, and other effects"
+                        "chart part `{part}` has unsupported chart-area formatting `<{tag}>`; retain an opaque RGB solid fill and supported RGB outline, and remove other effects"
                     )));
                 }
                 if tag == "spPr" {
@@ -12825,7 +12846,10 @@ fn parse_chart_xml(
                             }
                         }
                     }
-                    "solidFill" if chart_area_sppr_context(&stack).is_some() => {
+                    "solidFill"
+                        if chart_area_sppr_context(&stack).is_some()
+                            && !stack.iter().any(|ancestor| ancestor == "ln") =>
+                    {
                         let area = chart_area_sppr_context(&stack).expect("area fill context");
                         let seen = if area == "chartArea" {
                             &mut chart_area_fill_seen
@@ -12954,7 +12978,8 @@ fn parse_chart_xml(
                     }
                     "srgbClr"
                         if stack.last().is_some_and(|parent| parent == "solidFill")
-                            && chart_area_sppr_context(&stack).is_some() =>
+                            && chart_area_sppr_context(&stack).is_some()
+                            && !stack.iter().any(|ancestor| ancestor == "ln") =>
                     {
                         let area = chart_area_sppr_context(&stack).expect("area fill context");
                         let color =
@@ -13318,6 +13343,20 @@ fn parse_chart_xml(
                                 chart_title_target,
                                 Some("title" | "xAxisTitle" | "yAxisTitle")
                             );
+                        let in_chart_area_shape = area_sppr_context.is_some()
+                            && stack.last().is_some_and(|parent| parent == "spPr");
+                        if in_chart_area_shape {
+                            let seen = if area_sppr_context == Some("chartArea") {
+                                &mut chart_area_line_seen
+                            } else {
+                                &mut plot_area_line_seen
+                            };
+                            if std::mem::replace(seen, true) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats {area_sppr_context:?} outline; keep one supported a:ln line"
+                                )));
+                            }
+                        }
                         let in_trendline_line = stack.iter().any(|item| item == "trendline")
                             && stack.iter().any(|item| item == "spPr")
                             && !stack.iter().any(|item| item == "trendlineLbl");
@@ -13330,6 +13369,7 @@ fn parse_chart_xml(
                                 && !in_error_bars
                                 && !in_trendline_line
                                 && !in_title_shape
+                                && !in_chart_area_shape
                                 && !stack.iter().any(|ancestor| ancestor == "ser"))
                         {
                             return Err(Error::Reverse(format!(
@@ -13340,9 +13380,11 @@ fn parse_chart_xml(
                         for attribute in event.attributes().with_checks(false) {
                             let attribute =
                                 attribute.map_err(|error| Error::Reverse(error.to_string()))?;
-                            if in_title_shape && attribute.key.local_name().as_ref() != b"w" {
+                            if (in_title_shape || in_chart_area_shape)
+                                && attribute.key.local_name().as_ref() != b"w"
+                            {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` has unsupported axis-title outline attribute `{}`; keep only reversible line width",
+                                    "chart part `{part}` has unsupported chart-shape outline attribute `{}`; keep only reversible line width",
                                     String::from_utf8_lossy(attribute.key.local_name().as_ref())
                                 )));
                             }
@@ -13363,7 +13405,7 @@ fn parse_chart_xml(
                                 );
                             }
                         }
-                        if in_title_shape {
+                        if in_title_shape || in_chart_area_shape {
                             let width = line_width
                                 .map(|value| {
                                     value.parse::<u32>().ok().filter(|width| {
@@ -13373,19 +13415,30 @@ fn parse_chart_xml(
                                     })
                                     .map(|width| f64::from(width) / 12700.0)
                                     .ok_or_else(|| Error::Reverse(format!(
-                                        "chart part `{part}` has an axis-title line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments"
+                                    "chart part `{part}` has a chart-shape line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments"
                                     )))
                                 })
                                 .transpose()?;
-                            let style = match chart_title_target {
-                                Some("title") => &mut title_line,
-                                Some("xAxisTitle") => &mut x_axis_title_line,
-                                Some("yAxisTitle") => &mut y_axis_title_line,
-                                _ => unreachable!(),
-                            }
-                            .get_or_insert_default();
-                            if let Some(width) = width {
-                                style.width = Some(width);
+                            if in_chart_area_shape {
+                                let style = if area_sppr_context == Some("chartArea") {
+                                    chart_area_line.get_or_insert_default()
+                                } else {
+                                    plot_area_line.get_or_insert_default()
+                                };
+                                if let Some(width) = width {
+                                    style.width = Some(width);
+                                }
+                            } else {
+                                let style = match chart_title_target {
+                                    Some("title") => &mut title_line,
+                                    Some("xAxisTitle") => &mut x_axis_title_line,
+                                    Some("yAxisTitle") => &mut y_axis_title_line,
+                                    _ => unreachable!(),
+                                }
+                                .get_or_insert_default();
+                                if let Some(width) = width {
+                                    style.width = Some(width);
+                                }
                             }
                         } else if in_gridlines {
                             let index = chart_gridline_index(
@@ -13586,6 +13639,17 @@ fn parse_chart_xml(
                                     "chart part `{part}` repeats a title outline color; keep one opaque RGB solid fill"
                                 )));
                             }
+                        } else if let Some(area) = area_sppr_context {
+                            let style = if area == "chartArea" {
+                                chart_area_line.get_or_insert_default()
+                            } else {
+                                plot_area_line.get_or_insert_default()
+                            };
+                            if style.color.replace(format!("#{color}")).is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats {area} outline color; keep one opaque RGB color"
+                                )));
+                            }
                         } else if stack.iter().any(|item| {
                             matches!(item.as_str(), "majorGridlines" | "minorGridlines")
                         }) {
@@ -13655,6 +13719,17 @@ fn parse_chart_xml(
                             {
                                 return Err(Error::Reverse(format!(
                                     "chart part `{part}` repeats title outline transparency; keep one alpha value"
+                                )));
+                            }
+                        } else if let Some(area) = area_sppr_context {
+                            let style = if area == "chartArea" {
+                                chart_area_line.get_or_insert_default()
+                            } else {
+                                plot_area_line.get_or_insert_default()
+                            };
+                            if style.transparency.replace(100 - alpha / 1000).is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats {area} outline transparency; keep one alpha value"
                                 )));
                             }
                         } else if stack.iter().any(|item| {
@@ -13748,6 +13823,17 @@ fn parse_chart_xml(
                             if target.get_or_insert_default().dash.replace(dash).is_some() {
                                 return Err(Error::Reverse(format!(
                                     "chart part `{part}` repeats the title outline dash; keep one preset dash"
+                                )));
+                            }
+                        } else if let Some(area) = area_sppr_context {
+                            let style = if area == "chartArea" {
+                                chart_area_line.get_or_insert_default()
+                            } else {
+                                plot_area_line.get_or_insert_default()
+                            };
+                            if style.dash.replace(dash).is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats {area} outline dash; keep one preset dash"
                                 )));
                             }
                         } else if stack.iter().any(|item| {
@@ -14708,22 +14794,44 @@ fn parse_chart_xml(
         // OOXML's absent holeSize default is 10; the pinned writer emits 50.
         hole_size = Some(10);
     }
-    for (area, present, color) in [
+    for (area, present, color, line) in [
         (
             "chartArea",
             chart_area_sppr_seen,
             chart_area_fill_color.as_ref(),
+            chart_area_line.as_ref(),
         ),
         (
             "plotArea",
             plot_area_sppr_seen,
             plot_area_fill_color.as_ref(),
+            plot_area_line.as_ref(),
         ),
     ] {
-        if present && color.is_none() {
+        if present && color.is_none() && line.is_none() {
             return Err(Error::Reverse(format!(
-                "chart part `{part}` has {area} shape properties without one opaque RGB solid fill; add the supported fill or remove the shape properties"
+                "chart part `{part}` has {area} shape properties without a supported opaque RGB fill or outline; add one or remove the shape properties"
             )));
+        }
+        if (area == "chartArea" && chart_area_line_seen
+            || area == "plotArea" && plot_area_line_seen)
+            && line.is_none()
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has an empty {area} outline that cannot be represented; add a supported line property or remove the outline"
+            )));
+        }
+        if let Some(line) = line {
+            if line.is_empty() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has an empty {area} outline that cannot be represented; add a supported line property or remove the outline"
+                )));
+            }
+            if line.transparency.is_some() && line.color.is_none() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has {area} outline transparency without RGB color; add a line color or remove alpha"
+                )));
+            }
         }
     }
     if data_table_sppr_seen
@@ -14910,7 +15018,9 @@ fn parse_chart_xml(
         y_axis_label_font,
         title_overlay,
         chart_area_fill_color,
+        chart_area_line,
         plot_area_fill_color,
+        plot_area_line,
         plot_area_layout,
         legend_layout,
         legend_fill_color,
@@ -19033,7 +19143,9 @@ struct WorksheetChart {
     y_axis_label_font: WorksheetChartAxisFont,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
+    chart_area_line: Option<WorksheetChartGridlineStyle>,
     plot_area_fill_color: Option<String>,
+    plot_area_line: Option<WorksheetChartGridlineStyle>,
     plot_area_layout: Option<[f64; 4]>,
     legend_layout: Option<[f64; 4]>,
     legend_fill_color: Option<String>,
