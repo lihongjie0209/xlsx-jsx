@@ -5091,6 +5091,7 @@ fn validate_image(image: &Node, index: usize) -> Result<()> {
             "height",
             "data",
             "altText",
+            "hyperlink",
             "decorative",
             "offsetX",
             "offsetY",
@@ -5143,6 +5144,7 @@ fn validate_image(image: &Node, index: usize) -> Result<()> {
             )));
         }
     }
+    validate_image_hyperlink(image)?;
     validate_image_data(image)?;
     if let Some(value) = image.props.get("altText") {
         let Some(value) = value.as_str() else {
@@ -5167,6 +5169,54 @@ fn validate_image(image: &Node, index: usize) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+fn validate_image_hyperlink(image: &Node) -> Result<()> {
+    let Some(value) = image.props.get("hyperlink") else {
+        return Ok(());
+    };
+    let Some(value) = value.as_str() else {
+        return Err(Error::Compile(
+            "Image.hyperlink must be a string URL; use https://…, mailto:…, file://…, an absolute URI, or internal:Sheet1!A1".into(),
+        ));
+    };
+    if !is_supported_image_hyperlink(value) {
+        return Err(Error::Compile(
+            "Image.hyperlink must be a supported absolute URI or internal workbook target no longer than 2080 characters; use https://…, mailto:…, file://…, or internal:Sheet1!A1".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Returns whether an image hyperlink can be represented by the XLSX writer and reverse reader.
+pub fn is_supported_image_hyperlink(value: &str) -> bool {
+    if value.is_empty()
+        || value.chars().count() > 2080
+        || !value.chars().all(is_valid_xml_character)
+    {
+        return false;
+    }
+    if let Some(target) = value.strip_prefix("internal:") {
+        return target
+            .split_once('!')
+            .is_some_and(|(sheet, location)| !sheet.is_empty() && !location.is_empty());
+    }
+    if let Some(address) = value.strip_prefix("mailto:") {
+        return !address.is_empty();
+    }
+    if let Some(path) = value.strip_prefix("file://") {
+        return !path.is_empty();
+    }
+    value.split_once("://").is_some_and(|(scheme, target)| {
+        !target.is_empty()
+            && scheme
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic)
+            && scheme
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+    })
 }
 
 fn validate_image_data(image: &Node) -> Result<()> {

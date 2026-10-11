@@ -7,7 +7,7 @@ use rust_xlsxwriter::{
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
     ChartLineDashType, ChartMarker, ChartMarkerType, ChartRange, ChartSolidFill, ChartTrendline,
-    ChartTrendlineType, ChartType, Workbook as XlsxWorkbook,
+    ChartTrendlineType, ChartType, Image as XlsxImage, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -122,6 +122,149 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command.args(["validate", "examples/basic.tsx"]);
     command.assert().success().stdout("valid\n");
+}
+
+#[test]
+fn reverses_external_image_hyperlink_without_a_manifest() {
+    const IMAGE_BYTES: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x00\x00\x00\x00\x3a\x7e\x9a\xf5\x00\x00\x00\x0aIDAT\x78\x9c\x63\x60\x00\x02\x00\x01H\x2a\xa4\x00\x00\x00\x00IEND\xaeB`\x82";
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-image-link.xlsx");
+    let image = XlsxImage::new_from_buffer(IMAGE_BYTES)
+        .expect("PNG bytes are valid")
+        .set_width(96)
+        .set_height(48)
+        .set_url("https://example.com/image?size=large#preview")
+        .expect("image hyperlink is valid");
+    let internal_image = XlsxImage::new_from_buffer(IMAGE_BYTES)
+        .expect("PNG bytes are valid")
+        .set_width(1)
+        .set_height(1)
+        .set_url("internal:Images!A1")
+        .expect("internal image hyperlink is valid");
+    let mut workbook = XlsxWorkbook::new();
+    workbook
+        .add_worksheet()
+        .set_name("Images")
+        .expect("worksheet name is valid")
+        .insert_image(0, 0, &image)
+        .expect("image inserts");
+    workbook
+        .worksheet_from_name("Images")
+        .expect("worksheet exists")
+        .insert_image(0, 2, &internal_image)
+        .expect("internal-linked image inserts");
+    workbook.save(&workbook_path).expect("workbook saves");
+
+    let reversed = directory.path().join("external-image-link.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(
+        source.contains("hyperlink=\"https://example.com/image?size=large#preview\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("hyperlink=\"internal:Images!A1\""),
+        "{source}"
+    );
+
+    let rebuilt = directory.path().join("external-image-link-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let roundtrip = directory.path().join("external-image-link-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(rebuilt)
+        .args(["-o"])
+        .arg(&roundtrip)
+        .assert()
+        .success();
+    let roundtrip_source = std::fs::read_to_string(roundtrip).expect("second reverse exists");
+    assert!(
+        roundtrip_source.contains("hyperlink=\"https://example.com/image?size=large#preview\""),
+        "{roundtrip_source}"
+    );
+    assert!(
+        roundtrip_source.contains("hyperlink=\"internal:Images!A1\""),
+        "{roundtrip_source}"
+    );
+
+    let source_relationships =
+        read_zip_part_for_test(&workbook_path, "xl/drawings/_rels/drawing1.xml.rels");
+    assert!(source_relationships.contains("https://example.com/image?size=large#preview"));
+    rewrite_part(
+        &workbook_path,
+        "xl/drawings/_rels/drawing1.xml.rels",
+        |xml| {
+            xml.replace(
+                "https://example.com/image?size=large#preview",
+                "not-an-excel-hyperlink",
+            )
+        },
+    );
+    let invalid_reverse = directory.path().join("invalid-image-target.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook_path)
+        .args(["-o"])
+        .arg(invalid_reverse)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported hyperlink target"))
+        .stderr(predicate::str::contains("internal:Sheet!Cell"));
+}
+
+#[test]
+fn validates_image_hyperlink_property() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("image-hyperlink.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} height={1} data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" hyperlink="mailto:reports@example.com" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .success();
+}
+
+#[test]
+fn rejects_image_hyperlinks_without_an_excel_compatible_scheme() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-image-hyperlink.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} height={1} data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" hyperlink="reports@example.com" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Image.hyperlink"))
+        .stderr(predicate::str::contains("https://"))
+        .stderr(predicate::str::contains("mailto:"));
 }
 
 #[test]
@@ -344,6 +487,7 @@ fn spec_exposes_embedded_image_component_properties() {
         .stdout(predicate::str::contains("data:image/(png|jpeg|gif|bmp)"))
         .stdout(predicate::str::contains("decorative"))
         .stdout(predicate::str::contains("offsetX"))
+        .stdout(predicate::str::contains("hyperlink"))
         .stdout(predicate::str::contains("moveAndSize"));
 }
 

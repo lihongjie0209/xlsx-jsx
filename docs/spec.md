@@ -33,6 +33,13 @@ relationships and drawing anchors without relying on a private manifest.
 - `altText?: string` is limited to 255 valid XML characters.
   `decorative?: boolean` marks an image as decorative. Both are preserved in
   the drawing's non-visual picture properties.
+- `hyperlink?: string` makes the picture clickable. It accepts external URI
+  schemes supported by Excel (`https:`, `http:`, `ftp:`, `mailto:`, `file:`, or
+  another absolute URI containing `://`) and internal workbook targets in the
+  form `internal:Sheet1!A1`; it is limited to 2080 characters. Reverse resolves
+  the picture's drawing relationship and preserves the original target without
+  a private manifest. Unsupported or malformed relationship metadata is
+  rejected.
 - `offsetX?: integer` and `offsetY?: integer` position the image from the
   top-left of `cell`, in pixels. They default to zero and must be less than
   the default cell dimensions (64×20 pixels) so the anchor remains
@@ -44,7 +51,7 @@ relationships and drawing anchors without relying on a private manifest.
 - Images are direct worksheet children before rows. Reverse supports the
   writer's two-cell anchors on the default 64×20-pixel row/column grid, zero
   start offsets, whole-pixel dimensions, and default rectangular stretch
-  geometry. Unsupported crops, hyperlinks, custom transforms/effects, drawing
+  geometry. Unsupported crops, custom transforms/effects, drawing
   shapes, or geometry that cannot be represented exactly fail with guidance.
 - Data URIs make reverse output self-contained and recompilable; authored file
   paths and remote fetches are not part of this interface.

@@ -2393,6 +2393,13 @@ fn compile_image(
     if let Some(alt_text) = component.props.get("altText").and_then(Value::as_str) {
         image = image.set_alt_text(alt_text);
     }
+    if let Some(hyperlink) = component.props.get("hyperlink").and_then(Value::as_str) {
+        image = image.set_url(hyperlink).map_err(|error| {
+            Error::Compile(format!(
+                "Image.hyperlink `{hyperlink}` is not supported by rust_xlsxwriter: {error}; use an Excel-compatible URI or internal:Sheet!Cell target"
+            ))
+        })?;
+    }
     if component.props.get("decorative").and_then(Value::as_bool) == Some(true) {
         image = image.set_decorative(true);
     }
@@ -5926,6 +5933,9 @@ fn render_image(output: &mut String, image: &WorksheetImage) {
     if let Some(alt_text) = &image.alt_text {
         let _ = write!(output, " altText={{{alt_text:?}}}");
     }
+    if let Some(hyperlink) = &image.hyperlink {
+        let _ = write!(output, " hyperlink={hyperlink:?}");
+    }
     if image.decorative {
         output.push_str(" decorative={true}");
     }
@@ -7413,7 +7423,7 @@ fn audit_reverse_subset(
         }
         let mut used_drawing_relationships = std::collections::HashSet::new();
         for anchor in drawing_anchors {
-            let drawing_target = drawing_relationships.get(&anchor.relationship_id).ok_or_else(|| Error::Reverse(format!(
+            let drawing_relationship = drawing_relationships.get(&anchor.relationship_id).ok_or_else(|| Error::Reverse(format!(
                 "drawing `{drawing_path}` object references missing relationship `{}`; repair its drawing relationships",
                 anchor.relationship_id
             )))?;
@@ -7427,7 +7437,15 @@ fn audit_reverse_subset(
             }
             match anchor.kind {
                 DrawingObjectKind::Chart => {
-                    let chart_path = resolve_opc_target(&drawing_path, drawing_target)?;
+                    if !drawing_relationship.relationship_type.ends_with("/chart")
+                        || drawing_relationship.target_mode.is_some()
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart drawing `{drawing_path}` references a non-internal chart relationship; repair its relationship type and target mode"
+                        )));
+                    }
+                    let chart_path =
+                        resolve_opc_target(&drawing_path, &drawing_relationship.target)?;
                     if !referenced_chart_parts.insert(chart_path.clone()) {
                         return Err(Error::Reverse(format!(
                             "chart part `{chart_path}` is referenced more than once; give each chart one drawing anchor"
@@ -7447,10 +7465,56 @@ fn audit_reverse_subset(
                         .push(WorksheetDrawingOrder::Chart(index));
                 }
                 DrawingObjectKind::Image => {
-                    let image_path = resolve_opc_target(&drawing_path, drawing_target)?;
+                    if !drawing_relationship.relationship_type.ends_with("/image")
+                        || drawing_relationship.target_mode.is_some()
+                    {
+                        return Err(Error::Reverse(format!(
+                            "picture in `{drawing_path}` references a non-internal image relationship; repair its relationship type and target mode"
+                        )));
+                    }
+                    let hyperlink = if let Some(relationship_id) = &anchor.hyperlink_relationship_id
+                    {
+                        let relationship = drawing_relationships.get(relationship_id).ok_or_else(|| Error::Reverse(format!(
+                            "picture in `{drawing_path}` references missing hyperlink relationship `{relationship_id}`; repair its drawing relationships"
+                        )))?;
+                        if !relationship.relationship_type.ends_with("/hyperlink") {
+                            return Err(Error::Reverse(format!(
+                                "picture in `{drawing_path}` hyperlink relationship `{relationship_id}` has the wrong relationship type; use a hyperlink relationship"
+                            )));
+                        }
+                        used_drawing_relationships.insert(relationship_id.clone());
+                        let target = match relationship.target_mode.as_deref() {
+                            Some("External") => relationship.target.clone(),
+                            None if relationship.target.starts_with('#') => {
+                                format!("internal:{}", relationship.target.trim_start_matches('#'))
+                            }
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "picture in `{drawing_path}` uses an unsupported hyperlink target mode or target `{}`; use an external Excel-compatible URI or an internal workbook location",
+                                    relationship.target
+                                )));
+                            }
+                        };
+                        if !xlsx_jsx::is_supported_image_hyperlink(&target) {
+                            return Err(Error::Reverse(format!(
+                                "picture in `{drawing_path}` has unsupported hyperlink target `{target}`; use an Excel-compatible absolute URI or internal:Sheet!Cell"
+                            )));
+                        }
+                        Some(target)
+                    } else {
+                        None
+                    };
+                    let image_path =
+                        resolve_opc_target(&drawing_path, &drawing_relationship.target)?;
                     referenced_media_parts.insert(image_path.clone());
                     let image_bytes = read_zip_bytes(&mut archive, &image_path)?;
-                    let image = parse_drawing_image(&image_bytes, &image_path, anchor, metadata)?;
+                    let image = parse_drawing_image(
+                        &image_bytes,
+                        &image_path,
+                        anchor,
+                        metadata,
+                        hyperlink,
+                    )?;
                     let index = metadata.images.len();
                     metadata.images.push(image);
                     metadata
@@ -8326,7 +8390,17 @@ fn opc_relationship_part(source_part: &str) -> String {
     }
 }
 
-fn parse_generic_relationships(xml: &str, part: &str) -> xlsx_jsx::Result<HashMap<String, String>> {
+#[derive(Clone)]
+struct DrawingRelationship {
+    target: String,
+    relationship_type: String,
+    target_mode: Option<String>,
+}
+
+fn parse_generic_relationships(
+    xml: &str,
+    part: &str,
+) -> xlsx_jsx::Result<HashMap<String, DrawingRelationship>> {
     let mut reader = XmlReader::from_str(xml);
     let mut relationships = HashMap::new();
     loop {
@@ -8337,6 +8411,7 @@ fn parse_generic_relationships(xml: &str, part: &str) -> xlsx_jsx::Result<HashMa
                 let mut id = None;
                 let mut target = None;
                 let mut relation_type = None;
+                let mut target_mode = None;
                 for attribute in event.attributes().with_checks(false) {
                     let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
                     let value = attribute
@@ -8347,11 +8422,7 @@ fn parse_generic_relationships(xml: &str, part: &str) -> xlsx_jsx::Result<HashMa
                         b"Id" => id = Some(value),
                         b"Target" => target = Some(value),
                         b"Type" => relation_type = Some(value),
-                        b"TargetMode" => {
-                            return Err(Error::Reverse(format!(
-                                "relationship in `{part}` uses TargetMode; chart drawings must target internal package parts"
-                            )));
-                        }
+                        b"TargetMode" => target_mode = Some(value),
                         key => {
                             return Err(Error::Reverse(format!(
                                 "relationship in `{part}` has unsupported attribute `{}`; remove it or add explicit support",
@@ -8366,15 +8437,35 @@ fn parse_generic_relationships(xml: &str, part: &str) -> xlsx_jsx::Result<HashMa
                 let target = target.ok_or_else(|| {
                     Error::Reverse(format!("relationship `{id}` in `{part}` is missing Target"))
                 })?;
-                if !relation_type
-                    .as_deref()
-                    .is_some_and(|value| value.ends_with("/chart") || value.ends_with("/image"))
-                {
+                let relation_type = relation_type.ok_or_else(|| {
+                    Error::Reverse(format!("relationship `{id}` in `{part}` is missing Type"))
+                })?;
+                let supported_type = relation_type.ends_with("/chart")
+                    || relation_type.ends_with("/image")
+                    || relation_type.ends_with("/hyperlink");
+                let supported_mode = matches!(
+                    (
+                        relation_type.ends_with("/hyperlink"),
+                        target_mode.as_deref(),
+                    ),
+                    (true, None | Some("External")) | (false, None)
+                );
+                if !supported_type || !supported_mode {
                     return Err(Error::Reverse(format!(
-                        "drawing relationship `{id}` in `{part}` is not a chart or image relationship; only charts and embedded raster images are supported"
+                        "drawing relationship `{id}` in `{part}` has unsupported type `{relation_type}` or target mode; only internal chart/image and external/internal hyperlink relationships are supported"
                     )));
                 }
-                if relationships.insert(id.clone(), target).is_some() {
+                if relationships
+                    .insert(
+                        id.clone(),
+                        DrawingRelationship {
+                            target,
+                            relationship_type: relation_type,
+                            target_mode,
+                        },
+                    )
+                    .is_some()
+                {
                     return Err(Error::Reverse(format!(
                         "relationship part `{part}` repeats Id `{id}`; repair its relationship IDs"
                     )));
@@ -8405,6 +8496,7 @@ struct ChartAnchor {
     kind: DrawingObjectKind,
     edit_as: Option<String>,
     relationship_id: String,
+    hyperlink_relationship_id: Option<String>,
     name: String,
     alt_text: Option<String>,
     object_id: Option<u32>,
@@ -14442,6 +14534,7 @@ fn parse_drawing_image(
     part: &str,
     anchor: ChartAnchor,
     metadata: &WorksheetMetadata,
+    hyperlink: Option<String>,
 ) -> xlsx_jsx::Result<WorksheetImage> {
     let movement = match anchor.edit_as.as_deref() {
         None => Some("moveAndSize"),
@@ -14508,6 +14601,7 @@ fn parse_drawing_image(
         offset_y,
         movement,
         alt_text: anchor.alt_text.filter(|text| !text.is_empty()),
+        hyperlink,
         decorative: anchor.decorative,
     })
 }
@@ -15939,6 +16033,37 @@ fn parse_chart_drawing(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<ChartAncho
                             }
                         }
                     }
+                    b"hlinkClick" => {
+                        if let Some(anchor) = current.as_mut() {
+                            if anchor.kind != DrawingObjectKind::Image
+                                || anchor.hyperlink_relationship_id.is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "drawing `{part}` has a repeated or non-picture hlinkClick; use at most one image hyperlink"
+                                )));
+                            }
+                            for attribute in event.attributes().with_checks(false) {
+                                let attribute =
+                                    attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                                if attribute.key.local_name().as_ref() == b"id" {
+                                    anchor.hyperlink_relationship_id = Some(
+                                        attribute
+                                            .decoded_and_normalized_value(
+                                                XmlVersion::Implicit1_0,
+                                                reader.decoder(),
+                                            )
+                                            .map_err(|error| Error::Reverse(error.to_string()))?
+                                            .into_owned(),
+                                    );
+                                }
+                            }
+                            if anchor.hyperlink_relationship_id.is_none() {
+                                return Err(Error::Reverse(format!(
+                                    "picture in `{part}` has hlinkClick without r:id; repair the drawing relationship reference"
+                                )));
+                            }
+                        }
+                    }
                     b"xfrm" => in_transform = true,
                     b"off" | b"ext" if in_transform => {
                         if let Some(anchor) = current.as_mut() {
@@ -16114,6 +16239,7 @@ fn audit_chart_drawing_element(
         "extLst",
         "creationId",
         "decorative",
+        "hlinkClick",
     ];
     if !ALLOWED.contains(&tag) {
         return Err(Error::Reverse(format!(
@@ -16144,7 +16270,7 @@ fn audit_chart_drawing_element(
                 "{FF2B5EF4-FFF2-40B4-BE49-F238E27FC236}" | "{C183D7F6-B498-43B3-948B-1728B52AA6E4}"
             ),
             ("creationId", "id") => value == "{00000000-0008-0000-0000-000002000000}",
-            ("blip", "embed") | ("chart", "id") => !value.is_empty(),
+            ("blip", "embed") | ("chart" | "hlinkClick", "id") => !value.is_empty(),
             ("graphicData", "uri") => {
                 value == "http://schemas.openxmlformats.org/drawingml/2006/chart"
             }
@@ -18468,6 +18594,7 @@ struct WorksheetImage {
     offset_y: u32,
     movement: Option<&'static str>,
     alt_text: Option<String>,
+    hyperlink: Option<String>,
     decorative: bool,
 }
 

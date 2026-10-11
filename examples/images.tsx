@@ -13,6 +13,6 @@ export default <Workbook>
     <Chart type="column" cell="D2" width={240} height={120}>
       <Series values="Data!$B$2:$B$3" categories="Data!$A$2:$A$3" />
     </Chart>
-    <Image cell="M1" width={48} height={24} offsetX={11} offsetY={4} data={logo} movement="fixed" />
+    <Image cell="M1" width={48} height={24} offsetX={11} offsetY={4} data={logo} movement="fixed" hyperlink="https://example.com/" />
   </Worksheet>
 </Workbook>;

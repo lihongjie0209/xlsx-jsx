@@ -474,6 +474,7 @@
             "fontSize": { "type": "number", "minimum": 1, "maximum": 409 },
             "fontFamily": { "type": "integer", "minimum": 0, "maximum": 255 },
             "altText": { "type": "string", "maxLength": 255 },
+            "hyperlink": { "type": "string", "minLength": 1, "maxLength": 2080 },
             "movement": { "const": "moveAndSizeAfter" }
           },
           "additionalProperties": false
