@@ -15,7 +15,7 @@ export default <Workbook>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" />
       <ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={true} showLegendKeys={true} />
     </Chart>
-    <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true} categoryAxisLabelInterval={2} categoryAxisTickInterval={2}>
+    <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true} categoryAxisLabelInterval={2} categoryAxisTickInterval={2} dropLines={true}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" markerType="circle" markerSize={8} lineColor="#336699" lineWidth={1.5} lineDash="dashDot" smooth={true} showValue={true} showLegendKey={true} showLeaderLines={true} labelSeparator="semicolon">
         <Trendline type="linear" forward={2} />
       </Series>
@@ -28,7 +28,7 @@ export default <Workbook>
     <Chart type="pie" cell="K20" width={480} height={288} firstSliceAngle={210}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" pointColors={{0: "#4472C4", 2: "#ED7D31"}} showPercentage={true} />
     </Chart>
-    <Chart type="area" cell="D38" width={480} height={288}>
+    <Chart type="area" cell="D38" width={480} height={288} dropLines={true}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue area" />
     </Chart>
     <Chart type="areaStacked" cell="K38" width={480} height={288}>

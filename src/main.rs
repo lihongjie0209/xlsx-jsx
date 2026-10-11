@@ -748,6 +748,9 @@ fn compile_chart(
     configure_chart_axis_log_base(&mut chart, component);
     configure_chart_value_axis_reversed(&mut chart, component);
     configure_chart_value_axis_display_units(&mut chart, component);
+    if component.props.get("dropLines").and_then(Value::as_bool) == Some(true) {
+        chart.set_drop_lines(true);
+    }
     configure_chart_category_axis_settings(&mut chart, component)?;
     configure_chart_axis_units(&mut chart, component);
     configure_chart_gridlines(&mut chart, component);
@@ -4517,6 +4520,9 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if chart.value_axis_display_unit_label == Some(false) {
         properties.push_str(" valueAxisDisplayUnitLabel={false}");
     }
+    if chart.drop_lines == Some(true) {
+        properties.push_str(" dropLines={true}");
+    }
     if chart.category_axis_on_tick_marks == Some(true) {
         properties.push_str(" categoryAxisOnTickMarks={true}");
     }
@@ -7338,6 +7344,7 @@ fn parse_chart_xml(
         "scatterStyle",
         "smooth",
         "invertIfNegative",
+        "dropLines",
         "trendline",
         "trendlineType",
         "dispEq",
@@ -7497,6 +7504,8 @@ fn parse_chart_xml(
     let mut value_axis_display_unit_label_seen = false;
     let mut value_axis_display_unit_label = false;
     let mut display_units_seen = false;
+    let mut drop_lines = false;
+    let mut drop_lines_seen = false;
     let mut current_axis_position: Option<&'static str> = None;
     let mut horizontal_major_gridlines = false;
     let mut vertical_major_gridlines = false;
@@ -7594,6 +7603,11 @@ fn parse_chart_xml(
                 if stack.iter().any(|ancestor| ancestor == "dispUnitsLbl") && tag != "layout" {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has custom display-unit label text or formatting; retain only the writer's default label layout"
+                    )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "dropLines") {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has custom drop-line formatting or content; remove spPr and keep only an empty dropLines element"
                     )));
                 }
                 if stack.last().is_some_and(|parent| parent == "dispUnits")
@@ -7949,6 +7963,19 @@ fn parse_chart_xml(
                         }
                         value_axis_display_unit_label_seen = true;
                         value_axis_display_unit_label = true;
+                    }
+                    "dropLines" => {
+                        if !matches!(
+                            stack.last().map(String::as_str),
+                            Some("areaChart" | "lineChart" | "stockChart")
+                        ) || drop_lines_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or misplaced dropLines; keep one dropLines element on an area, line, or stock chart group"
+                            )));
+                        }
+                        drop_lines_seen = true;
+                        drop_lines = true;
                     }
                     "layout" if stack.last().is_some_and(|parent| parent == "dispUnitsLbl") => {
                         if !is_empty {
@@ -10031,6 +10058,22 @@ fn parse_chart_xml(
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
+    if drop_lines
+        && !matches!(
+            chart_type,
+            "area"
+                | "areaStacked"
+                | "areaPercentStacked"
+                | "line"
+                | "lineStacked"
+                | "linePercentStacked"
+                | "stock"
+        )
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` enables dropLines on `{chart_type}`; use area, line, or stock charts, or remove dropLines"
+        )));
+    }
     if display_units_seen && !value_axis_display_unit_seen {
         return Err(Error::Reverse(format!(
             "chart part `{part}` has dispUnits without a builtInUnit; add a supported built-in unit or remove dispUnits"
@@ -10372,6 +10415,7 @@ fn parse_chart_xml(
         value_axis_display_unit_label: value_axis_display_unit
             .map(|_| value_axis_display_unit_label)
             .filter(|visible| !visible),
+        drop_lines: drop_lines.then_some(true),
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
             != default_chart_major_gridlines(chart_type, true))
         .then_some(horizontal_major_gridlines),
@@ -13816,6 +13860,7 @@ struct WorksheetChart {
     y_axis_minor_unit: Option<f64>,
     value_axis_display_unit: Option<&'static str>,
     value_axis_display_unit_label: Option<bool>,
+    drop_lines: Option<bool>,
     horizontal_axis_major_gridlines: Option<bool>,
     horizontal_axis_minor_gridlines: Option<bool>,
     vertical_axis_major_gridlines: Option<bool>,

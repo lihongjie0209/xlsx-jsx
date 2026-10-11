@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.69
+Version: 1.70
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -194,6 +194,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   pie, or doughnut). Reverse preserves non-default units and hidden labels,
   folds visible labels to the default, and rejects custom display-unit labels
   or layouts.
+- `Chart.dropLines?: boolean` enables vertical projection lines from data points
+  to the category axis on area, line, and stock charts. Omission or `false`
+  keeps drop lines disabled; reverse preserves enabled lines and omits the
+  default. Bar, column, radar, scatter, pie, and doughnut charts reject
+  `true`. Custom drop-line formatting is not represented and is rejected.
 - `Chart.yAxisLogBase?: integer` enables a logarithmic value axis with a base
   from 2 through 1000. Omission leaves the value axis linear. This property is
   available only when the chart has one unambiguous value axis; scatter, pie,

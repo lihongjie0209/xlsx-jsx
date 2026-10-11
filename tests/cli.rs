@@ -142,6 +142,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisLogBase"))
         .stdout(predicate::str::contains("valueAxisDisplayUnit"))
         .stdout(predicate::str::contains("valueAxisDisplayUnitLabel"))
+        .stdout(predicate::str::contains("dropLines"))
         .stdout(predicate::str::contains("valueAxisReversed"))
         .stdout(predicate::str::contains("categoryAxisLabelInterval"))
         .stdout(predicate::str::contains("categoryAxisTickInterval"))
@@ -679,7 +680,7 @@ fn reverses_external_stock_chart_without_a_manifest() {
             .set_format(ChartLine::new().set_hidden(true))
             .set_marker(ChartMarker::new().set_none());
     }
-    chart.set_high_low_lines(true);
+    chart.set_high_low_lines(true).set_drop_lines(true);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
 
@@ -693,6 +694,7 @@ fn reverses_external_stock_chart_without_a_manifest() {
         .success();
     let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
     assert!(source.contains("<Chart type=\"stock\""), "{source}");
+    assert!(source.contains("dropLines={true}"), "{source}");
     assert_eq!(source.matches("<Series ").count(), 3, "{source}");
 }
 
@@ -2796,6 +2798,92 @@ fn reverses_external_value_axis_display_units_without_a_manifest() {
     assert!(!xml.contains("<c:dispUnitsLbl"));
     let default_label_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
     assert!(default_label_xml.contains("<c:dispUnitsLbl><c:layout/></c:dispUnitsLbl>"));
+}
+
+#[test]
+fn reverses_external_chart_drop_lines_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-drop-lines.xlsx");
+    let output_path = directory.path().join("external-chart-drop-lines.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-chart-drop-lines.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.set_drop_lines(true);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("dropLines={true}"));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:dropLines/>"));
+}
+
+#[test]
+fn rejects_drop_lines_on_bar_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("bar-drop-lines.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="bar" cell="D2" dropLines={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("dropLines is supported only"))
+        .stderr(predicate::str::contains("area, line, and stock"));
+}
+
+#[test]
+fn rejects_custom_external_chart_drop_line_formatting() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("custom-chart-drop-lines.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.set_drop_lines_format(ChartLine::new().set_color("#4472C4"));
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(directory.path().join("custom-chart-drop-lines.tsx"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("custom drop-line formatting"))
+        .stderr(predicate::str::contains("remove spPr"));
 }
 
 #[test]

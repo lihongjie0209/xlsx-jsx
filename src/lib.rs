@@ -1901,6 +1901,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisLogBase",
             "valueAxisDisplayUnit",
             "valueAxisDisplayUnitLabel",
+            "dropLines",
             "valueAxisReversed",
             "categoryAxisLabelInterval",
             "categoryAxisTickInterval",
@@ -1950,6 +1951,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     validate_chart_slice_angle(chart, chart_type)?;
     validate_chart_visual_properties(chart, chart_type)?;
     validate_chart_value_axis_display_units(chart, chart_type)?;
+    validate_chart_drop_lines(chart, chart_type)?;
     let cell = chart
         .props
         .get("cell")
@@ -2263,6 +2265,35 @@ fn is_chart_value_axis_display_unit(value: &str) -> bool {
             | "billions"
             | "trillions"
     )
+}
+
+fn validate_chart_drop_lines(chart: &Node, chart_type: &str) -> Result<()> {
+    let Some(enabled) = chart.props.get("dropLines") else {
+        return Ok(());
+    };
+    let Some(enabled) = enabled.as_bool() else {
+        return Err(Error::Compile(
+            "Chart.dropLines must be a boolean; use true/false or omit it for the default".into(),
+        ));
+    };
+    if !enabled {
+        return Ok(());
+    }
+    if !matches!(
+        chart_type,
+        "area"
+            | "areaStacked"
+            | "areaPercentStacked"
+            | "line"
+            | "lineStacked"
+            | "linePercentStacked"
+            | "stock"
+    ) {
+        return Err(Error::Compile(format!(
+            "Chart.dropLines is supported only for area, line, and stock charts, not `{chart_type}`; remove it or choose one of those chart types"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_chart_category_axis_intervals(chart: &Node, chart_type: &str) -> Result<()> {

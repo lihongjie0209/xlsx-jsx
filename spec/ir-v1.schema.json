@@ -519,6 +519,7 @@
             "yAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "valueAxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
             "valueAxisDisplayUnitLabel": { "type": "boolean" },
+            "dropLines": { "type": "boolean" },
             "horizontalAxisMajorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
             "horizontalAxisMinorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
             "verticalAxisMajorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
@@ -547,6 +548,10 @@
         }
       },
       "allOf": [
+        {
+          "if": { "properties": { "props": { "properties": { "dropLines": { "const": true } }, "required": ["dropLines"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "properties": { "type": { "enum": ["area", "areaStacked", "areaPercentStacked", "line", "lineStacked", "linePercentStacked", "stock"] } } } } }
+        },
         {
           "if": { "properties": { "props": { "required": ["valueAxisDisplayUnitLabel"] } }, "required": ["props"] },
           "then": { "properties": { "props": { "required": ["valueAxisDisplayUnit"] } } }
