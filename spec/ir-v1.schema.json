@@ -1061,7 +1061,12 @@
             "intercept": { "type": "number" },
             "deleteFromLegend": { "type": "boolean" },
             "displayEquation": { "type": "boolean" },
-            "displayRSquared": { "type": "boolean" }
+            "displayRSquared": { "type": "boolean" },
+            "lineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "lineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
+            "lineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
+            "lineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "lineHidden": { "type": "boolean" }
           },
           "additionalProperties": false
         },

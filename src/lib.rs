@@ -3573,6 +3573,11 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
                 "intercept",
                 "displayEquation",
                 "displayRSquared",
+                "lineColor",
+                "lineWidth",
+                "lineDash",
+                "lineTransparency",
+                "lineHidden",
             ],
             "Trendline",
         )?;
@@ -3597,6 +3602,7 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
                 )));
             }
         }
+        validate_chart_trendline_line(&trendline)?;
         let chart_type = chart
             .props
             .get("type")
@@ -3680,6 +3686,93 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
                 "Trendline.intercept must be a finite number".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_chart_trendline_line(trendline: &Node) -> Result<()> {
+    if let Some(value) = trendline.props.get("lineColor") {
+        let Some(color) = value.as_str() else {
+            return Err(Error::Compile(
+                "Trendline.lineColor must be an opaque RGB color like #336699".into(),
+            ));
+        };
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Compile(
+                "Trendline.lineColor must match #RRGGBB; use exactly six hexadecimal digits".into(),
+            ));
+        }
+    }
+    if let Some(value) = trendline.props.get("lineWidth") {
+        let Some(width) = value.as_f64() else {
+            return Err(Error::Compile(
+                "Trendline.lineWidth must be 0.25–1584 points in quarter-point increments".into(),
+            ));
+        };
+        if !width.is_finite()
+            || !(0.25..=1584.0).contains(&width)
+            || (width * 4.0 - (width * 4.0).round()).abs() > f64::EPSILON
+        {
+            return Err(Error::Compile(
+                "Trendline.lineWidth must be 0.25–1584 points in quarter-point increments".into(),
+            ));
+        }
+    }
+    if let Some(value) = trendline.props.get("lineDash") {
+        let Some(dash) = value.as_str() else {
+            return Err(Error::Compile(
+                "Trendline.lineDash must be a quoted chart-line dash preset".into(),
+            ));
+        };
+        if ![
+            "solid",
+            "roundDot",
+            "squareDot",
+            "dash",
+            "dashDot",
+            "longDash",
+            "longDashDot",
+            "longDashDotDot",
+        ]
+        .contains(&dash)
+        {
+            return Err(Error::Compile(format!(
+                "Trendline.lineDash `{dash}` is unsupported; use a standard chart-line preset"
+            )));
+        }
+    }
+    if let Some(value) = trendline.props.get("lineTransparency")
+        && value.as_u64().is_none_or(|transparency| transparency > 100)
+    {
+        return Err(Error::Compile(
+            "Trendline.lineTransparency must be an integer percentage from 0 through 100".into(),
+        ));
+    }
+    if trendline.props.contains_key("lineTransparency")
+        && !trendline.props.contains_key("lineColor")
+    {
+        return Err(Error::Compile("Trendline.lineTransparency requires lineColor because transparency is serialized with the RGB color; add lineColor or remove lineTransparency".into()));
+    }
+    if let Some(value) = trendline.props.get("lineHidden")
+        && !value.is_boolean()
+    {
+        return Err(Error::Compile(
+            "Trendline.lineHidden must be a boolean; use true or false".into(),
+        ));
+    }
+    if trendline.props.get("lineHidden").and_then(Value::as_bool) == Some(true)
+        && (trendline.props.contains_key("lineColor")
+            || trendline
+                .props
+                .get("lineDash")
+                .and_then(Value::as_str)
+                .is_some_and(|dash| dash != "solid")
+            || trendline.props.contains_key("lineTransparency"))
+    {
+        return Err(Error::Compile("A hidden trendline cannot combine lineColor, non-solid lineDash, or lineTransparency because rust_xlsxwriter drops those settings".into()));
     }
     Ok(())
 }

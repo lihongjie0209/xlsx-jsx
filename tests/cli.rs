@@ -251,6 +251,18 @@ fn spec_exposes_trendline_equation_flags() {
 }
 
 #[test]
+fn spec_exposes_trendline_line_style_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("lineColor"))
+        .stdout(predicate::str::contains("lineTransparency"))
+        .stdout(predicate::str::contains("lineHidden"));
+}
+
+#[test]
 fn spec_exposes_chart_title_font_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -3623,7 +3635,14 @@ fn reverses_external_chart_trendline_parameters_and_rebuilds_them() {
         .set_type(ChartTrendlineType::Linear)
         .set_forward_period(2.5)
         .set_backward_period(1.0)
-        .set_intercept(-3.0);
+        .set_intercept(-3.0)
+        .set_format(
+            ChartLine::new()
+                .set_color("#336699")
+                .set_width(1.5)
+                .set_dash_type(ChartLineDashType::LongDash)
+                .set_transparency(20),
+        );
     chart
         .add_series()
         .set_categories("Data!A2:A5")
@@ -3642,7 +3661,8 @@ fn reverses_external_chart_trendline_parameters_and_rebuilds_them() {
         .success();
     let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
     assert!(
-        source.contains("<Trendline type=\"linear\" forward={2.5} backward={1} intercept={-3} />")
+        source.contains("<Trendline type=\"linear\" forward={2.5} backward={1} intercept={-3} lineColor=\"#336699\" lineWidth={1.5} lineDash=\"longDash\" lineTransparency={20} />"),
+        "{source}"
     );
 
     Command::cargo_bin("xlsx-jsx")
@@ -3654,7 +3674,97 @@ fn reverses_external_chart_trendline_parameters_and_rebuilds_them() {
         .assert()
         .success();
     let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
-    assert!(xml.contains("<c:trendline><c:trendlineType val=\"linear\"/><c:forward val=\"2.5\"/><c:backward val=\"1\"/><c:intercept val=\"-3\"/></c:trendline>"));
+    assert!(xml.contains("<c:trendline><c:spPr><a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"336699\"><a:alpha val=\"80000\"/></a:srgbClr></a:solidFill><a:prstDash val=\"lgDash\"/></a:ln></c:spPr><c:trendlineType val=\"linear\"/><c:forward val=\"2.5\"/><c:backward val=\"1\"/><c:intercept val=\"-3\"/></c:trendline>"), "{xml}");
+}
+
+#[test]
+fn reverses_external_hidden_trendline_line_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("hidden-trendline-line.xlsx");
+    let source_path = directory.path().join("hidden-trendline-line.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-hidden-trendline-line.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    let mut trendline = ChartTrendline::new();
+    trendline
+        .set_type(ChartTrendlineType::Linear)
+        .set_format(ChartLine::new().set_hidden(true));
+    chart
+        .add_series()
+        .set_categories("Data!A2:A5")
+        .set_values("Data!B2:B5")
+        .set_trendline(&trendline);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reverse output reads");
+    assert!(
+        source.contains("<Trendline type=\"linear\" lineHidden={true} />"),
+        "{source}"
+    );
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:spPr><a:ln><a:noFill/></a:ln></c:spPr>"));
+}
+
+#[test]
+fn rejects_invalid_trendline_line_transparency_without_color() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-trendline-transparency.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, Trendline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><Trendline type="linear" lineTransparency={20} /></Series></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Trendline.lineTransparency requires lineColor",
+        ))
+        .stderr(predicate::str::contains("add lineColor"));
+}
+
+#[test]
+fn rejects_hidden_trendline_with_dropped_line_properties() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("hidden-trendline-with-color.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series, Trendline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><Trendline type="linear" lineHidden={true} lineColor="#336699" /></Series></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "A hidden trendline cannot combine",
+        ))
+        .stderr(predicate::str::contains(
+            "rust_xlsxwriter drops those settings",
+        ));
 }
 
 #[test]

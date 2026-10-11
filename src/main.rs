@@ -1344,6 +1344,40 @@ fn configure_chart_series_trendline(
     {
         settings.display_r_squared(true);
     }
+    if [
+        "lineColor",
+        "lineWidth",
+        "lineDash",
+        "lineTransparency",
+        "lineHidden",
+    ]
+    .iter()
+    .any(|property| trendline.props.contains_key(*property))
+    {
+        let mut line = ChartLine::new();
+        if let Some(color) = trendline.props.get("lineColor").and_then(Value::as_str) {
+            line.set_color(color);
+        }
+        if let Some(width) = trendline.props.get("lineWidth").and_then(Value::as_f64) {
+            line.set_width(width);
+        }
+        if let Some(dash) = trendline.props.get("lineDash").and_then(Value::as_str) {
+            line.set_dash_type(chart_line_dash_type(dash));
+        }
+        if let Some(transparency) = trendline
+            .props
+            .get("lineTransparency")
+            .and_then(Value::as_u64)
+        {
+            line.set_transparency(
+                u8::try_from(transparency).expect("validated Trendline.lineTransparency"),
+            );
+        }
+        if let Some(hidden) = trendline.props.get("lineHidden").and_then(Value::as_bool) {
+            line.set_hidden(hidden);
+        }
+        settings.set_format(&mut line);
+    }
     chart_series.set_trendline(&settings);
 }
 
@@ -5106,6 +5140,21 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 }
                 if let Some(intercept) = trendline.intercept {
                     let _ = write!(output, " intercept={{{intercept}}}");
+                }
+                if let Some(color) = &trendline.line_color {
+                    let _ = write!(output, " lineColor=\"{color}\"");
+                }
+                if let Some(width) = trendline.line_width {
+                    let _ = write!(output, " lineWidth={{{width}}}");
+                }
+                if let Some(dash) = trendline.line_dash {
+                    let _ = write!(output, " lineDash=\"{dash}\"");
+                }
+                if let Some(transparency) = trendline.line_transparency {
+                    let _ = write!(output, " lineTransparency={{{transparency}}}");
+                }
+                if trendline.line_hidden == Some(true) {
+                    output.push_str(" lineHidden={true}");
                 }
                 if trendline.delete_from_legend {
                     output.push_str(" deleteFromLegend={true}");
@@ -8986,12 +9035,33 @@ fn parse_chart_xml(
                         "chart part `{part}` has unsupported `<{tag}>` point formatting; retain only opaque RGB solid fills"
                     )));
                 }
+                let in_trendline_formatting_context =
+                    stack.iter().any(|parent| parent == "trendline")
+                        && !stack.iter().any(|parent| parent == "trendlineLbl");
+                let supported_trendline_line_content = in_trendline_formatting_context
+                    && match tag.as_str() {
+                        "ln" => stack.last().is_some_and(|parent| parent == "spPr"),
+                        "solidFill" => stack.last().is_some_and(|parent| parent == "ln"),
+                        "srgbClr" => {
+                            stack.last().is_some_and(|parent| parent == "solidFill")
+                                && stack.iter().any(|parent| parent == "ln")
+                        }
+                        "alpha" => {
+                            stack.last().is_some_and(|parent| parent == "srgbClr")
+                                && stack.iter().any(|parent| parent == "ln")
+                        }
+                        "prstDash" | "noFill" => stack.last().is_some_and(|parent| parent == "ln"),
+                        _ => false,
+                    };
                 let supported_trendline_content =
                     matches!(
                         tag.as_str(),
                         "trendlineType" | "order" | "period" | "forward" | "backward" | "intercept"
                     ) || (matches!(tag.as_str(), "dispEq" | "dispRSqr" | "trendlineLbl")
                         && stack.last().is_some_and(|parent| parent == "trendline"))
+                        || (tag == "spPr"
+                            && stack.last().is_some_and(|parent| parent == "trendline"))
+                        || supported_trendline_line_content
                         || (matches!(tag.as_str(), "layout" | "numFmt")
                             && stack.last().is_some_and(|parent| parent == "trendlineLbl"));
                 if stack.iter().any(|ancestor| ancestor == "trendline")
@@ -11932,6 +12002,7 @@ fn parse_chart_xml(
                     "spPr" => {
                         let has_supported_parent =
                             stack.last().is_some_and(|ancestor| ancestor == "ser")
+                                || stack.last().is_some_and(|ancestor| ancestor == "trendline")
                                 || matches!(
                                     stack.last().map(String::as_str),
                                     Some("chartSpace" | "plotArea")
@@ -11952,6 +12023,9 @@ fn parse_chart_xml(
                         }
                     }
                     "ln" => {
+                        let in_trendline_line = stack.iter().any(|item| item == "trendline")
+                            && stack.iter().any(|item| item == "spPr")
+                            && !stack.iter().any(|item| item == "trendlineLbl");
                         let in_error_bars = stack.iter().any(|ancestor| ancestor == "errBars");
                         let in_gridlines = stack.iter().any(|ancestor| {
                             matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
@@ -11959,6 +12033,7 @@ fn parse_chart_xml(
                         if stack.last().is_none_or(|ancestor| ancestor != "spPr")
                             || (!in_gridlines
                                 && !in_error_bars
+                                && !in_trendline_line
                                 && !stack.iter().any(|ancestor| ancestor == "ser"))
                         {
                             return Err(Error::Reverse(format!(
@@ -12008,6 +12083,16 @@ fn parse_chart_xml(
                             {
                                 let width_emu = width.parse::<u32>().ok().filter(|width| *width > 0 && *width <= 20_116_800 && *width % 3175 == 0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has an error-bar line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments")))?;
                                 error_bar.line_width = Some(f64::from(width_emu) / 12700.0);
+                            }
+                        } else if in_trendline_line {
+                            if let Some(trendline) =
+                                series.last_mut().and_then(|item| item.trendline.as_mut())
+                            {
+                                trendline.line_hidden = Some(false);
+                                if let Some(width) = line_width {
+                                    let width_emu = width.parse::<u32>().ok().filter(|width| *width > 0 && *width <= 20_116_800 && *width % 3175 == 0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a trendline width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments")))?;
+                                    trendline.line_width = Some(f64::from(width_emu) / 12700.0);
+                                }
                             }
                         } else if let Some(current) = series.last_mut() {
                             current.line_hidden = Some(false);
@@ -12074,6 +12159,15 @@ fn parse_chart_xml(
                             {
                                 error_bar.line_color = Some(format!("#{color}"));
                             }
+                        } else if stack.iter().any(|item| item == "trendline")
+                            && stack.iter().any(|item| item == "spPr")
+                            && !stack.iter().any(|item| item == "trendlineLbl")
+                        {
+                            if let Some(trendline) =
+                                series.last_mut().and_then(|item| item.trendline.as_mut())
+                            {
+                                trendline.line_color = Some(format!("#{color}"));
+                            }
                         } else if let Some(current) = series.last_mut() {
                             current.line_color = Some(format!("#{color}"));
                         }
@@ -12099,6 +12193,15 @@ fn parse_chart_xml(
                                 .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
                             {
                                 error_bar.line_transparency = Some(100 - alpha / 1000);
+                            }
+                        } else if stack.iter().any(|item| item == "trendline")
+                            && stack.iter().any(|item| item == "spPr")
+                            && !stack.iter().any(|item| item == "trendlineLbl")
+                        {
+                            if let Some(trendline) =
+                                series.last_mut().and_then(|item| item.trendline.as_mut())
+                            {
+                                trendline.line_transparency = Some(100 - alpha / 1000);
                             }
                         } else if let Some(current) = series.last_mut() {
                             current.line_transparency = Some(100 - alpha / 1000);
@@ -12153,6 +12256,15 @@ fn parse_chart_xml(
                             {
                                 error_bar.line_dash = Some(dash);
                             }
+                        } else if stack.iter().any(|item| item == "trendline")
+                            && stack.iter().any(|item| item == "spPr")
+                            && !stack.iter().any(|item| item == "trendlineLbl")
+                        {
+                            if let Some(trendline) =
+                                series.last_mut().and_then(|item| item.trendline.as_mut())
+                            {
+                                trendline.line_dash = Some(dash);
+                            }
                         } else if let Some(current) = series.last_mut() {
                             current.line_dash = Some(dash);
                         }
@@ -12165,15 +12277,25 @@ fn parse_chart_xml(
                                 "chart part `{part}` uses a no-fill gridline; the DSL models visible gridline line styles, so replace noFill with an RGB line or remove the line formatting"
                             )));
                         }
+                        let supported_line_context = stack.iter().any(|ancestor| ancestor == "ser")
+                            || (stack.iter().any(|ancestor| ancestor == "trendline")
+                                && stack.iter().any(|ancestor| ancestor == "spPr")
+                                && !stack.iter().any(|ancestor| ancestor == "trendlineLbl"));
                         if stack.last().is_none_or(|ancestor| ancestor != "ln")
-                            || !stack.iter().any(|ancestor| ancestor == "ser")
+                            || !supported_line_context
                         {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a fill override outside the supported hidden scatter-series line; remove it or add explicit fill formatting support"
+                                "chart part `{part}` has a fill override outside a supported hidden series or trendline line; remove it or add explicit fill formatting support"
                             )));
                         }
                         if let Some(current) = series.last_mut() {
-                            current.line_hidden = Some(true);
+                            if let Some(trendline) = current.trendline.as_mut()
+                                && stack.iter().any(|ancestor| ancestor == "trendline")
+                            {
+                                trendline.line_hidden = Some(true);
+                            } else {
+                                current.line_hidden = Some(true);
+                            }
                         }
                     }
                     "tx" if !series.is_empty() => title_source_open = true,
@@ -12615,6 +12737,15 @@ fn parse_chart_xml(
                     {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` has an equation display flag that does not match the default trendline label; retain dispEq with one General/sourceLinked=0 label format"
+                        )));
+                    }
+                    if trendline.line_hidden == Some(true)
+                        && (trendline.line_color.is_some()
+                            || trendline.line_transparency.is_some()
+                            || trendline.line_dash.is_some_and(|dash| dash != "solid"))
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` combines a hidden trendline line with color, transparency, or non-solid dash settings that rust_xlsxwriter would drop"
                         )));
                     }
                     if (trend_type == "polynomial"
@@ -17204,6 +17335,11 @@ struct WorksheetChartTrendline {
     forward: Option<f64>,
     backward: Option<f64>,
     intercept: Option<f64>,
+    line_color: Option<String>,
+    line_width: Option<f64>,
+    line_dash: Option<&'static str>,
+    line_transparency: Option<u32>,
+    line_hidden: Option<bool>,
     delete_from_legend: bool,
     display_equation: Option<bool>,
     display_r_squared: Option<bool>,
