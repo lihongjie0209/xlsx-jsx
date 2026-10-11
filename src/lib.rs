@@ -1926,6 +1926,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "verticalAxisHidden",
             "showLegend",
             "legendOverlay",
+            "legendDeletedEntries",
             "legendPosition",
             "holeSize",
             "firstSliceAngle",
@@ -2686,6 +2687,33 @@ fn validate_chart_legend(chart: &Node) -> Result<()> {
         return Err(Error::Compile(
             "Chart.legendOverlay requires a visible legend; remove legendOverlay or set showLegend={true}".into(),
         ));
+    }
+    if let Some(value) = chart.props.get("legendDeletedEntries") {
+        let Some(entries) = value.as_array() else {
+            return Err(Error::Compile(
+                "Chart.legendDeletedEntries must be an array of unique zero-based integers; use a value such as [1, 3]".into(),
+            ));
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        for entry in entries {
+            let Some(index) = entry.as_u64().filter(|index| *index <= 1_048_575) else {
+                return Err(Error::Compile(
+                    "Chart.legendDeletedEntries indices must be integers from 0 through 1,048,575; use valid zero-based chart-entry indices".into(),
+                ));
+            };
+            if !seen.insert(index) {
+                return Err(Error::Compile(format!(
+                    "Chart.legendDeletedEntries contains duplicate index {index}; list each legend entry once"
+                )));
+            }
+        }
+        if !entries.is_empty()
+            && chart.props.get("showLegend").and_then(Value::as_bool) == Some(false)
+        {
+            return Err(Error::Compile(
+                "Chart.legendDeletedEntries requires a visible legend; remove the property or set showLegend={true}".into(),
+            ));
+        }
     }
     if let Some(value) = chart.props.get("legendPosition") {
         let Some(position) = value.as_str() else {

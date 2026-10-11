@@ -25,7 +25,7 @@ export default <Workbook>
         <ErrorBars axis="x" type="standardError" />
       </Series>
     </Chart>
-    <Chart type="pie" cell="K20" width={480} height={288} firstSliceAngle={210}>
+    <Chart type="pie" cell="K20" width={480} height={288} firstSliceAngle={210} legendDeletedEntries={[1]}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" pointColors={{0: "#4472C4", 2: "#ED7D31"}} showPercentage={true} />
     </Chart>
     <Chart type="area" cell="D38" width={480} height={288} dropLines={true}>

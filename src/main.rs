@@ -805,6 +805,21 @@ fn compile_chart(
     {
         chart.legend().set_overlay(true);
     }
+    if let Some(entries) = component
+        .props
+        .get("legendDeletedEntries")
+        .and_then(Value::as_array)
+        .filter(|entries| !entries.is_empty())
+    {
+        let entries = entries
+            .iter()
+            .map(|entry| {
+                usize::try_from(entry.as_u64().expect("validated legend entry index"))
+                    .expect("legend entry index fits usize")
+            })
+            .collect::<Vec<_>>();
+        chart.legend().delete_entries(&entries);
+    }
     if let Some(width) = component.props.get("width").and_then(Value::as_u64) {
         chart.set_width(u32::try_from(width).expect("validated Chart.width"));
     }
@@ -4559,6 +4574,15 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if chart.legend_overlay == Some(true) {
         properties.push_str(" legendOverlay={true}");
     }
+    if !chart.legend_deleted_entries.is_empty() {
+        let entries = chart
+            .legend_deleted_entries
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = write!(properties, " legendDeletedEntries={{[{entries}]}}");
+    }
     if chart.show_hidden_data == Some(true) {
         properties.push_str(" showHiddenData={true}");
     }
@@ -7456,6 +7480,7 @@ fn parse_chart_xml(
         "numFmt",
         "legend",
         "legendPos",
+        "legendEntry",
         "overlay",
         "delete",
         "printSettings",
@@ -7603,6 +7628,10 @@ fn parse_chart_xml(
     let mut legend_position: Option<&'static str> = None;
     let mut legend_overlay = false;
     let mut legend_overlay_seen = false;
+    let mut legend_deleted_entries = Vec::<usize>::new();
+    let mut legend_entry_index = None;
+    let mut legend_entry_index_seen = false;
+    let mut legend_entry_delete_seen = false;
     let mut hole_size = None;
     let mut hole_size_seen = false;
     let mut first_slice_angle = None;
@@ -7629,6 +7658,13 @@ fn parse_chart_xml(
                     unreachable!()
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if stack.iter().any(|ancestor| ancestor == "legendEntry")
+                    && !matches!(tag.as_str(), "idx" | "delete")
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported `<{tag}>` legend-entry formatting; keep only idx and delete=true"
+                    )));
+                }
                 if stack.iter().any(|ancestor| {
                     matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
                 }) && !matches!(
@@ -8503,6 +8539,24 @@ fn parse_chart_xml(
                             }
                         }
                     }
+                    "legendEntry" => {
+                        if stack.last().is_none_or(|parent| parent != "legend")
+                            || !legend_seen
+                            || legend_entry_index.is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a misplaced or nested legendEntry; place each entry directly inside the chart legend"
+                            )));
+                        }
+                        if event.attributes().with_checks(false).next().is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has attributes on legendEntry; remove custom legend-entry metadata"
+                            )));
+                        }
+                        legend_entry_index = None;
+                        legend_entry_index_seen = false;
+                        legend_entry_delete_seen = false;
+                    }
                     "legend" => {
                         if legend_seen {
                             return Err(Error::Reverse(format!(
@@ -8560,6 +8614,25 @@ fn parse_chart_xml(
                             "overlay",
                         )?;
                     }
+                    "idx" if stack.last().is_some_and(|parent| parent == "legendEntry") => {
+                        if legend_entry_index_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a legend-entry index; keep exactly one idx per legendEntry"
+                            )));
+                        }
+                        legend_entry_index_seen = true;
+                        let raw_index = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "legend entry idx",
+                        )?;
+                        let index = raw_index.parse::<usize>().ok().filter(|index| *index <= 1_048_575)
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has legend-entry index `{raw_index}` outside 0 through 1,048,575; use a supported zero-based index"
+                            )))?;
+                        legend_entry_index = Some(index);
+                    }
                     "delete" => {
                         let raw_hidden = event
                             .attributes()
@@ -8594,6 +8667,23 @@ fn parse_chart_xml(
                             }
                             current_axis_hidden_declared = true;
                             pending_axis_hidden = Some(hidden);
+                        } else if stack
+                            .last()
+                            .is_some_and(|ancestor| ancestor == "legendEntry")
+                        {
+                            if !hidden || legend_entry_delete_seen || !legend_entry_index_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an unsupported legendEntry deletion; each entry must have one idx and delete=true"
+                                )));
+                            }
+                            legend_entry_delete_seen = true;
+                            let index = legend_entry_index.expect("legend entry idx was validated");
+                            if legend_deleted_entries.contains(&index) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats deleted legend-entry index {index}; keep one legendEntry per index"
+                                )));
+                            }
+                            legend_deleted_entries.push(index);
                         } else if stack.last().is_some_and(|ancestor| ancestor == "legend") {
                             if !legend_seen || legend_delete_seen {
                                 return Err(Error::Reverse(format!(
@@ -10222,6 +10312,16 @@ fn parse_chart_xml(
                 if tag == "errBars" {
                     current_error_bar = None;
                 }
+                if tag == "legendEntry" {
+                    if !legend_entry_index_seen || !legend_entry_delete_seen {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an incomplete legendEntry; include one idx and delete=true"
+                        )));
+                    }
+                    legend_entry_index = None;
+                    legend_entry_index_seen = false;
+                    legend_entry_delete_seen = false;
+                }
                 stack.pop();
             }
             Ok(Event::Eof) => break,
@@ -10520,6 +10620,11 @@ fn parse_chart_xml(
         hole_size = Some(10);
     }
     let show_legend = legend_seen && !legend_deleted;
+    if !legend_deleted_entries.is_empty() && !show_legend {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` deletes legend entries while its legend is hidden; restore a visible legend or remove the legendEntry elements"
+        )));
+    }
     if !show_legend && legend_overlay {
         return Err(Error::Reverse(format!(
             "chart part `{part}` overlays a deleted legend; restore a visible legend or remove the overlay setting"
@@ -10623,6 +10728,7 @@ fn parse_chart_xml(
         show_legend,
         legend_position: legend_position.filter(|position| *position != "right"),
         legend_overlay: legend_overlay.then_some(true),
+        legend_deleted_entries,
         hole_size: hole_size.filter(|size| *size != 50),
         first_slice_angle: first_slice_angle.filter(|angle| *angle != 0),
         style: chart_style,
@@ -11379,7 +11485,8 @@ fn is_supported_chart_attribute(
                 .parse::<i8>()
                 .is_ok_and(|overlap| (-100..=100).contains(&overlap))
         }
-        ("idx" | "order" | "period" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
+        ("idx", "val") => value.parse::<u32>().is_ok_and(|index| index <= 1_048_575),
+        ("order" | "period" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
             value.parse::<u32>().is_ok()
         }
         ("forward" | "backward" | "intercept", "val") => {
@@ -14119,6 +14226,7 @@ struct WorksheetChart {
     show_legend: bool,
     legend_position: Option<&'static str>,
     legend_overlay: Option<bool>,
+    legend_deleted_entries: Vec<usize>,
     hole_size: Option<u8>,
     first_slice_angle: Option<u16>,
     style: Option<u8>,

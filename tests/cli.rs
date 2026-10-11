@@ -147,6 +147,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("emptyCellsAs"))
         .stdout(predicate::str::contains("showNaAsEmptyCell"))
         .stdout(predicate::str::contains("legendOverlay"))
+        .stdout(predicate::str::contains("legendDeletedEntries"))
         .stdout(predicate::str::contains("valueAxisReversed"))
         .stdout(predicate::str::contains("categoryAxisLabelInterval"))
         .stdout(predicate::str::contains("categoryAxisTickInterval"))
@@ -1940,6 +1941,93 @@ fn reverses_and_rebuilds_external_chart_legend_overlay_without_a_manifest() {
         .success();
     let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
     assert!(xml.contains("<c:overlay val=\"1\"/>"), "{xml}");
+}
+
+#[test]
+fn reverses_and_rebuilds_external_chart_deleted_legend_entries_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-legend-entries.xlsx");
+    let output_path = directory.path().join("external-chart-legend-entries.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-chart-legend-entries.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Pie);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.legend().delete_entries(&[0, 2]);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("legendDeletedEntries={[0, 2]}"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        xml.contains("<c:legendEntry><c:idx val=\"0\"/><c:delete val=\"1\"/></c:legendEntry>"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<c:legendEntry><c:idx val=\"2\"/><c:delete val=\"1\"/></c:legendEntry>"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn rejects_duplicate_chart_legend_deleted_entry_indices() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("duplicate-chart-legend-entries.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" legendDeletedEntries={[0, 0]}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("legendDeletedEntries"))
+        .stderr(predicate::str::contains("duplicate index"));
+}
+
+#[test]
+fn rejects_chart_deleted_legend_entries_when_legend_is_hidden() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("hidden-chart-legend-entries.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" showLegend={false} legendDeletedEntries={[0]}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.legendDeletedEntries requires a visible legend",
+        ))
+        .stderr(predicate::str::contains("set showLegend={true}"));
 }
 
 #[test]

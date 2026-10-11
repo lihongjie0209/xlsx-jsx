@@ -529,6 +529,7 @@
             "verticalAxisMinorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
             "showLegend": { "type": "boolean" },
             "legendOverlay": { "type": "boolean" },
+            "legendDeletedEntries": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0, "maximum": 1048575 } },
             "legendPosition": { "enum": ["right", "left", "top", "bottom", "topRight"] },
             "holeSize": { "type": "integer", "minimum": 10, "maximum": 90 },
             "firstSliceAngle": { "type": "integer", "minimum": 0, "maximum": 360 },
@@ -654,7 +655,16 @@
             "properties": {
               "props": {
                 "properties": { "showLegend": { "const": false } },
-                "required": ["legendPosition", "showLegend"]
+                "required": ["showLegend"],
+                "anyOf": [
+                  { "required": ["legendPosition"] },
+                  {
+                    "properties": {
+                      "legendDeletedEntries": { "minItems": 1 }
+                    },
+                    "required": ["legendDeletedEntries"]
+                  }
+                ]
               }
             },
             "required": ["props"]
