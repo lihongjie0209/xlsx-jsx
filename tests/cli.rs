@@ -5,9 +5,9 @@ use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisDateUnitType, ChartAxisDisplayUnitType,
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartFormat, ChartLine, ChartLineDashType,
-    ChartMarker, ChartMarkerType, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType,
-    ChartType, Workbook as XlsxWorkbook,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
+    ChartLineDashType, ChartMarker, ChartMarkerType, ChartRange, ChartSolidFill, ChartTrendline,
+    ChartTrendlineType, ChartType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -247,7 +247,8 @@ fn spec_exposes_trendline_equation_flags() {
         .assert()
         .success()
         .stdout(predicate::str::contains("displayEquation"))
-        .stdout(predicate::str::contains("displayRSquared"));
+        .stdout(predicate::str::contains("displayRSquared"))
+        .stdout(predicate::str::contains("labelFontSize"));
 }
 
 #[test]
@@ -3812,7 +3813,16 @@ fn reverses_external_trendline_equation_and_r_squared_flags() {
     trendline
         .set_type(ChartTrendlineType::Linear)
         .display_equation(true)
-        .display_r_squared(true);
+        .display_r_squared(true)
+        .set_label_font(
+            ChartFont::new()
+                .set_size(12.0)
+                .set_bold()
+                .set_italic()
+                .set_underline()
+                .set_color("#336699")
+                .set_name("Arial"),
+        );
     chart
         .add_series()
         .set_categories("Data!A2:A5")
@@ -3831,7 +3841,7 @@ fn reverses_external_trendline_equation_and_r_squared_flags() {
     let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
     assert!(
         source.contains(
-            "<Trendline type=\"linear\" displayEquation={true} displayRSquared={true} />"
+            "<Trendline type=\"linear\" displayEquation={true} displayRSquared={true} labelFontSize={12} labelFontBold={true} labelFontItalic={true} labelFontUnderline={true} labelFontColor=\"#336699\" labelFontName=\"Arial\" />"
         ),
         "{source}"
     );
@@ -3845,6 +3855,28 @@ fn reverses_external_trendline_equation_and_r_squared_flags() {
         .success();
     let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
     assert!(xml.contains("<c:dispRSqr val=\"1\"/><c:dispEq val=\"1\"/>"));
+    assert!(xml.contains("<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"1200\" b=\"1\" i=\"1\" u=\"sng\" baseline=\"0\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill><a:latin typeface=\"Arial\"/></a:defRPr></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p></c:txPr>"), "{xml}");
+}
+
+#[test]
+fn rejects_trendline_label_font_without_equation_label() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("trendline-font-without-equation.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, Trendline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><Trendline type="linear" labelFontSize={12} /></Series></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Trendline.labelFont* requires displayEquation={true}",
+        ))
+        .stderr(predicate::str::contains("add displayEquation={true}"));
 }
 
 #[test]

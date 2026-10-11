@@ -3566,6 +3566,12 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
             &[
                 "type",
                 "name",
+                "labelFontSize",
+                "labelFontBold",
+                "labelFontItalic",
+                "labelFontUnderline",
+                "labelFontColor",
+                "labelFontName",
                 "deleteFromLegend",
                 "order",
                 "period",
@@ -3597,6 +3603,7 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
                 ));
             }
         }
+        validate_trendline_label_font(&trendline)?;
         if let Some(value) = trendline.props.get("deleteFromLegend") {
             let Some(enabled) = value.as_bool() else {
                 return Err(Error::Compile(
@@ -3700,6 +3707,89 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
         {
             return Err(Error::Compile(
                 "Trendline.intercept must be a finite number".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_trendline_label_font(trendline: &Node) -> Result<()> {
+    let font_properties = [
+        "labelFontSize",
+        "labelFontBold",
+        "labelFontItalic",
+        "labelFontUnderline",
+        "labelFontColor",
+        "labelFontName",
+    ];
+    if !font_properties
+        .iter()
+        .any(|property| trendline.props.contains_key(*property))
+    {
+        return Ok(());
+    }
+    if trendline
+        .props
+        .get("displayEquation")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err(Error::Compile(
+            "Trendline.labelFont* requires displayEquation={true} because the writer only serializes equation-label fonts when that label is enabled; add displayEquation={true} or remove the font properties".into(),
+        ));
+    }
+    if let Some(value) = trendline.props.get("labelFontSize") {
+        let Some(size) = value.as_f64().filter(|size| size.is_finite()) else {
+            return Err(Error::Compile(
+                "Trendline.labelFontSize must be a finite number in points; use a value from 1 to 4000".into(),
+            ));
+        };
+        if !(1.0..=4000.0).contains(&size) {
+            return Err(Error::Compile(
+                "Trendline.labelFontSize must be between 1 and 4000 points; choose a value in that range".into(),
+            ));
+        }
+    }
+    for property in ["labelFontBold", "labelFontItalic", "labelFontUnderline"] {
+        if trendline
+            .props
+            .get(property)
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(Error::Compile(format!(
+                "Trendline.{property} must be a boolean; use true or false"
+            )));
+        }
+    }
+    if let Some(value) = trendline.props.get("labelFontColor") {
+        let Some(color) = value.as_str() else {
+            return Err(Error::Compile(
+                "Trendline.labelFontColor must be an opaque RGB color like #336699".into(),
+            ));
+        };
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Compile(
+                "Trendline.labelFontColor must match #RRGGBB; use exactly six hexadecimal digits"
+                    .into(),
+            ));
+        }
+    }
+    if let Some(value) = trendline.props.get("labelFontName") {
+        let Some(name) = value.as_str() else {
+            return Err(Error::Compile(
+                "Trendline.labelFontName must be a string; provide a nonempty font/typeface name"
+                    .into(),
+            ));
+        };
+        if name.is_empty()
+            || name.chars().count() > 255
+            || !name.chars().all(is_valid_xml_character)
+        {
+            return Err(Error::Compile(
+                "Trendline.labelFontName must contain 1–255 valid XML characters; use a font name without control characters".into(),
             ));
         }
     }

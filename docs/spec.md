@@ -143,7 +143,7 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   determination label; both default to false. Reverse preserves these flags
   only with the writer's default trendline-label layout, `General` number
   format, and unformatted label shape. Custom label names, number formats,
-  placement, fonts, and shape formatting are rejected with repair guidance.
+  placement, and shape formatting are rejected with repair guidance.
   Trendline lines accept `lineColor?: "#RRGGBB"`, `lineWidth?: number` in
   0.25–1584 point quarter-increments, `lineDash?:` the same presets as series
   lines, `lineTransparency?: integer` from 0–100 (requires `lineColor`), and
@@ -151,6 +151,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   dash, or transparency because the writer drops those settings. False hidden
   state and the default solid dash fold to omission; reverse rejects fills,
   effects, and unsupported trendline/label shape properties.
+  Equation-label font properties use the same `labelFont*` names as `Series`:
+  `labelFontSize` (1–4000 points), `labelFontBold`, `labelFontItalic`,
+  `labelFontUnderline`, `labelFontColor` (opaque `#RRGGBB`), and
+  `labelFontName` (1–255 XML-safe characters). They require
+  `displayEquation={true}`. Reverse preserves this subset without a manifest;
+  unsupported font metadata and equation-label shape formatting are rejected.
 - `Series.gap?: integer` (0–500) and `Series.overlap?: integer` (-100–100)
   control the group-level spacing of bar/column charts. Since OOXML stores
   these values on the chart group, declarations across all Series must agree;

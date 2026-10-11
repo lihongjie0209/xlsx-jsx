@@ -1318,6 +1318,62 @@ fn configure_chart_series_trendline(
     if let Some(name) = trendline.props.get("name").and_then(Value::as_str) {
         settings.set_name(name);
     }
+    if [
+        "labelFontSize",
+        "labelFontBold",
+        "labelFontItalic",
+        "labelFontUnderline",
+        "labelFontColor",
+        "labelFontName",
+    ]
+    .iter()
+    .any(|property| trendline.props.contains_key(*property))
+    {
+        let mut font = rust_xlsxwriter::ChartFont::new();
+        if let Some(size) = trendline.props.get("labelFontSize").and_then(Value::as_f64) {
+            font.set_size(size);
+        }
+        match trendline
+            .props
+            .get("labelFontBold")
+            .and_then(Value::as_bool)
+        {
+            Some(true) => {
+                font.set_bold();
+            }
+            Some(false) => {
+                font.unset_bold();
+            }
+            None => {}
+        }
+        if trendline
+            .props
+            .get("labelFontItalic")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            font.set_italic();
+        }
+        if trendline
+            .props
+            .get("labelFontUnderline")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            font.set_underline();
+        }
+        if let Some(color) = trendline
+            .props
+            .get("labelFontColor")
+            .and_then(Value::as_str)
+        {
+            font.set_color(color);
+        }
+        if let Some(name) = trendline.props.get("labelFontName").and_then(Value::as_str) {
+            font.set_name(name);
+        }
+        settings.set_label_font(&font);
+    }
     if let Some(forward) = trendline.props.get("forward").and_then(Value::as_f64) {
         settings.set_forward_period(forward);
     }
@@ -5175,6 +5231,24 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 if trendline.display_r_squared == Some(true) {
                     output.push_str(" displayRSquared={true}");
                 }
+                if let Some(size) = trendline.label_font_size {
+                    let _ = write!(output, " labelFontSize={{{size}}}");
+                }
+                for (property, value) in [
+                    ("labelFontBold", trendline.label_font_bold),
+                    ("labelFontItalic", trendline.label_font_italic),
+                    ("labelFontUnderline", trendline.label_font_underline),
+                ] {
+                    if let Some(value) = value {
+                        let _ = write!(output, " {property}={{{value}}}");
+                    }
+                }
+                if let Some(color) = &trendline.label_font_color {
+                    let _ = write!(output, " labelFontColor=\"{color}\"");
+                }
+                if let Some(name) = &trendline.label_font_name {
+                    let _ = write!(output, " labelFontName={name:?}");
+                }
                 output.push_str(" />\n");
             }
             output.push_str("      </Series>\n");
@@ -8644,8 +8718,27 @@ fn parse_chart_xml(
                         current.label_font_rotation = Some(rotation);
                     }
                 }
+                if tag == "bodyPr"
+                    && stack.iter().any(|ancestor| ancestor == "txPr")
+                    && stack.iter().any(|ancestor| ancestor == "trendlineLbl")
+                {
+                    let raw_rotation = chart_xml_attribute(&event, "rot", reader.decoder())?;
+                    let vertical = chart_xml_attribute(&event, "vert", reader.decoder())?;
+                    let rotation = parse_chart_text_rotation(
+                        raw_rotation.as_deref(),
+                        vertical.as_deref(),
+                        part,
+                        "trendline equation label",
+                    )?;
+                    if rotation.is_some_and(|rotation| rotation != -90) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a custom trendline equation-label text rotation; only the writer-default horizontal orientation is supported"
+                        )));
+                    }
+                }
                 if matches!(tag.as_str(), "rPr" | "defRPr")
                     && stack.iter().any(|ancestor| ancestor == "title")
+                    && !stack.iter().any(|ancestor| ancestor == "trendlineLbl")
                 {
                     if chart_title_target != Some("title") {
                         for key in ["b", "i", "u"] {
@@ -8799,6 +8892,78 @@ fn parse_chart_xml(
                             )));
                         }
                         *target = Some(points);
+                    }
+                }
+                if matches!(tag.as_str(), "rPr" | "defRPr")
+                    && stack.iter().any(|ancestor| ancestor == "txPr")
+                    && stack.iter().any(|ancestor| ancestor == "trendlineLbl")
+                {
+                    let Some(trendline) =
+                        series.last_mut().and_then(|item| item.trendline.as_mut())
+                    else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has trendline equation-label font properties without a trendline"
+                        )));
+                    };
+                    for (key, target) in [
+                        ("b", &mut trendline.label_font_bold),
+                        ("i", &mut trendline.label_font_italic),
+                    ] {
+                        if let Some(value) = chart_xml_attribute(&event, key, reader.decoder())? {
+                            let parsed = parse_xml_bool(&value, part, &format!("{tag}@{key}"))?;
+                            if target.is_some_and(|previous| previous != parsed) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has inconsistent trendline equation-label font `{key}` values; make them identical"
+                                )));
+                            }
+                            *target = Some(parsed);
+                        }
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "u", reader.decoder())? {
+                        let parsed = match value.as_str() {
+                            "sng" => true,
+                            "none" => false,
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported trendline equation-label underline `{value}`; use single underline or remove it"
+                                )));
+                            }
+                        };
+                        if trendline
+                            .label_font_underline
+                            .is_some_and(|previous| previous != parsed)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent trendline equation-label underlining; make the txPr values identical"
+                            )));
+                        }
+                        trendline.label_font_underline = Some(parsed);
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "baseline", reader.decoder())?
+                        && value != "0"
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has unsupported trendline equation-label baseline `{value}`; remove baseline formatting"
+                        )));
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "sz", reader.decoder())? {
+                        let hundredths = value.parse::<u32>().ok().filter(|size| (100..=400_000).contains(size)).ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has invalid trendline equation-label font size `{value}`; use 100–400000 hundredths of a point"
+                        )))?;
+                        let points = f64::from(hundredths) / 100.0;
+                        #[allow(
+                            clippy::float_cmp,
+                            reason = "Both values are integral hundredths parsed from the same OOXML size field."
+                        )]
+                        if trendline
+                            .label_font_size
+                            .is_some_and(|previous| previous != points)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent trendline equation-label font sizes; make the txPr values identical"
+                            )));
+                        }
+                        trendline.label_font_size = Some(points);
                     }
                 }
                 let area_sppr_context = chart_area_sppr_context(&stack);
@@ -9076,7 +9241,10 @@ fn parse_chart_xml(
                     || (tag == "spPr" && stack.last().is_some_and(|parent| parent == "trendline"))
                     || supported_trendline_line_content
                     || (matches!(tag.as_str(), "layout" | "numFmt")
-                        && stack.last().is_some_and(|parent| parent == "trendlineLbl"));
+                        && stack.last().is_some_and(|parent| parent == "trendlineLbl"))
+                    || (tag == "txPr"
+                        && stack.last().is_some_and(|parent| parent == "trendlineLbl"))
+                    || stack.iter().any(|parent| parent == "txPr");
                 if stack.iter().any(|ancestor| ancestor == "trendline")
                     && !supported_trendline_content
                 {
@@ -11869,6 +12037,34 @@ fn parse_chart_xml(
                     }
                     "srgbClr"
                         if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|ancestor| ancestor == "txPr")
+                            && stack.iter().any(|ancestor| ancestor == "trendlineLbl") =>
+                    {
+                        let color =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "srgbClr")?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has non-RGB trendline equation-label font color; use one opaque six-digit RGB value"
+                            )));
+                        }
+                        let color = format!("#{color}").to_ascii_uppercase();
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("trendline equation-label font has a trendline context");
+                        if trendline
+                            .label_font_color
+                            .as_ref()
+                            .is_some_and(|previous| previous != &color)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent trendline equation-label font colors; make txPr values identical"
+                            )));
+                        }
+                        trendline.label_font_color = Some(color);
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
                             && chart_area_sppr_context(&stack).is_some() =>
                     {
                         let area = chart_area_sppr_context(&stack).expect("area fill context");
@@ -12029,6 +12225,39 @@ fn parse_chart_xml(
                         current.label_font_name = name;
                         current.label_font_pitch_family = pitch_family;
                         current.label_font_charset = charset;
+                    }
+                    "latin"
+                        if stack.iter().any(|ancestor| ancestor == "txPr")
+                            && stack.iter().any(|ancestor| ancestor == "trendlineLbl") =>
+                    {
+                        let name = chart_xml_attribute(&event, "typeface", reader.decoder())?;
+                        if name.as_ref().is_some_and(|name| {
+                            name.is_empty()
+                                || name.chars().count() > 255
+                                || !name.chars().all(is_valid_xml_character)
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an invalid trendline equation-label Latin typeface; use a nonempty 1–255 character XML-safe name"
+                            )));
+                        }
+                        if chart_xml_attribute(&event, "pitchFamily", reader.decoder())?.is_some()
+                            || chart_xml_attribute(&event, "charset", reader.decoder())?.is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has trendline equation-label pitchFamily/charset metadata outside the supported font subset; remove those attributes"
+                            )));
+                        }
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("trendline equation-label font has a trendline context");
+                        if trendline.label_font_name.is_some() && trendline.label_font_name != name
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent trendline equation-label typefaces; make txPr Latin values identical"
+                            )));
+                        }
+                        trendline.label_font_name = name;
                     }
                     "spPr" => {
                         let has_supported_parent =
@@ -14064,6 +14293,9 @@ fn audit_chart_attributes(
         let is_series_data_label_font_context = stack.iter().any(|ancestor| ancestor == "ser")
             && stack.iter().any(|ancestor| ancestor == "dLbls")
             && stack.iter().any(|ancestor| ancestor == "txPr");
+        let is_trendline_equation_label_font_context =
+            stack.iter().any(|ancestor| ancestor == "trendlineLbl")
+                && stack.iter().any(|ancestor| ancestor == "txPr");
         let is_supported_chart_label_font_attribute = is_series_data_label_font_context
             && if matches!(tag, "rPr" | "defRPr") {
                 match (key.as_str(), value.as_str()) {
@@ -14098,6 +14330,24 @@ fn audit_chart_attributes(
             && tag == "endParaRPr"
             && key == "lang"
             && value == "en-US";
+        let is_supported_trendline_label_font_attribute = is_trendline_equation_label_font_context
+            && if matches!(tag, "rPr" | "defRPr") {
+                match (key.as_str(), value.as_str()) {
+                    ("sz", value) => value
+                        .parse::<u32>()
+                        .is_ok_and(|size| (100..=400_000).contains(&size)),
+                    ("b" | "i", "0" | "1" | "true" | "false")
+                    | ("u", "sng" | "none")
+                    | ("baseline", "0") => true,
+                    _ => false,
+                }
+            } else if tag == "latin" {
+                key == "typeface" && !value.is_empty() && value.chars().all(is_valid_xml_character)
+            } else if tag == "endParaRPr" {
+                key == "lang" && value == "en-US"
+            } else {
+                false
+            };
         let is_supported_chart_title_font_attribute = chart_title_target == Some("title")
             && stack.iter().any(|ancestor| ancestor == "title")
             && if matches!(tag, "rPr" | "defRPr") {
@@ -14125,6 +14375,7 @@ fn audit_chart_attributes(
             && !is_supported_chart_label_font_attribute
             && !is_supported_chart_label_body_attribute
             && !is_supported_chart_label_end_para_attribute
+            && !is_supported_trendline_label_font_attribute
             && !is_supported_chart_title_font_attribute
         {
             return Err(Error::Reverse(format!(
@@ -17409,6 +17660,12 @@ struct WorksheetChartTrendline {
     delete_from_legend: bool,
     display_equation: Option<bool>,
     display_r_squared: Option<bool>,
+    label_font_size: Option<f64>,
+    label_font_bold: Option<bool>,
+    label_font_italic: Option<bool>,
+    label_font_underline: Option<bool>,
+    label_font_color: Option<String>,
+    label_font_name: Option<String>,
     trendline_label_seen: bool,
     trendline_label_num_format_seen: bool,
 }

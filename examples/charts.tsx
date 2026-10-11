@@ -18,7 +18,7 @@ export default <Workbook>
     </Chart>
     <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true} categoryAxisLabelInterval={2} categoryAxisTickInterval={2} dropLines={true}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" markerType="circle" markerSize={8} lineColor="#336699" lineWidth={1.5} lineDash="dashDot" smooth={true} showValue={true} showLegendKey={true} showLeaderLines={true} labelSeparator="semicolon">
-        <Trendline type="linear" name="Forecast" forward={2} displayEquation={true} displayRSquared={true} />
+        <Trendline type="linear" name="Forecast" forward={2} displayEquation={true} displayRSquared={true} labelFontSize={12} labelFontBold={true} labelFontColor="#336699" />
       </Series>
     </Chart>
     <Chart type="bar" cell="D20" width={480} height={288} verticalAxisHidden={true} autoTitleDeleted={true}>
