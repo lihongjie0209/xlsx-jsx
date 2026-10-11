@@ -961,6 +961,9 @@ fn compile_table(
         .as_str()
         .ok_or_else(|| Error::Compile("Table.name must be a string".into()))?;
     let mut table = Table::new().set_name(name).set_columns(&columns);
+    if node.props.get("headerRow").and_then(Value::as_bool) == Some(false) {
+        table = table.set_header_row(false);
+    }
     if node.props.get("totalsRow").and_then(Value::as_bool) == Some(true) {
         table = table.set_total_row(true);
     }
@@ -999,25 +1002,47 @@ fn build_table_columns(
     node: &Node,
     range: (u32, u16, u32, u16),
 ) -> xlsx_jsx::Result<Vec<TableColumn>> {
-    let row_value = sheet
-        .children
-        .iter()
-        .filter(|value| value.get("type").and_then(Value::as_str) == Some("Row"))
-        .nth(range.0 as usize)
-        .ok_or_else(|| Error::Compile("Table header row is missing".into()))?;
-    let row: Node = serde_json::from_value(row_value.clone())
-        .map_err(|error| Error::Compile(error.to_string()))?;
+    let has_header = node.props.get("headerRow").and_then(Value::as_bool) != Some(false);
+    let row = if has_header {
+        let row_value = sheet
+            .children
+            .iter()
+            .filter(|value| value.get("type").and_then(Value::as_str) == Some("Row"))
+            .nth(range.0 as usize)
+            .ok_or_else(|| Error::Compile("Table header row is missing".into()))?;
+        Some(
+            serde_json::from_value::<Node>(row_value.clone())
+                .map_err(|error| Error::Compile(error.to_string()))?,
+        )
+    } else {
+        None
+    };
     let mut columns = Vec::new();
     for col in range.1..=range.3 {
-        let cell: Node = serde_json::from_value(row.children[usize::from(col)].clone())
-            .map_err(|error| Error::Compile(error.to_string()))?;
-        let header = cell
-            .props
-            .get("value")
-            .and_then(Value::as_str)
-            .or_else(|| cell.children.first().and_then(Value::as_str))
-            .ok_or_else(|| Error::Compile("table header must be a string".into()))?;
         let column_node = node.children.get(usize::from(col - range.1));
+        let header_cell = if let Some(row) = &row {
+            Some(
+                serde_json::from_value::<Node>(row.children[usize::from(col)].clone())
+                    .map_err(|error| Error::Compile(error.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let header = if let Some(cell) = &header_cell {
+            cell.props
+                .get("value")
+                .and_then(Value::as_str)
+                .or_else(|| cell.children.first().and_then(Value::as_str))
+                .ok_or_else(|| Error::Compile("table header must be a string".into()))?
+        } else {
+            column_node
+                .and_then(|child| child.get("props"))
+                .and_then(|props| props.get("name"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    Error::Compile("TableColumn.name is required for a headerless table".into())
+                })?
+        };
         let mut column = TableColumn::new().set_header(header);
         if let Some(column_node) = column_node {
             let props = column_node.get("props").and_then(Value::as_object);
@@ -1055,8 +1080,9 @@ fn build_table_columns(
             .and_then(|props| props.get("headerFormat"));
         if let Some(format) = header_format {
             column = column.set_header_format(build_table_column_format(format)?);
-        } else if has_format_properties(&cell) {
-            column = column.set_header_format(build_cell_format(&cell)?);
+        } else if header_cell.as_ref().is_some_and(has_format_properties) {
+            let cell = header_cell.as_ref().expect("header cell exists");
+            column = column.set_header_format(build_cell_format(cell)?);
         }
         columns.push(column);
     }
@@ -5822,6 +5848,9 @@ fn render_worksheet_rows(
                     table.name, table.range
                 )));
             }
+            if !table.header_row {
+                continue;
+            }
             for (offset, header) in table.headers.iter().enumerate() {
                 let col = u32::from(coordinates.1) + u32::try_from(offset).unwrap_or_default();
                 if formula_range
@@ -5901,6 +5930,9 @@ fn render_tables(output: &mut String, tables: &[WorksheetTable]) {
         if table.last_column {
             output.push_str(" lastColumn={true}");
         }
+        if !table.header_row {
+            output.push_str(" headerRow={false}");
+        }
         if table.totals_row {
             output.push_str(" totalsRow={true}");
         }
@@ -5910,12 +5942,15 @@ fn render_tables(output: &mut String, tables: &[WorksheetTable]) {
         if let Some(value) = &table.alt_text_title {
             let _ = write!(output, " altTextTitle={{{value:?}}}");
         }
-        if table.columns.iter().all(WorksheetTableColumn::is_empty) {
+        if table.header_row && table.columns.iter().all(WorksheetTableColumn::is_empty) {
             output.push_str(" />\n");
         } else {
             output.push_str(">\n");
-            for column in &table.columns {
+            for (index, column) in table.columns.iter().enumerate() {
                 output.push_str("      <TableColumn");
+                if !table.header_row {
+                    let _ = write!(output, " name={:?}", table.headers[index]);
+                }
                 if let Some(value) = &column.total_label {
                     let _ = write!(output, " totalLabel={{{value:?}}}");
                 }
@@ -9264,6 +9299,7 @@ fn parse_table_xml(
     let mut reader = XmlReader::from_str(xml);
     let mut table = WorksheetTable {
         style: "TableStyleMedium9".into(),
+        header_row: true,
         ..Default::default()
     };
     let mut in_columns = false;
@@ -9361,11 +9397,15 @@ fn parse_table_xml(
                             || attrs
                                 .get("totalsRowShown")
                                 .is_some_and(|v| v == "1" || v == "true");
-                        if attrs.get("headerRowCount").is_some_and(|v| v != "1") {
-                            return Err(Error::Reverse(format!(
-                                "table part `{part}` is headerless or has multiple header rows; use exactly one header row"
-                            )));
-                        }
+                        table.header_row = match attrs.get("headerRowCount").map(String::as_str) {
+                            None | Some("1") => true,
+                            Some("0") => false,
+                            Some(value) => {
+                                return Err(Error::Reverse(format!(
+                                    "table part `{part}` has unsupported headerRowCount `{value}`; use 0 for headerless or 1 for one header row"
+                                )));
+                            }
+                        };
                         table.name = attrs
                             .get("displayName")
                             .or_else(|| attrs.get("name"))
@@ -23039,6 +23079,7 @@ struct WorksheetTable {
     banded_columns: bool,
     first_column: bool,
     last_column: bool,
+    header_row: bool,
     headers: Vec<String>,
     totals_row: bool,
     alt_text: Option<String>,

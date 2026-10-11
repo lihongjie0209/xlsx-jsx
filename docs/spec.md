@@ -932,7 +932,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   ranges are rejected by reverse because their semantics cannot be recovered
   or represented by this worksheet DSL.
 - `Table` describes one Excel table over an existing rectangular cell range.
-  The range includes a string header row and at least one data row. `name` is
+  By default, the range includes a string header row and at least one data row.
+  `headerRow={false}` instead treats every row in the range as data; each
+  `TableColumn` must then provide its OOXML column `name`, and `headerFormat`
+  is not valid because there is no worksheet header cell. Reverse preserves
+  the column names and header-row flag without relying on the IR manifest.
+  `name` is
   an Excel table name; `style?` accepts `TableStyleNone`, `TableStyleLight1`
   through `TableStyleLight21`, `TableStyleMedium1` through
   `TableStyleMedium28`, or `TableStyleDark1` through `TableStyleDark11`;
@@ -944,7 +949,8 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   are preserved as ordinary `Cell` format properties independently of table style.
   `totalsRow?` enables the final row as a totals row (default false). Optional
   `TableColumn` children describe each column in order; if present, their count
-  must equal the range width. A column may set `totalLabel?` or
+  must equal the range width. In a headerless table they provide the table
+  column names. A column may set `totalLabel?` or
   `totalFunction?` (`none`, `average`, `count`, `countNumbers`, `max`, `min`,
   `sum`, `stdDev`, or `var`) for a totals row, `totalFormula?` for a custom
   totals formula, and/or `formula?` for a calculated column. `totalLabel`,

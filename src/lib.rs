@@ -1782,14 +1782,17 @@ fn validate_worksheet_children(
             }
             if table_ranges
                 .iter()
-                .any(|prior: &(u32, u16, u32, u16)| ranges_overlap(range, *prior))
+                .any(|prior: &((u32, u16, u32, u16), bool)| ranges_overlap(range, prior.0))
             {
                 return Err(Error::Compile(format!(
                     "Table range `{}` overlaps another table; make table ranges disjoint",
                     format_a1_range(range)
                 )));
             }
-            table_ranges.push(range);
+            table_ranges.push((
+                range,
+                child.props.get("headerRow").and_then(Value::as_bool) != Some(false),
+            ));
             continue;
         }
         saw_row = true;
@@ -1853,21 +1856,23 @@ fn validate_worksheet_children(
             .is_some_and(|height| height != 20),
         sheet_name,
     )?;
-    for range in table_ranges {
+    for (range, header_row) in table_ranges {
         if range.2 as usize >= row_index {
             return Err(Error::Compile(format!(
-                "Table range `{}` extends beyond the declared rows; add the missing header/data rows",
+                "Table range `{}` extends beyond the declared rows; add the missing table rows",
                 format_a1_range(range)
             )));
         }
-        let headers = worksheet_table_headers(sheet, range)?;
-        let unique: std::collections::HashSet<_> =
-            headers.iter().map(|header| header.to_lowercase()).collect();
-        if unique.len() != headers.len() {
-            return Err(Error::Compile(format!(
-                "Table range `{}` has duplicate header names; use a unique non-empty string for each header",
-                format_a1_range(range)
-            )));
+        if header_row {
+            let headers = worksheet_table_headers(sheet, range)?;
+            let unique: std::collections::HashSet<_> =
+                headers.iter().map(|header| header.to_lowercase()).collect();
+            if unique.len() != headers.len() {
+                return Err(Error::Compile(format!(
+                    "Table range `{}` has duplicate header names; use a unique non-empty string for each header",
+                    format_a1_range(range)
+                )));
+            }
         }
         if merged_ranges.iter().any(|(r0, c0, r1, c1)| {
             range.0 as usize <= *r1
@@ -7077,6 +7082,7 @@ fn validate_table(
             "bandedColumns",
             "firstColumn",
             "lastColumn",
+            "headerRow",
             "totalsRow",
             "altText",
             "altTextTitle",
@@ -7093,11 +7099,20 @@ fn validate_table(
                 declaration_index + 1
             ))
         })?;
-    let range = parse_a1_range(range_text).filter(|r| r.0 < r.2).ok_or_else(|| Error::Compile(format!("Table.range `{range_text}` must be a valid A1 range with a header and at least one data row; use a range such as `A1:B4`")))?;
-    if table.props.get("totalsRow").and_then(Value::as_bool) == Some(true) && range.2 < range.0 + 2
+    let header_row = table.props.get("headerRow").and_then(Value::as_bool) != Some(false);
+    let range = parse_a1_range(range_text)
+        .filter(|range| !header_row || range.0 < range.2)
+        .ok_or_else(|| {
+            Error::Compile(format!(
+                "Table.range `{range_text}` must include at least one data row{}; use a range such as `A1:B4`",
+                if header_row { " after the header row" } else { "" }
+            ))
+        })?;
+    if table.props.get("totalsRow").and_then(Value::as_bool) == Some(true)
+        && range.2 < range.0 + u32::from(header_row) + 1
     {
         return Err(Error::Compile(format!(
-            "Table.range `{range_text}` must include a header, at least one data row, and the totals row; extend the range by one row"
+            "Table.range `{range_text}` must include at least one data row and the totals row (plus a header when headerRow is true); extend the range"
         )));
     }
     let name = table
@@ -7129,20 +7144,7 @@ fn validate_table(
             "Table.style `{style}` is unsupported; use TableStyleNone, TableStyleLight1–21, TableStyleMedium1–28, or TableStyleDark1–11"
         )));
     }
-    for key in [
-        "autoFilter",
-        "bandedRows",
-        "bandedColumns",
-        "firstColumn",
-        "lastColumn",
-        "totalsRow",
-    ] {
-        if table.props.get(key).is_some_and(|v| v.as_bool().is_none()) {
-            return Err(Error::Compile(format!(
-                "Table.{key} must be a boolean; use `{key}={{true}}` or `{key}={{false}}`"
-            )));
-        }
-    }
+    validate_table_flags(table)?;
     validate_table_accessibility_text(table)?;
     let width = usize::from(range.3 - range.1 + 1);
     if !table.children.is_empty() && table.children.len() != width {
@@ -7151,7 +7153,79 @@ fn validate_table(
             table.children.len()
         )));
     }
+    validate_table_column_names(table, width, header_row)?;
     Ok(range)
+}
+
+fn validate_table_column_names(table: &Node, width: usize, header_row: bool) -> Result<()> {
+    if header_row {
+        if table.children.iter().any(|value| {
+            value
+                .get("props")
+                .and_then(Value::as_object)
+                .is_some_and(|props| props.contains_key("name"))
+        }) {
+            return Err(Error::Compile(
+                "TableColumn.name is only valid when Table.headerRow={false}; use worksheet header cells for headered tables".into(),
+            ));
+        }
+        return Ok(());
+    }
+    if table.children.len() != width {
+        return Err(Error::Compile(format!(
+            "Table.headerRow=false requires one TableColumn name per range column; provide {width} TableColumn children with name props"
+        )));
+    }
+    let mut column_names = std::collections::HashSet::new();
+    for (index, value) in table.children.iter().enumerate() {
+        let column: Node = serde_json::from_value(value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        let column_name = column
+            .props
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                Error::Compile(format!(
+                    "TableColumn {}.name is required when Table.headerRow=false; provide the OOXML column name",
+                    index + 1
+                ))
+            })?;
+        if !column_names.insert(column_name.to_lowercase()) {
+            return Err(Error::Compile(format!(
+                "Table.headerRow=false has duplicate column name `{column_name}`; use unique names ignoring case"
+            )));
+        }
+        if column.props.contains_key("headerFormat") {
+            return Err(Error::Compile(format!(
+                "TableColumn {}.headerFormat requires a table header row; remove headerFormat or set Table.headerRow={{true}}",
+                index + 1
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_table_flags(table: &Node) -> Result<()> {
+    for key in [
+        "autoFilter",
+        "bandedRows",
+        "bandedColumns",
+        "firstColumn",
+        "lastColumn",
+        "headerRow",
+        "totalsRow",
+    ] {
+        if table
+            .props
+            .get(key)
+            .is_some_and(|value| value.as_bool().is_none())
+        {
+            return Err(Error::Compile(format!(
+                "Table.{key} must be a boolean; use `{key}={{true}}` or `{key}={{false}}`"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_table_accessibility_text(table: &Node) -> Result<()> {
@@ -7187,6 +7261,7 @@ fn validate_table_column(column: &Node, index: usize) -> Result<()> {
             "formula",
             "format",
             "headerFormat",
+            "name",
         ],
         "TableColumn",
     )?;
@@ -7243,6 +7318,15 @@ fn validate_table_column(column: &Node, index: usize) -> Result<()> {
         if let Some(value) = column.props.get(property) {
             validate_table_column_format(value, property, index)?;
         }
+    }
+    if column.props.get("name").is_some_and(|value| {
+        value
+            .as_str()
+            .is_none_or(|name| name.trim().is_empty() || !name.chars().all(is_valid_xml_character))
+    }) {
+        return Err(Error::Compile(format!(
+            "TableColumn.name at column {index} must be a non-empty XML-safe string; provide a unique column name"
+        )));
     }
     Ok(())
 }
@@ -13007,6 +13091,40 @@ mod tests {
                 .to_string()
                 .contains("not serializable by the pinned writer")
         );
+    }
+
+    #[test]
+    fn accepts_headerless_table_with_explicit_unique_column_names() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"A1:B2","name":"SalesTable","headerRow":false},"children":[
+                    {"type":"TableColumn","props":{"name":"Product"},"children":[]},
+                    {"type":"TableColumn","props":{"name":"Amount"},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Tea"]},{"type":"Cell","props":{},"children":[12]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Coffee"]},{"type":"Cell","props":{},"children":[18]}]}
+            ]
+        })]);
+        let result = input.validate();
+        assert!(result.is_ok(), "unexpected validation error: {result:?}");
+    }
+
+    #[test]
+    fn rejects_headerless_table_column_without_name_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"A1:B2","name":"SalesTable","headerRow":false},"children":[
+                    {"type":"TableColumn","props":{"name":"Product"},"children":[]},
+                    {"type":"TableColumn","props":{},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Tea"]},{"type":"Cell","props":{},"children":[12]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Coffee"]},{"type":"Cell","props":{},"children":[18]}]}
+            ]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("each headerless table column needs a name");
+        assert!(error.to_string().contains("TableColumn 2.name is required"));
     }
 
     #[test]

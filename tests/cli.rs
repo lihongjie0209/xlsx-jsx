@@ -31,6 +31,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("fillForegroundColor"))
         .stdout(predicate::str::contains("fillBackgroundColor"))
         .stdout(predicate::str::contains("fillHidden"))
+        .stdout(predicate::str::contains("headerRow"))
         .stdout(predicate::str::contains("hyperlinkTooltip"))
         .stdout(predicate::str::contains("formulaResult"))
         .stdout(predicate::str::contains("fontColor"))
@@ -13244,6 +13245,73 @@ fn external_table_totals_and_calculated_columns_survive_reverse_recompile() {
         .arg(&second);
     command.assert().success();
     assert_eq!(std::fs::read_to_string(second).unwrap(), source);
+}
+
+#[test]
+fn reverses_and_rebuilds_external_headerless_table_with_column_names() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("external-headerless-table.xlsx");
+    let reversed = directory.path().join("external-headerless-table.tsx");
+    let rebuilt = directory.path().join("rebuilt-headerless-table.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.write_string(0, 0, "Tea").expect("data writes");
+    worksheet.write_number(0, 1, 12).expect("data writes");
+    worksheet.write_string(1, 0, "Coffee").expect("data writes");
+    worksheet.write_number(1, 1, 18).expect("data writes");
+    let columns = [
+        rust_xlsxwriter::TableColumn::new().set_header("Product"),
+        rust_xlsxwriter::TableColumn::new().set_header("Amount"),
+    ];
+    let table = rust_xlsxwriter::Table::new()
+        .set_name("SalesTable")
+        .set_header_row(false)
+        .set_columns(&columns);
+    worksheet
+        .add_table(0, 0, 1, 1, &table)
+        .expect("headerless table is added");
+    workbook.save(&input).expect("external workbook writes");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(source.contains("headerRow={false}"), "{source}");
+    assert!(
+        source.contains("<TableColumn name=\"Product\" />"),
+        "{source}"
+    );
+    assert!(
+        source.contains("<TableColumn name=\"Amount\" />"),
+        "{source}"
+    );
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_source = directory.path().join("rebuilt-headerless-table.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&rebuilt_source)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(&rebuilt_source).expect("rebuilt reverse exists"),
+        source
+    );
 }
 
 #[test]

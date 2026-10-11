@@ -327,6 +327,7 @@
             "bandedColumns": { "type": "boolean" },
             "firstColumn": { "type": "boolean" },
             "lastColumn": { "type": "boolean" },
+            "headerRow": { "type": "boolean" },
             "totalsRow": { "type": "boolean" },
             "altText": { "type": "string" },
             "altTextTitle": { "type": "string" }
@@ -335,6 +336,26 @@
         },
         "children": { "type": "array", "items": { "$ref": "#/$defs/tableColumn" } }
       },
+      "allOf": [
+        {
+          "if": { "properties": { "props": { "properties": { "headerRow": { "const": false } }, "required": ["headerRow"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "children": {
+                "minItems": 1,
+                "items": {
+                  "properties": {
+                    "props": {
+                      "required": ["name"],
+                      "not": { "required": ["headerFormat"] }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "tableColumn": {
@@ -345,6 +366,7 @@
         "props": {
           "type": "object",
           "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 255 },
             "totalLabel": { "type": "string" },
             "totalFunction": { "type": "string", "enum": ["none", "average", "count", "countNumbers", "max", "min", "sum", "stdDev", "var"] },
             "totalFormula": { "type": "string", "minLength": 1 },
