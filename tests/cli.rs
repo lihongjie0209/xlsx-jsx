@@ -46,6 +46,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("markerFillColor"))
         .stdout(predicate::str::contains("markerFillTransparency"))
         .stdout(predicate::str::contains("markerLineColor"))
+        .stdout(predicate::str::contains("labelFillTransparency"))
+        .stdout(predicate::str::contains("labelLineTransparency"))
         .stdout(predicate::str::contains("legendLineColor"))
         .stdout(predicate::str::contains("legendLineHidden"))
         .stdout(predicate::str::contains("markerLineWidth"))
@@ -4839,6 +4841,129 @@ fn reverses_and_rebuilds_series_and_trendline_legend_deletions_without_a_manifes
         xml.contains("<c:legendEntry><c:idx val=\"2\"/><c:delete val=\"1\"/></c:legendEntry>"),
         "{xml}"
     );
+}
+
+#[test]
+fn reverses_and_rebuilds_external_trendline_equation_label_shape_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-trendline-label-shape.xlsx");
+    let source_path = directory.path().join("external-trendline-label-shape.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-trendline-label-shape.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    let mut label_line = ChartLine::new();
+    label_line
+        .set_color("#336699")
+        .set_width(1.5)
+        .set_dash_type(ChartLineDashType::DashDot)
+        .set_transparency(25);
+    let mut trendline = ChartTrendline::new();
+    trendline
+        .set_type(ChartTrendlineType::Linear)
+        .display_equation(true)
+        .set_label_format(
+            ChartFormat::new()
+                .set_solid_fill(
+                    ChartSolidFill::new()
+                        .set_color("#FFF2CC")
+                        .set_transparency(20),
+                )
+                .set_line(&label_line),
+        );
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_trendline(&trendline);
+    let mut hidden_label_line = ChartLine::new();
+    hidden_label_line.set_hidden(true);
+    let mut hidden_label_trendline = ChartTrendline::new();
+    hidden_label_trendline
+        .set_type(ChartTrendlineType::Linear)
+        .display_equation(true)
+        .set_label_format(ChartFormat::new().set_line(&hidden_label_line));
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!C2:C4")
+        .set_trendline(&hidden_label_trendline);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("labelFillColor=\"#FFF2CC\""), "{source}");
+    assert!(source.contains("labelFillTransparency={20}"), "{source}");
+    assert!(source.contains("labelLineColor=\"#336699\""), "{source}");
+    assert!(source.contains("labelLineWidth={1.5}"), "{source}");
+    assert!(source.contains("labelLineDash=\"dashDot\""), "{source}");
+    assert!(source.contains("labelLineTransparency={25}"), "{source}");
+    assert!(source.contains("labelLineHidden={true}"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:trendlineLbl>"), "{xml}");
+    assert!(xml.contains("<a:solidFill><a:srgbClr val=\"FFF2CC\"><a:alpha val=\"80000\"/></a:srgbClr></a:solidFill>"), "{xml}");
+    assert!(xml.contains("<a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"336699\"><a:alpha val=\"75000\"/></a:srgbClr></a:solidFill><a:prstDash val=\"dashDot\"/></a:ln>"), "{xml}");
+    assert!(xml.contains("<a:ln><a:noFill/></a:ln>"), "{xml}");
+}
+
+#[test]
+fn rejects_trendline_label_shape_without_equation_label() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("trendline-shape-without-equation.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series, Trendline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><Trendline type="linear" labelLineColor="#336699" /></Series></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Trendline.label* shape properties require displayEquation={true}",
+        ))
+        .stderr(predicate::str::contains("remove the label properties"));
+}
+
+#[test]
+fn rejects_hidden_trendline_label_outline_with_visible_style() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("trendline-hidden-label-outline.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series, Trendline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><Trendline type="linear" displayEquation={true} labelLineHidden={true} labelLineColor="#336699" /></Series></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "A hidden trendline cannot combine lineColor",
+        ));
 }
 
 #[test]

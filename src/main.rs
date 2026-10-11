@@ -2146,6 +2146,9 @@ fn configure_chart_series_trendline(
     {
         settings.display_r_squared(true);
     }
+    if let Some(mut format) = chart_shape_format(&trendline, "labelFillColor", "labelLine") {
+        settings.set_label_format(&mut format);
+    }
     if [
         "lineColor",
         "lineWidth",
@@ -6242,6 +6245,43 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 }
                 if let Some(name) = &trendline.label_font_name {
                     let _ = write!(output, " labelFontName={name:?}");
+                }
+                if let Some(color) = &trendline.label_fill_color {
+                    let _ = write!(output, " labelFillColor={color:?}");
+                }
+                if let Some(transparency) = trendline.label_fill_transparency {
+                    let _ = write!(output, " labelFillTransparency={{{transparency}}}");
+                }
+                if let Some(color) = trendline
+                    .label_line_style
+                    .as_ref()
+                    .and_then(|style| style.color.as_ref())
+                {
+                    let _ = write!(output, " labelLineColor={color:?}");
+                }
+                if let Some(width) = trendline
+                    .label_line_style
+                    .as_ref()
+                    .and_then(|style| style.width)
+                {
+                    let _ = write!(output, " labelLineWidth={{{width}}}");
+                }
+                if let Some(dash) = trendline
+                    .label_line_style
+                    .as_ref()
+                    .and_then(|style| style.dash)
+                {
+                    let _ = write!(output, " labelLineDash=\"{dash}\"");
+                }
+                if let Some(transparency) = trendline
+                    .label_line_style
+                    .as_ref()
+                    .and_then(|style| style.transparency)
+                {
+                    let _ = write!(output, " labelLineTransparency={{{transparency}}}");
+                }
+                if trendline.label_line_hidden == Some(true) {
+                    output.push_str(" labelLineHidden={true}");
                 }
                 output.push_str(" />\n");
             }
@@ -11108,6 +11148,8 @@ fn parse_chart_xml(
                 let in_trendline_formatting_context =
                     stack.iter().any(|parent| parent == "trendline")
                         && !stack.iter().any(|parent| parent == "trendlineLbl");
+                let in_trendline_label_shape = stack.iter().any(|parent| parent == "trendlineLbl")
+                    && stack.iter().any(|parent| parent == "spPr");
                 let supported_trendline_line_content = in_trendline_formatting_context
                     && match tag.as_str() {
                         "ln" => stack.last().is_some_and(|parent| parent == "spPr"),
@@ -11123,6 +11165,17 @@ fn parse_chart_xml(
                         "prstDash" | "noFill" => stack.last().is_some_and(|parent| parent == "ln"),
                         _ => false,
                     };
+                let supported_trendline_label_shape_content = in_trendline_label_shape
+                    && match tag.as_str() {
+                        "solidFill" => {
+                            matches!(stack.last().map(String::as_str), Some("spPr" | "ln"))
+                        }
+                        "srgbClr" => stack.last().is_some_and(|parent| parent == "solidFill"),
+                        "alpha" => stack.last().is_some_and(|parent| parent == "srgbClr"),
+                        "ln" => stack.last().is_some_and(|parent| parent == "spPr"),
+                        "noFill" | "prstDash" => stack.last().is_some_and(|parent| parent == "ln"),
+                        _ => false,
+                    };
                 let supported_trendline_content = (tag == "name"
                     && stack.last().is_some_and(|parent| parent == "trendline"))
                     || matches!(
@@ -11131,8 +11184,13 @@ fn parse_chart_xml(
                     )
                     || (matches!(tag.as_str(), "dispEq" | "dispRSqr" | "trendlineLbl")
                         && stack.last().is_some_and(|parent| parent == "trendline"))
-                    || (tag == "spPr" && stack.last().is_some_and(|parent| parent == "trendline"))
+                    || (tag == "spPr"
+                        && matches!(
+                            stack.last().map(String::as_str),
+                            Some("trendline" | "trendlineLbl")
+                        ))
                     || supported_trendline_line_content
+                    || supported_trendline_label_shape_content
                     || (matches!(tag.as_str(), "layout" | "numFmt")
                         && stack.last().is_some_and(|parent| parent == "trendlineLbl"))
                     || (tag == "txPr"
@@ -11142,7 +11200,7 @@ fn parse_chart_xml(
                     && !supported_trendline_content
                 {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported `<{tag}>` trendline formatting; retain only the trendline model and numeric parameters"
+                        "chart part `{part}` has unsupported `<{tag}>` trendline formatting; retain only supported model, label, line, and numeric properties"
                     )));
                 }
                 if matches!(tag.as_str(), "dispEq" | "dispRSqr" | "trendlineLbl")
@@ -14579,6 +14637,19 @@ fn parse_chart_xml(
                         table.font_name = name;
                     }
                     "spPr" => {
+                        if stack.last().is_some_and(|item| item == "trendlineLbl") {
+                            let trendline = series
+                                .last_mut()
+                                .and_then(|item| item.trendline.as_mut())
+                                .ok_or_else(|| Error::Reverse(format!(
+                                    "chart part `{part}` has equation-label shape formatting without a trendline"
+                                )))?;
+                            if std::mem::replace(&mut trendline.trendline_label_shape_seen, true) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats trendline equation-label spPr; keep one supported shape format"
+                                )));
+                            }
+                        }
                         let in_series_data_labels =
                             stack.last().is_some_and(|item| item == "dLbls")
                                 && stack.iter().any(|item| item == "ser");
@@ -14599,6 +14670,9 @@ fn parse_chart_xml(
                                 || (stack.last().is_some_and(|ancestor| ancestor == "marker")
                                     && !stack.iter().any(|ancestor| ancestor == "dPt"))
                                 || stack.last().is_some_and(|ancestor| ancestor == "trendline")
+                                || stack
+                                    .last()
+                                    .is_some_and(|ancestor| ancestor == "trendlineLbl")
                                 || matches!(
                                     stack.last().map(String::as_str),
                                     Some("chartSpace" | "plotArea" | "legend" | "dTable")
@@ -14642,6 +14716,21 @@ fn parse_chart_xml(
                             && stack.iter().any(|item| item == "spPr")
                             && stack.iter().any(|item| item == "ser")
                             && !stack.iter().any(|item| item == "dLbl");
+                        let in_trendline_label_shape =
+                            stack.iter().any(|item| item == "trendlineLbl")
+                                && stack.iter().any(|item| item == "spPr");
+                        if in_trendline_label_shape {
+                            let trendline = series
+                                .last_mut()
+                                .and_then(|item| item.trendline.as_mut())
+                                .expect("equation label outline trendline context");
+                            if std::mem::replace(&mut trendline.trendline_label_line_seen, true) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats the trendline equation-label outline"
+                                )));
+                            }
+                            trendline.label_line_hidden = Some(false);
+                        }
                         if in_data_label_shape {
                             let current = series
                                 .last_mut()
@@ -14692,6 +14781,7 @@ fn parse_chart_xml(
                             || (!in_gridlines
                                 && !in_data_table_shape
                                 && !in_data_label_shape
+                                && !in_trendline_label_shape
                                 && !in_legend_shape
                                 && !in_error_bars
                                 && !in_trendline_line
@@ -14711,6 +14801,7 @@ fn parse_chart_xml(
                                 attribute.map_err(|error| Error::Reverse(error.to_string()))?;
                             if (in_title_shape
                                 || in_chart_area_shape
+                                || in_trendline_label_shape
                                 || in_legend_shape
                                 || in_marker_line
                                 || in_drop_lines
@@ -14740,7 +14831,17 @@ fn parse_chart_xml(
                                 );
                             }
                         }
-                        if in_data_table_shape {
+                        if in_trendline_label_shape {
+                            let trendline = series
+                                .last_mut()
+                                .and_then(|item| item.trendline.as_mut())
+                                .expect("equation label line width trendline context");
+                            let style = trendline.label_line_style.get_or_insert_default();
+                            if let Some(width) = line_width {
+                                let emu = width.parse::<u32>().ok().filter(|value| *value > 0 && *value <= 20_116_800 && *value % 3175 == 0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has an equation-label outline width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments")))?;
+                                style.width = Some(f64::from(emu) / 12700.0);
+                            }
+                        } else if in_data_table_shape {
                             let table = data_table.as_mut().ok_or_else(|| {
                                 Error::Reverse(format!(
                                     "chart part `{part}` has data-table outline outside dTable"
@@ -14901,6 +15002,37 @@ fn parse_chart_xml(
                     }
                     "srgbClr"
                         if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|item| item == "trendlineLbl")
+                            && stack.iter().any(|item| item == "spPr")
+                            && !stack.iter().any(|item| item == "ln") =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "trendline equation-label fill",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB trendline equation-label fill; use one six-digit RGB value"
+                            )));
+                        }
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("equation-label fill trendline context");
+                        if trendline
+                            .label_fill_color
+                            .replace(format!("#{color}").to_ascii_uppercase())
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats trendline equation-label fill; retain one solid RGB fill"
+                            )));
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
                             && stack.iter().any(|item| item == "marker")
                             && stack.iter().any(|item| item == "ln")
                             && !stack.iter().any(|item| item == "dPt") =>
@@ -15024,6 +15156,31 @@ fn parse_chart_xml(
                         if target.replace(transparency).is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats title/legend fill transparency; keep one alpha value"
+                            )));
+                        }
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|ancestor| ancestor == "trendlineLbl")
+                            && stack.iter().any(|ancestor| ancestor == "spPr")
+                            && !stack.iter().any(|ancestor| ancestor == "ln") =>
+                    {
+                        let alpha = chart_element_val_attribute(&event, part, reader.decoder(), "trendline equation-label fill alpha")?
+                            .parse::<u32>().ok().filter(|alpha| *alpha <= 100_000 && alpha % 1000 == 0)
+                            .ok_or_else(|| Error::Reverse(format!("chart part `{part}` has equation-label fill alpha not exactly representable as whole-percent transparency; use increments of 1%")))?;
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("equation-label fill trendline context");
+                        let transparency =
+                            u8::try_from(100 - alpha / 1000).expect("alpha range checked");
+                        if trendline
+                            .label_fill_transparency
+                            .replace(transparency)
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats trendline equation-label fill alpha; keep one value"
                             )));
                         }
                     }
@@ -15190,7 +15347,25 @@ fn parse_chart_xml(
                                 "chart part `{part}` has non-RGB series line color; use an opaque six-digit RGB color"
                             )));
                         }
-                        if stack.iter().any(|item| item == "dLbls")
+                        if stack.iter().any(|item| item == "trendlineLbl")
+                            && stack.iter().any(|item| item == "spPr")
+                        {
+                            let trendline = series
+                                .last_mut()
+                                .and_then(|item| item.trendline.as_mut())
+                                .expect("equation-label outline trendline context");
+                            if trendline
+                                .label_line_style
+                                .get_or_insert_default()
+                                .color
+                                .replace(format!("#{color}").to_ascii_uppercase())
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats equation-label outline RGB color"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "dLbls")
                             && stack.iter().any(|item| item == "spPr")
                         {
                             let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
@@ -15399,7 +15574,25 @@ fn parse_chart_xml(
                                 "chart part `{part}` has line alpha not exactly representable by integer transparency; use 1% increments"
                             )));
                         }
-                        if stack.iter().any(|item| item == "dLbls")
+                        if stack.iter().any(|item| item == "trendlineLbl")
+                            && stack.iter().any(|item| item == "spPr")
+                        {
+                            let trendline = series
+                                .last_mut()
+                                .and_then(|item| item.trendline.as_mut())
+                                .expect("equation-label outline alpha trendline context");
+                            if trendline
+                                .label_line_style
+                                .get_or_insert_default()
+                                .transparency
+                                .replace(100 - alpha / 1000)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats equation-label outline transparency"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "dLbls")
                             && stack.iter().any(|item| item == "spPr")
                         {
                             let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
@@ -15596,7 +15789,25 @@ fn parse_chart_xml(
                                 )));
                             }
                         };
-                        if stack.iter().any(|item| item == "dLbls")
+                        if stack.iter().any(|item| item == "trendlineLbl")
+                            && stack.iter().any(|item| item == "spPr")
+                        {
+                            let trendline = series
+                                .last_mut()
+                                .and_then(|item| item.trendline.as_mut())
+                                .expect("equation-label dash trendline context");
+                            if trendline
+                                .label_line_style
+                                .get_or_insert_default()
+                                .dash
+                                .replace(dash)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats equation-label outline dash"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "dLbls")
                             && stack.iter().any(|item| item == "spPr")
                         {
                             let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
@@ -15717,6 +15928,20 @@ fn parse_chart_xml(
                             }
                         } else if let Some(current) = series.last_mut() {
                             current.line_dash = Some(dash);
+                        }
+                    }
+                    "noFill"
+                        if stack.last().is_some_and(|parent| parent == "ln")
+                            && stack.iter().any(|item| item == "trendlineLbl") =>
+                    {
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("equation-label hidden outline trendline context");
+                        if trendline.label_line_hidden.replace(true) == Some(true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats hidden equation-label outline; keep one noFill"
+                            )));
                         }
                     }
                     "noFill"
@@ -16349,6 +16574,59 @@ fn parse_chart_xml(
                     {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` has an equation display flag that does not match the default trendline label; retain dispEq with one General/sourceLinked=0 label format"
+                        )));
+                    }
+                    if trendline.trendline_label_shape_seen
+                        && trendline.display_equation != Some(true)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has equation-label shape formatting without dispEq=true; add the equation label or remove its spPr"
+                        )));
+                    }
+                    if trendline.label_fill_transparency.is_some()
+                        && trendline.label_fill_color.is_none()
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has equation-label fill transparency without an RGB fill; add labelFillColor or remove alpha"
+                        )));
+                    }
+                    if trendline.trendline_label_shape_seen
+                        && trendline.label_fill_color.is_none()
+                        && !trendline.trendline_label_line_seen
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has empty equation-label spPr; add a supported RGB fill or outline, or remove spPr"
+                        )));
+                    }
+                    if trendline.trendline_label_line_seen
+                        && trendline.label_line_hidden != Some(true)
+                        && trendline
+                            .label_line_style
+                            .as_ref()
+                            .is_none_or(WorksheetChartGridlineStyle::is_empty)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an empty equation-label outline; specify a supported line property or remove the outline"
+                        )));
+                    }
+                    if trendline
+                        .label_line_style
+                        .as_ref()
+                        .is_some_and(|style| style.transparency.is_some() && style.color.is_none())
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has equation-label outline transparency without RGB color; add labelLineColor or remove alpha"
+                        )));
+                    }
+                    if trendline.label_line_hidden == Some(true)
+                        && trendline.label_line_style.as_ref().is_some_and(|style| {
+                            style.color.is_some()
+                                || style.transparency.is_some()
+                                || style.dash.is_some_and(|dash| dash != "solid")
+                        })
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` combines a hidden equation-label outline with visible formatting; remove noFill or remove its color, non-solid dash, and transparency"
                         )));
                     }
                     if trendline.line_hidden == Some(true)
@@ -21810,6 +22088,10 @@ struct WorksheetChartSeries {
     delete_from_legend: bool,
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "These booleans independently record OOXML equation-label and shape element presence."
+)]
 #[derive(Clone, Default)]
 struct WorksheetChartTrendline {
     trend_type: Option<&'static str>,
@@ -21833,6 +22115,12 @@ struct WorksheetChartTrendline {
     label_font_underline: Option<bool>,
     label_font_color: Option<String>,
     label_font_name: Option<String>,
+    label_fill_color: Option<String>,
+    label_fill_transparency: Option<u8>,
+    label_line_style: Option<WorksheetChartGridlineStyle>,
+    label_line_hidden: Option<bool>,
+    trendline_label_shape_seen: bool,
+    trendline_label_line_seen: bool,
     trendline_label_seen: bool,
     trendline_label_num_format_seen: bool,
 }

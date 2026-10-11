@@ -4674,6 +4674,13 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
                 "labelFontUnderline",
                 "labelFontColor",
                 "labelFontName",
+                "labelFillColor",
+                "labelFillTransparency",
+                "labelLineColor",
+                "labelLineWidth",
+                "labelLineDash",
+                "labelLineTransparency",
+                "labelLineHidden",
                 "deleteFromLegend",
                 "order",
                 "period",
@@ -4706,6 +4713,7 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
             }
         }
         validate_trendline_label_font(&trendline)?;
+        validate_trendline_label_shape(&trendline)?;
         if let Some(value) = trendline.props.get("deleteFromLegend") {
             let Some(enabled) = value.as_bool() else {
                 return Err(Error::Compile(
@@ -4896,6 +4904,82 @@ fn validate_trendline_label_font(trendline: &Node) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_trendline_label_shape(trendline: &Node) -> Result<()> {
+    let shape_properties = [
+        "labelFillColor",
+        "labelFillTransparency",
+        "labelLineColor",
+        "labelLineWidth",
+        "labelLineDash",
+        "labelLineTransparency",
+        "labelLineHidden",
+    ];
+    if !shape_properties
+        .iter()
+        .any(|property| trendline.props.contains_key(*property))
+    {
+        return Ok(());
+    }
+    if trendline
+        .props
+        .get("displayEquation")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err(Error::Compile(
+            "Trendline.label* shape properties require displayEquation={true} because the writer only serializes equation-label formatting when that label is enabled; add displayEquation={true} or remove the label properties".into(),
+        ));
+    }
+    if let Some(value) = trendline.props.get("labelFillColor") {
+        let Some(color) = value.as_str() else {
+            return Err(Error::Compile(
+                "Trendline.labelFillColor must be an opaque RGB color like #FFF2CC".into(),
+            ));
+        };
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Compile(
+                "Trendline.labelFillColor must match #RRGGBB; use exactly six hexadecimal digits"
+                    .into(),
+            ));
+        }
+    }
+    if let Some(value) = trendline.props.get("labelFillTransparency")
+        && value.as_u64().is_none_or(|transparency| transparency > 100)
+    {
+        return Err(Error::Compile(
+            "Trendline.labelFillTransparency must be an integer percentage from 0 through 100"
+                .into(),
+        ));
+    }
+    if trendline.props.contains_key("labelFillTransparency")
+        && !trendline.props.contains_key("labelFillColor")
+    {
+        return Err(Error::Compile("Trendline.labelFillTransparency requires labelFillColor because transparency is serialized with the RGB fill; add labelFillColor or remove labelFillTransparency".into()));
+    }
+    let mut line = trendline.clone();
+    line.props.clear();
+    for (from, to) in [
+        ("labelLineColor", "lineColor"),
+        ("labelLineWidth", "lineWidth"),
+        ("labelLineDash", "lineDash"),
+        ("labelLineTransparency", "lineTransparency"),
+        ("labelLineHidden", "lineHidden"),
+    ] {
+        if let Some(value) = trendline.props.get(from) {
+            line.props.insert(to.into(), value.clone());
+        }
+    }
+    validate_chart_trendline_line(&line).map_err(|error| match error {
+        Error::Compile(message) => {
+            Error::Compile(message.replace("Trendline.line", "Trendline.labelLine"))
+        }
+        other => other,
+    })
 }
 
 fn validate_chart_trendline_line(trendline: &Node) -> Result<()> {
