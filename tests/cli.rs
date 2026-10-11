@@ -229,6 +229,17 @@ fn spec_exposes_chart_components_and_properties() {
 }
 
 #[test]
+fn spec_exposes_chart_data_label_font_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("labelFontSize"))
+        .stdout(predicate::str::contains("labelFontRotation"));
+}
+
+#[test]
 fn spec_exposes_chart_title_font_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -2353,6 +2364,52 @@ fn reverses_external_series_data_label_number_formats_without_a_manifest() {
 }
 
 #[test]
+fn series_data_label_font_properties_round_trip_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("series-label-font.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" showValue={true} labelFontSize={12} labelFontBold={true} labelFontItalic={true} labelFontUnderline={true} labelFontColor="#336699" labelFontName="Aptos" labelFontPitchFamily={34} labelFontCharset={127} labelFontRotation={45} /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    let workbook = directory.path().join("series-label-font.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    let reversed = directory.path().join("series-label-font-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let output = std::fs::read_to_string(reversed).expect("reverse output reads");
+    for property in [
+        "labelFontSize={12}",
+        "labelFontBold={true}",
+        "labelFontItalic={true}",
+        "labelFontUnderline={true}",
+        "labelFontColor=\"#336699\"",
+        "labelFontName=\"Aptos\"",
+        "labelFontPitchFamily={34}",
+        "labelFontCharset={127}",
+        "labelFontRotation={45}",
+    ] {
+        assert!(
+            output.contains(property),
+            "missing {property} in:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn rejects_invalid_chart_data_label_number_formats_with_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory
@@ -2373,6 +2430,27 @@ fn rejects_invalid_chart_data_label_number_formats_with_guidance() {
             "Series.labelNumberFormat must contain 1–255 valid XML characters",
         ))
         .stderr(predicate::str::contains("shorten the format code"));
+}
+
+#[test]
+fn rejects_invalid_series_data_label_font_charset_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-label-font-charset.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" labelFontCharset={128} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Series.labelFontCharset must be an integer from 0 to 127",
+        ))
+        .stderr(predicate::str::contains("schema-valid byte value"));
 }
 
 #[test]

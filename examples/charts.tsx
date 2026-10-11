@@ -9,7 +9,7 @@ export default <Workbook>
   </Worksheet>
   <Worksheet name="Sales">
     <Chart type="column" cell="D2" width={480} height={288} name="Revenue and expenses" title="Monthly revenue &amp; expenses — 2026" titleOverlay={true} chartAreaFillColor="#FFFFFF" plotAreaFillColor="#F2F2F2" xAxisTitle="Month" yAxisTitle="Revenue ($)" yAxisNumberFormat="$#,##0.00" yAxisMin={0} yAxisMax={20} yAxisMajorUnit={5} yAxisMinorUnit={1} valueAxisDisplayUnit="thousands" categoryAxisLabelAlignment="left" categoryAxisOnTickMarks={true} style={7} xAxisCrossing="max" yAxisCrossing="min" horizontalAxisHidden={true} horizontalAxisMinorGridlines={true} verticalAxisMajorGridlines={{color: "#D9E1F2", width: 0.75, dash: "solid"}} horizontalAxisMajorTickType="none" verticalAxisMajorTickType="outside" horizontalAxisLabelPosition="high" verticalAxisLabelPosition="low" legendPosition="bottom" legendOverlay={true} showHiddenData={true} emptyCellsAs="span" showNaAsEmptyCell={true} altText="Monthly revenue compared with expenses">
-      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" gap={70} overlap={-25} showValue={true} showCategoryName={true} labelPosition="insideEnd" labelNumberFormat="$#,##0.00">
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" gap={70} overlap={-25} showValue={true} showCategoryName={true} labelPosition="insideEnd" labelNumberFormat="$#,##0.00" labelFontSize={12} labelFontBold={true} labelFontColor="#336699">
         <ErrorBars axis="y" type="custom" plusRange="Data!$D$2:$D$4" minusRange="Data!$E$2:$E$4" lineColor="#4472C4" lineWidth={1.5} lineDash="dash" lineTransparency={20} />
         <Trendline type="linear" deleteFromLegend={true} />
       </Series>

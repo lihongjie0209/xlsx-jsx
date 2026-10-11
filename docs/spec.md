@@ -414,6 +414,18 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   Explicit false flags and the default comma separator fold to omission.
   `Series.labelNumberFormat?: string` sets the label number format using
   `ChartDataLabel::set_num_format`; it must contain 1–255 valid XML characters.
+  `Series.labelFontSize?: number` sets label text size in points (1–4000);
+  `labelFontBold?: boolean`, `labelFontItalic?: boolean`,
+  `labelFontUnderline?: boolean`, and `labelFontColor?: "#RRGGBB"` preserve
+  explicit font emphasis, single underline, and opaque RGB color.
+  `labelFontName?: string` sets the Latin typeface (1–255 XML-safe characters),
+  `labelFontPitchFamily?: integer` accepts 0–255, and
+  `labelFontCharset?: integer` accepts schema-valid 0–127. `labelFontRotation?:
+  integer` accepts -90 through 90 or the stacked/East-Asian vertical modes 270
+  and 271. These properties apply to series-level labels only; reverse rejects
+  inconsistent font values, point-specific label formatting, and unsupported
+  font metadata. The pinned writer exposes `ChartFont::set_strikethrough()` but
+  does not serialize it, so data-label strikethrough is not available.
   Reverse preserves a series `<c:numFmt>` only when `sourceLinked="0"` (the
   writer's explicit, unlinked format) is present; linked or implicit formats
   are rejected because they cannot be reproduced exactly. When no category or

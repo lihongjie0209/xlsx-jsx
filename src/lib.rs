@@ -3291,6 +3291,15 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "showLeaderLines",
                 "labelSeparator",
                 "labelNumberFormat",
+                "labelFontSize",
+                "labelFontBold",
+                "labelFontItalic",
+                "labelFontUnderline",
+                "labelFontColor",
+                "labelFontName",
+                "labelFontPitchFamily",
+                "labelFontCharset",
+                "labelFontRotation",
                 "markerType",
                 "markerSize",
                 "lineColor",
@@ -4139,6 +4148,7 @@ fn validate_chart_error_bar_amount(error_bars: &Node, series: &Node) -> Result<(
 }
 
 fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
+    validate_series_data_label_font_properties(series)?;
     for property in [
         "showValue",
         "showCategoryName",
@@ -4174,10 +4184,23 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
         .any(|property| series.props.get(*property).and_then(Value::as_bool) == Some(true))
         || series.props.contains_key("labelPosition")
         || series.props.contains_key("labelSeparator")
-        || series.props.contains_key("labelNumberFormat");
+        || series.props.contains_key("labelNumberFormat")
+        || [
+            "labelFontSize",
+            "labelFontBold",
+            "labelFontItalic",
+            "labelFontUnderline",
+            "labelFontColor",
+            "labelFontName",
+            "labelFontPitchFamily",
+            "labelFontCharset",
+            "labelFontRotation",
+        ]
+        .iter()
+        .any(|property| series.props.contains_key(*property));
     if value_suppressed && !category_or_percentage_shown && another_label_option {
         return Err(Error::Compile(
-            "Series.showValue={false} cannot be combined with Series.showLegendKey, showLeaderLines, showSeriesName, labelPosition, labelSeparator, or labelNumberFormat because rust_xlsxwriter automatically enables values; enable showCategoryName or showPercentage, or remove the conflicting options".into(),
+            "Series.showValue={false} cannot be combined with Series.showLegendKey, showLeaderLines, showSeriesName, labelPosition, labelSeparator, labelNumberFormat, or labelFont* properties because rust_xlsxwriter automatically enables values; enable showCategoryName or showPercentage, or remove the conflicting options".into(),
         ));
     }
     if let Some(value) = series.props.get("labelPosition") {
@@ -4220,6 +4243,89 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
         {
             return Err(Error::Compile(
                 "Series.labelNumberFormat must contain 1–255 valid XML characters; shorten the format code or remove control characters".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_series_data_label_font_properties(series: &Node) -> Result<()> {
+    if let Some(value) = series.props.get("labelFontSize") {
+        let Some(size) = value.as_f64() else {
+            return Err(Error::Compile(
+                "Series.labelFontSize must be a number in points; use a value from 1 to 4000"
+                    .into(),
+            ));
+        };
+        if !size.is_finite() || !(1.0..=4000.0).contains(&size) {
+            return Err(Error::Compile(
+                "Series.labelFontSize must be between 1 and 4000 points; choose a value in that range".into(),
+            ));
+        }
+    }
+    for property in ["labelFontBold", "labelFontItalic", "labelFontUnderline"] {
+        if let Some(value) = series.props.get(property)
+            && !value.is_boolean()
+        {
+            return Err(Error::Compile(format!(
+                "Series.{property} must be a boolean; use true or false"
+            )));
+        }
+    }
+    if let Some(value) = series.props.get("labelFontColor") {
+        let Some(color) = value.as_str() else {
+            return Err(Error::Compile(
+                "Series.labelFontColor must be an opaque RGB color like #336699; use a quoted six-digit hex color".into(),
+            ));
+        };
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Compile(
+                "Series.labelFontColor must be an opaque RGB color like #336699; use exactly six hexadecimal digits after #".into(),
+            ));
+        }
+    }
+    if let Some(value) = series.props.get("labelFontName") {
+        let Some(name) = value.as_str() else {
+            return Err(Error::Compile(
+                "Series.labelFontName must be a string; provide a non-empty font/typeface name"
+                    .into(),
+            ));
+        };
+        if name.is_empty()
+            || name.chars().count() > 255
+            || !name.chars().all(is_valid_xml_character)
+        {
+            return Err(Error::Compile(
+                "Series.labelFontName must contain 1–255 valid XML characters; use a font name without control characters".into(),
+            ));
+        }
+    }
+    for property in ["labelFontPitchFamily", "labelFontCharset"] {
+        let maximum = if property == "labelFontCharset" {
+            127
+        } else {
+            255
+        };
+        if let Some(value) = series.props.get(property)
+            && value.as_u64().is_none_or(|number| number > maximum)
+        {
+            return Err(Error::Compile(format!(
+                "Series.{property} must be an integer from 0 to {maximum}; provide a schema-valid byte value"
+            )));
+        }
+    }
+    if let Some(value) = series.props.get("labelFontRotation") {
+        let Some(rotation) = value.as_i64() else {
+            return Err(Error::Compile(
+                "Series.labelFontRotation must be an integer; use -90 through 90, 270, or 271 degrees".into(),
+            ));
+        };
+        if !(-90..=90).contains(&rotation) && !matches!(rotation, 270 | 271) {
+            return Err(Error::Compile(
+                "Series.labelFontRotation must be from -90 through 90, or 270/271 for vertical text; choose one of those writer-supported values".into(),
             ));
         }
     }

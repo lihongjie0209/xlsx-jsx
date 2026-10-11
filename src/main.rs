@@ -1361,6 +1361,19 @@ fn configure_chart_series_data_labels(
         .props
         .get("labelNumberFormat")
         .and_then(Value::as_str);
+    let has_font = [
+        "labelFontSize",
+        "labelFontBold",
+        "labelFontItalic",
+        "labelFontUnderline",
+        "labelFontColor",
+        "labelFontName",
+        "labelFontPitchFamily",
+        "labelFontCharset",
+        "labelFontRotation",
+    ]
+    .iter()
+    .any(|property| series.props.contains_key(*property));
     if !(show_value
         || show_category_name
         || show_series_name
@@ -1370,6 +1383,7 @@ fn configure_chart_series_data_labels(
         || position.is_some())
         && separator.is_none()
         && number_format.is_none()
+        && !has_font
     {
         return;
     }
@@ -1401,7 +1415,61 @@ fn configure_chart_series_data_labels(
     if let Some(number_format) = number_format {
         data_label.set_num_format(number_format);
     }
+    if has_font {
+        configure_chart_data_label_font(&mut data_label, series);
+    }
     chart_series.set_data_label(&data_label);
+}
+
+fn configure_chart_data_label_font(data_label: &mut ChartDataLabel, series: &Node) {
+    let mut font = rust_xlsxwriter::ChartFont::new();
+    if let Some(size) = series.props.get("labelFontSize").and_then(Value::as_f64) {
+        font.set_size(size);
+    }
+    match series.props.get("labelFontBold").and_then(Value::as_bool) {
+        Some(true) => {
+            font.set_bold();
+        }
+        Some(false) => {
+            font.unset_bold();
+        }
+        None => {}
+    }
+    if series.props.get("labelFontItalic").and_then(Value::as_bool) == Some(true) {
+        font.set_italic();
+    }
+    if series
+        .props
+        .get("labelFontUnderline")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        font.set_underline();
+    }
+    if let Some(color) = series.props.get("labelFontColor").and_then(Value::as_str) {
+        font.set_color(color);
+    }
+    if let Some(name) = series.props.get("labelFontName").and_then(Value::as_str) {
+        font.set_name(name);
+    }
+    if let Some(family) = series
+        .props
+        .get("labelFontPitchFamily")
+        .and_then(Value::as_u64)
+    {
+        font.set_pitch_family(u8::try_from(family).expect("validated label font pitch family"));
+    }
+    if let Some(charset) = series.props.get("labelFontCharset").and_then(Value::as_u64) {
+        font.set_character_set(u8::try_from(charset).expect("validated label font charset"));
+    }
+    if let Some(rotation) = series
+        .props
+        .get("labelFontRotation")
+        .and_then(Value::as_i64)
+    {
+        font.set_rotation(i16::try_from(rotation).expect("validated label font rotation"));
+    }
+    data_label.set_font(&font);
 }
 
 fn chart_data_label_position(position: &str) -> Option<ChartDataLabelPosition> {
@@ -4965,6 +5033,7 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(number_format) = &series.label_number_format {
             let _ = write!(output, " labelNumberFormat={number_format:?}");
         }
+        append_chart_series_label_font_properties(output, series);
         if series.error_bars.is_empty() && series.trendline.is_none() {
             output.push_str(" />\n");
         } else {
@@ -5041,6 +5110,40 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         );
     }
     output.push_str("    </Chart>\n");
+}
+
+fn append_chart_series_label_font_properties(output: &mut String, series: &WorksheetChartSeries) {
+    if let Some(size) = series.label_font_size {
+        let _ = write!(output, " labelFontSize={{{size}}}");
+    }
+    for (name, value) in [
+        ("labelFontBold", series.label_font_bold),
+        ("labelFontItalic", series.label_font_italic),
+        ("labelFontUnderline", series.label_font_underline),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(output, " {name}={{{value}}}");
+        }
+    }
+    for (name, value) in [
+        ("labelFontColor", series.label_font_color.as_deref()),
+        ("labelFontName", series.label_font_name.as_deref()),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(output, " {name}={value:?}");
+        }
+    }
+    for (name, value) in [
+        ("labelFontPitchFamily", series.label_font_pitch_family),
+        ("labelFontCharset", series.label_font_charset),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(output, " {name}={{{value}}}");
+        }
+    }
+    if let Some(rotation) = series.label_font_rotation {
+        let _ = write!(output, " labelFontRotation={{{rotation}}}");
+    }
 }
 
 fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
@@ -8432,6 +8535,32 @@ fn parse_chart_xml(
                         title_font_rotation = Some(rotation);
                     }
                 }
+                if tag == "bodyPr"
+                    && stack.iter().any(|ancestor| ancestor == "txPr")
+                    && stack.iter().any(|ancestor| ancestor == "dLbls")
+                {
+                    let raw_rotation = chart_xml_attribute(&event, "rot", reader.decoder())?;
+                    let vertical = chart_xml_attribute(&event, "vert", reader.decoder())?;
+                    let parsed_rotation = parse_chart_text_rotation(
+                        raw_rotation.as_deref(),
+                        vertical.as_deref(),
+                        part,
+                        "data-label",
+                    )?;
+                    if let Some(rotation) = parsed_rotation
+                        && let Some(current) = series.last_mut()
+                    {
+                        if current
+                            .label_font_rotation
+                            .is_some_and(|previous| previous != rotation)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent series data-label font rotations; make all txPr bodyPr values identical"
+                            )));
+                        }
+                        current.label_font_rotation = Some(rotation);
+                    }
+                }
                 if matches!(tag.as_str(), "rPr" | "defRPr")
                     && stack.iter().any(|ancestor| ancestor == "title")
                 {
@@ -8513,6 +8642,80 @@ fn parse_chart_xml(
                         }
                         title_font_size = Some(points);
                         title_font_size_seen = true;
+                    }
+                }
+                if matches!(tag.as_str(), "rPr" | "defRPr")
+                    && stack.iter().any(|ancestor| ancestor == "dLbls")
+                {
+                    if !stack.iter().any(|ancestor| ancestor == "txPr")
+                        || !stack.iter().any(|ancestor| ancestor == "ser")
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has run formatting outside a series-level data-label txPr; remove point-specific label formatting"
+                        )));
+                    }
+                    for key in ["b", "i"] {
+                        if let Some(value) = chart_xml_attribute(&event, key, reader.decoder())? {
+                            let parsed = parse_xml_bool(&value, part, &format!("{tag}@{key}"))?;
+                            let current = series.last_mut().expect("series context");
+                            let target = if key == "b" {
+                                &mut current.label_font_bold
+                            } else {
+                                &mut current.label_font_italic
+                            };
+                            if target.is_some_and(|previous| previous != parsed) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has inconsistent series data-label font `{key}` values; make all txPr runs identical"
+                                )));
+                            }
+                            *target = Some(parsed);
+                        }
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "u", reader.decoder())? {
+                        let parsed = match value.as_str() {
+                            "sng" => true,
+                            "none" => false,
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported data-label font underline `{value}`; use single underline or remove it"
+                                )));
+                            }
+                        };
+                        let target = &mut series
+                            .last_mut()
+                            .expect("series context")
+                            .label_font_underline;
+                        if target.is_some_and(|previous| previous != parsed) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent series data-label underlining; make txPr values identical"
+                            )));
+                        }
+                        *target = Some(parsed);
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "baseline", reader.decoder())?
+                        && value != "0"
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has unsupported data-label font baseline `{value}`; remove baseline formatting"
+                        )));
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "sz", reader.decoder())? {
+                        let hundredths = value.parse::<u32>().ok().filter(|size| (100..=400_000).contains(size)).ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has invalid series data-label font size `{value}`; use 100–400000 hundredths of a point"
+                        )))?;
+                        let points = f64::from(hundredths) / 100.0;
+                        let target =
+                            &mut series.last_mut().expect("series context").label_font_size;
+                        #[allow(
+                            clippy::float_cmp,
+                            reason = "Both values are integral hundredths parsed from the same OOXML size field."
+                        )]
+                        if target.is_some_and(|previous| previous != points) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent series data-label font sizes; make all txPr values identical"
+                            )));
+                        }
+                        *target = Some(points);
                     }
                 }
                 let area_sppr_context = chart_area_sppr_context(&stack);
@@ -8668,13 +8871,60 @@ fn parse_chart_xml(
                             | "showLeaderLines"
                             | "separator"
                             | "numFmt"
+                            | "txPr"
                             | "extLst"
                             | "ext"
                     )
+                    && !(stack.iter().any(|ancestor| ancestor == "txPr")
+                        && matches!(
+                            tag.as_str(),
+                            "bodyPr"
+                                | "lstStyle"
+                                | "p"
+                                | "pPr"
+                                | "defRPr"
+                                | "rPr"
+                                | "endParaRPr"
+                                | "solidFill"
+                                | "srgbClr"
+                                | "latin"
+                        ))
                 {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported `<{tag}>` data-label formatting; retain only value/category/series/percentage display flags"
+                        "chart part `{part}` has unsupported `<{tag}>` data-label formatting; retain only display flags and supported series-level label-font properties"
                     )));
+                }
+                if tag == "txPr"
+                    && stack.iter().any(|ancestor| ancestor == "dLbls")
+                    && (stack.last().is_none_or(|parent| parent != "dLbls")
+                        || !stack.iter().any(|ancestor| ancestor == "ser"))
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has text formatting outside a series-level dLbls group; only Series.labelFont* properties are supported"
+                    )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "txPr") {
+                    let supported_parent = match tag.as_str() {
+                        "bodyPr" | "lstStyle" | "p" => {
+                            stack.last().is_some_and(|parent| parent == "txPr")
+                        }
+                        "pPr" | "endParaRPr" => stack.last().is_some_and(|parent| parent == "p"),
+                        "defRPr" => stack.last().is_some_and(|parent| parent == "pPr"),
+                        "rPr" => stack.last().is_some_and(|parent| parent == "p"),
+                        "solidFill" => {
+                            matches!(stack.last().map(String::as_str), Some("defRPr" | "rPr"))
+                        }
+                        "srgbClr" => stack.last().is_some_and(|parent| parent == "solidFill"),
+                        "latin" => {
+                            matches!(stack.last().map(String::as_str), Some("defRPr" | "rPr"))
+                        }
+                        _ => false,
+                    };
+                    if !supported_parent {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has unsupported `<{tag}>` structure in series data-label text properties; keep the writer's txPr paragraph/run form"
+                        )));
+                    }
                 }
                 audit_chart_attributes(
                     &event,
@@ -10742,6 +10992,15 @@ fn parse_chart_xml(
                         show_leader_lines: None,
                         label_separator: None,
                         label_number_format: None,
+                        label_font_size: None,
+                        label_font_bold: None,
+                        label_font_italic: None,
+                        label_font_underline: None,
+                        label_font_color: None,
+                        label_font_name: None,
+                        label_font_pitch_family: None,
+                        label_font_charset: None,
+                        label_font_rotation: None,
                         data_label_flags_seen: [false; 6],
                         data_labels_seen: false,
                         data_label_position_seen: false,
@@ -11385,6 +11644,28 @@ fn parse_chart_xml(
                     }
                     "srgbClr"
                         if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|ancestor| ancestor == "txPr")
+                            && stack.iter().any(|ancestor| ancestor == "dLbls") =>
+                    {
+                        let color =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "srgbClr")?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has non-RGB series data-label font color; use one opaque six-digit RGB value"
+                            )));
+                        }
+                        let color = format!("#{color}").to_ascii_uppercase();
+                        let target =
+                            &mut series.last_mut().expect("series context").label_font_color;
+                        if target.as_ref().is_some_and(|previous| previous != &color) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent series data-label font colors; make all txPr values identical"
+                            )));
+                        }
+                        *target = Some(color);
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
                             && chart_area_sppr_context(&stack).is_some() =>
                     {
                         let area = chart_area_sppr_context(&stack).expect("area fill context");
@@ -11491,6 +11772,60 @@ fn parse_chart_xml(
                         title_font_pitch_family = pitch_family;
                         title_font_charset = charset;
                         title_font_latin_seen = true;
+                    }
+                    "latin"
+                        if stack.iter().any(|ancestor| ancestor == "txPr")
+                            && stack.iter().any(|ancestor| ancestor == "dLbls") =>
+                    {
+                        let name = chart_xml_attribute(&event, "typeface", reader.decoder())?;
+                        if name.as_ref().is_some_and(|name| {
+                            name.is_empty() || !name.chars().all(is_valid_xml_character)
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an empty or invalid data-label Latin typeface; use a non-empty XML-safe name"
+                            )));
+                        }
+                        let pitch_family = chart_xml_attribute(
+                            &event,
+                            "pitchFamily",
+                            reader.decoder(),
+                        )?
+                        .map(|value| value.parse::<u8>())
+                        .transpose()
+                        .map_err(|_| Error::Reverse(format!(
+                            "chart part `{part}` has invalid data-label font pitchFamily; use a byte from 0 to 255"
+                        )))?
+                        .filter(|value| *value != 0);
+                        let raw_charset = chart_xml_attribute(&event, "charset", reader.decoder())?
+                            .map(|value| value.parse::<u8>())
+                            .transpose()
+                            .map_err(|_| Error::Reverse(format!(
+                                "chart part `{part}` has invalid data-label font charset; use a byte from 0 to 255"
+                            )))?;
+                        if raw_charset.is_some_and(|value| value > 127) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has data-label font charset above 127; rust_xlsxwriter emits schema-invalid XML for this value"
+                            )));
+                        }
+                        let charset = match (raw_charset, pitch_family) {
+                            (Some(0) | None, Some(_)) => Some(0),
+                            (Some(0) | None, None) => None,
+                            (value, _) => value,
+                        };
+                        let current = series.last_mut().expect("series context");
+                        if current.label_font_name.is_some() && current.label_font_name != name
+                            || current.label_font_pitch_family.is_some()
+                                && current.label_font_pitch_family != pitch_family
+                            || current.label_font_charset.is_some()
+                                && current.label_font_charset != charset
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent series data-label typeface metadata; make all txPr Latin values identical"
+                            )));
+                        }
+                        current.label_font_name = name;
+                        current.label_font_pitch_family = pitch_family;
+                        current.label_font_charset = charset;
                     }
                     "spPr" => {
                         let has_supported_parent =
@@ -12416,7 +12751,16 @@ fn parse_chart_xml(
                 || item.show_leader_lines == Some(true)
                 || item.label_position.is_some()
                 || item.label_separator.is_some()
-                || item.label_number_format.is_some());
+                || item.label_number_format.is_some()
+                || item.label_font_size.is_some()
+                || item.label_font_bold.is_some()
+                || item.label_font_italic.is_some()
+                || item.label_font_underline.is_some()
+                || item.label_font_color.is_some()
+                || item.label_font_name.is_some()
+                || item.label_font_pitch_family.is_some()
+                || item.label_font_charset.is_some()
+                || item.label_font_rotation.is_some());
         if has_unsupported_value_default {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` combines a data-label option with no value/category/percentage label; rust_xlsxwriter automatically enables values for this combination, so add an explicit showVal or remove the ancillary option"
@@ -13323,9 +13667,53 @@ fn resolve_scatter_chart_type(
     }
 }
 
+fn parse_chart_text_rotation(
+    raw_rotation: Option<&str>,
+    vertical: Option<&str>,
+    part: &str,
+    description: &str,
+) -> xlsx_jsx::Result<Option<i16>> {
+    let rotation = match (raw_rotation, vertical) {
+        (None, None | Some("horz")) => None,
+        (Some("0"), Some("wordArtVert")) => Some(270),
+        (Some("0"), Some("eaVert")) => Some(271),
+        (Some(rotation), None | Some("horz")) => {
+            let rotation = rotation.parse::<i32>().map_err(|_| {
+                Error::Reverse(format!(
+                    "chart part `{part}` has invalid {description} rotation `{rotation}`; use a whole degree from -90 through 90 or a supported vertical mode"
+                ))
+            })?;
+            if rotation % 60_000 != 0 || !(-5_400_000..=5_400_000).contains(&rotation) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has {description} rotation `{rotation}` that is not an exact writer-supported degree; use -90 through 90 degrees"
+                )));
+            }
+            Some(rotation / 60_000)
+        }
+        _ => {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has an unsupported {description} bodyPr rot/vert combination; use horizontal integer-degree rotation or a supported vertical mode"
+            )));
+        }
+    };
+    rotation
+        .map(|rotation| {
+            i16::try_from(rotation).map_err(|_| {
+                Error::Reverse(format!(
+                    "chart part `{part}` has {description} rotation outside the supported integer degree range"
+                ))
+            })
+        })
+        .transpose()
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Attribute acceptance depends on the chart XML stack and active title target."
+)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Attribute validation is kept together to audit each OOXML attribute against its XML context."
 )]
 fn audit_chart_attributes(
     event: &BytesStart<'_>,
@@ -13367,6 +13755,43 @@ fn audit_chart_attributes(
                 ("vert", "horz" | "wordArtVert" | "eaVert") => true,
                 _ => false,
             };
+        let is_series_data_label_font_context = stack.iter().any(|ancestor| ancestor == "ser")
+            && stack.iter().any(|ancestor| ancestor == "dLbls")
+            && stack.iter().any(|ancestor| ancestor == "txPr");
+        let is_supported_chart_label_font_attribute = is_series_data_label_font_context
+            && if matches!(tag, "rPr" | "defRPr") {
+                match (key.as_str(), value.as_str()) {
+                    ("sz", value) => value
+                        .parse::<u32>()
+                        .is_ok_and(|size| (100..=400_000).contains(&size)),
+                    ("b" | "i", "0" | "1" | "true" | "false")
+                    | ("u", "sng" | "none")
+                    | ("baseline", "0") => true,
+                    _ => false,
+                }
+            } else if tag == "latin" {
+                match key.as_str() {
+                    "typeface" => !value.is_empty() && value.chars().all(is_valid_xml_character),
+                    "pitchFamily" | "charset" => value.parse::<u8>().is_ok(),
+                    _ => false,
+                }
+            } else {
+                false
+            };
+        let is_supported_chart_label_body_attribute = is_series_data_label_font_context
+            && tag == "bodyPr"
+            && match (key.as_str(), value.as_str()) {
+                ("rot", value) => value.parse::<i32>().is_ok_and(|rotation| {
+                    (-5_400_000..=5_400_000).contains(&rotation)
+                        && (rotation == 0 || rotation % 60_000 == 0)
+                }),
+                ("vert", "horz" | "wordArtVert" | "eaVert") => true,
+                _ => false,
+            };
+        let is_supported_chart_label_end_para_attribute = is_series_data_label_font_context
+            && tag == "endParaRPr"
+            && key == "lang"
+            && value == "en-US";
         let is_supported_chart_title_font_attribute = chart_title_target == Some("title")
             && stack.iter().any(|ancestor| ancestor == "title")
             && if matches!(tag, "rPr" | "defRPr") {
@@ -13391,6 +13816,9 @@ fn audit_chart_attributes(
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
             && !is_supported_chart_title_body_attribute
+            && !is_supported_chart_label_font_attribute
+            && !is_supported_chart_label_body_attribute
+            && !is_supported_chart_label_end_para_attribute
             && !is_supported_chart_title_font_attribute
         {
             return Err(Error::Reverse(format!(
@@ -16638,6 +17066,15 @@ struct WorksheetChartSeries {
     show_leader_lines: Option<bool>,
     label_separator: Option<String>,
     label_number_format: Option<String>,
+    label_font_size: Option<f64>,
+    label_font_bold: Option<bool>,
+    label_font_italic: Option<bool>,
+    label_font_underline: Option<bool>,
+    label_font_color: Option<String>,
+    label_font_name: Option<String>,
+    label_font_pitch_family: Option<u8>,
+    label_font_charset: Option<u8>,
+    label_font_rotation: Option<i16>,
     data_label_flags_seen: [bool; 6],
     data_labels_seen: bool,
     data_label_position_seen: bool,
