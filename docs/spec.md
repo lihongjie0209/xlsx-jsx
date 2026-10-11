@@ -217,20 +217,27 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   folded when equivalent. Theme, indexed, automatic, and translucent colors,
   East Asian/complex-script typefaces, and other font properties remain
   rejected unless they have an explicit DSL property.
-- `Chart.titleFillColor?: "#RRGGBB"` sets an opaque RGB solid fill on a static
+- `Chart.titleFillColor?: "#RRGGBB"` sets an RGB solid fill on a static
   chart title. `titleLineColor`, `titleLineWidth`, `titleLineDash`, and
   `titleLineTransparency` model the outline through `ChartTitle::set_format()`
   and `ChartLine`; width is 0.25–1584 points in quarter-point increments,
   dash uses the supported chart-line presets, and transparency is 0–100 and
-  requires an RGB line color. All require `title`; reverse rejects patterns,
+  requires an RGB line color. All title shape properties require `title`; fill
+  transparency also requires `titleFillColor`. Reverse rejects patterns,
   gradients, effects, theme/indexed colors, and unsupported line children.
-- `Chart.legendFillColor?: "#RRGGBB"` sets an opaque RGB solid fill on the
+- `Chart.titleFillTransparency?: integer` sets title solid-fill alpha in whole
+  percentages from 0 (opaque) through 100 (fully transparent), requiring
+  both `title` and `titleFillColor`.
+- `Chart.legendFillColor?: "#RRGGBB"` sets an RGB solid fill on the
   visible legend using `ChartLegend::set_format()`. Reverse accepts one solid
-  fill and rejects patterns, gradients, transparency, effects, borders, and
+  fill and rejects patterns, gradients, effects, borders, and
   extension markup. The property requires a visible legend and cannot be
   combined with `showLegend={false}`. It also cannot be combined with
   `legendOverlay={true}`: the pinned writer serializes that combination in an
   Open XML schema-invalid child order.
+- `Chart.legendFillTransparency?: integer` sets whole-percent fill alpha from
+  0 through 100 and requires `legendFillColor`; the legend must be visible and
+  cannot use `legendOverlay={true}`.
 - `Chart.titleLayout?: { x, y }` manually positions a static chart title using
   finite relative fractions in `[0, 1]` of the chart width and height. The
   writer uses outer/default layout target and edge positioning. It requires
@@ -296,10 +303,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   invalid. Rotation is an integer from -90–90 or 270/271 for stacked/East Asian
   vertical text. Font properties require their matching axis title; other run
   formatting remains rejected.
-- `Chart.xAxisTitleFillColor` and `Chart.yAxisTitleFillColor` set a solid opaque
-  RGB background on the matching axis-title shape via
+- `Chart.xAxisTitleFillColor` and `Chart.yAxisTitleFillColor` set a solid RGB
+  background on the matching axis-title shape via
   `ChartAxis::set_name_format()`. Colors use `#RRGGBB`; each property requires
-  its matching axis title. `xAxisTitleLineColor`, `xAxisTitleLineWidth`,
+  its matching axis title. `xAxisTitleFillTransparency` and
+  `yAxisTitleFillTransparency` use whole percentages from 0 through 100 and
+  require the matching title and fill color. `xAxisTitleLineColor`, `xAxisTitleLineWidth`,
   `xAxisTitleLineDash`, and `xAxisTitleLineTransparency` (and their `yAxis`
   counterparts) control the title-shape outline through `ChartLine`; width is
   0.25–1584 points in quarter-point steps, dash uses the supported chart-line

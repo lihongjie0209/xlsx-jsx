@@ -1893,15 +1893,19 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "altText",
             "title",
             "titleFillColor",
+            "titleFillTransparency",
             "titleLineColor",
             "titleLineWidth",
             "titleLineDash",
             "titleLineTransparency",
             "legendFillColor",
+            "legendFillTransparency",
             "xAxisTitle",
             "yAxisTitle",
             "xAxisTitleFillColor",
+            "xAxisTitleFillTransparency",
             "yAxisTitleFillColor",
+            "yAxisTitleFillTransparency",
             "xAxisTitleLineColor",
             "xAxisTitleLineWidth",
             "xAxisTitleLineDash",
@@ -2571,7 +2575,9 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
             "xAxisTitle",
             "yAxisTitle",
             "xAxisTitleFillColor",
+            "xAxisTitleFillTransparency",
             "yAxisTitleFillColor",
+            "yAxisTitleFillTransparency",
             "xAxisTitleLineColor",
             "xAxisTitleLineWidth",
             "xAxisTitleLineDash",
@@ -2619,6 +2625,19 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
 fn validate_chart_axis_title_fill_colors(chart: &Node) -> Result<()> {
     for axis in ["x", "y"] {
         let property = format!("{axis}AxisTitleFillColor");
+        let transparency_property = format!("{axis}AxisTitleFillTransparency");
+        if let Some(value) = chart.props.get(&transparency_property) {
+            if value.as_u64().is_none_or(|transparency| transparency > 100) {
+                return Err(Error::Compile(format!(
+                    "Chart.{transparency_property} must be an integer from 0 to 100"
+                )));
+            }
+            if !chart.props.contains_key(&property) {
+                return Err(Error::Compile(format!(
+                    "Chart.{transparency_property} requires Chart.{property}; add a fill color or remove transparency"
+                )));
+            }
+        }
         let Some(value) = chart.props.get(&property) else {
             continue;
         };
@@ -2717,6 +2736,18 @@ fn is_opaque_rgb_color(color: &str) -> bool {
 }
 
 fn validate_chart_title_shape_format(chart: &Node) -> Result<()> {
+    if let Some(value) = chart.props.get("titleFillTransparency") {
+        if value.as_u64().is_none_or(|transparency| transparency > 100) {
+            return Err(Error::Compile(
+                "Chart.titleFillTransparency must be an integer from 0 to 100".into(),
+            ));
+        }
+        if !chart.props.contains_key("titleFillColor") {
+            return Err(Error::Compile(
+                "Chart.titleFillTransparency requires Chart.titleFillColor; add a fill color or remove transparency".into(),
+            ));
+        }
+    }
     if chart.props.contains_key("titleFillColor") && !chart.props.contains_key("title") {
         return Err(Error::Compile(
             "Chart.titleFillColor requires Chart.title; add a static title or remove the fill property".into(),
@@ -2797,6 +2828,19 @@ fn validate_chart_title_shape_format(chart: &Node) -> Result<()> {
 }
 
 fn validate_chart_legend_shape_format(chart: &Node) -> Result<()> {
+    let transparency = chart.props.get("legendFillTransparency");
+    if let Some(value) = transparency {
+        if value.as_u64().is_none_or(|transparency| transparency > 100) {
+            return Err(Error::Compile(
+                "Chart.legendFillTransparency must be an integer from 0 to 100".into(),
+            ));
+        }
+        if !chart.props.contains_key("legendFillColor") {
+            return Err(Error::Compile(
+                "Chart.legendFillTransparency requires Chart.legendFillColor; add a fill color or remove transparency".into(),
+            ));
+        }
+    }
     let Some(value) = chart.props.get("legendFillColor") else {
         return Ok(());
     };

@@ -387,7 +387,10 @@ fn spec_exposes_chart_axis_title_font_properties() {
         .stdout(predicate::str::contains("yAxisTitleFontName"))
         .stdout(predicate::str::contains("xAxisTitleFillColor"))
         .stdout(predicate::str::contains("yAxisTitleFillColor"))
+        .stdout(predicate::str::contains("xAxisTitleFillTransparency"))
+        .stdout(predicate::str::contains("yAxisTitleFillTransparency"))
         .stdout(predicate::str::contains("titleFillColor"))
+        .stdout(predicate::str::contains("titleFillTransparency"))
         .stdout(predicate::str::contains("titleLineColor"))
         .stdout(predicate::str::contains("titleLineTransparency"))
         .stdout(predicate::str::contains("xAxisTitleLineColor"))
@@ -443,7 +446,8 @@ fn spec_exposes_chart_legend_shape_fill() {
         .args(["spec", "--format", "json"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("legendFillColor"));
+        .stdout(predicate::str::contains("legendFillColor"))
+        .stdout(predicate::str::contains("legendFillTransparency"));
 }
 
 #[test]
@@ -1163,7 +1167,11 @@ fn reverses_and_rebuilds_external_chart_area_outlines_without_a_manifest() {
         .set_values("Data!B2:B3");
     chart.chart_area().set_format(
         ChartFormat::new()
-            .set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0"))
+            .set_solid_fill(
+                ChartSolidFill::new()
+                    .set_color("#F0E0D0")
+                    .set_transparency(35),
+            )
             .set_line(
                 ChartLine::new()
                     .set_color("#123456")
@@ -1494,7 +1502,11 @@ fn reverses_and_rebuilds_external_chart_title_shape_formatting_without_a_manifes
         .set_values("Data!B2:B3");
     chart.title().set_name("Quarterly totals").set_format(
         ChartFormat::new()
-            .set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0"))
+            .set_solid_fill(
+                ChartSolidFill::new()
+                    .set_color("#F0E0D0")
+                    .set_transparency(20),
+            )
             .set_border(
                 ChartLine::new()
                     .set_color("#123456")
@@ -1517,6 +1529,7 @@ fn reverses_and_rebuilds_external_chart_title_shape_formatting_without_a_manifes
     let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
     assert!(source.contains("title={\"Quarterly totals\"}"), "{source}");
     assert!(source.contains("titleFillColor=\"#F0E0D0\""), "{source}");
+    assert!(source.contains("titleFillTransparency={20}"), "{source}");
     assert!(source.contains("titleLineColor=\"#123456\""), "{source}");
     assert!(source.contains("titleLineWidth={1.5}"), "{source}");
     assert!(source.contains("titleLineDash=\"dashDot\""), "{source}");
@@ -1535,6 +1548,7 @@ fn reverses_and_rebuilds_external_chart_title_shape_formatting_without_a_manifes
         .success();
     let xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
     assert!(xml.contains("val=\"F0E0D0\""), "{xml}");
+    assert!(xml.contains("alpha val=\"80000\""), "{xml}");
     assert!(xml.contains("val=\"123456\""), "{xml}");
     assert!(xml.contains("w=\"19050\""), "{xml}");
     assert!(xml.contains("prstDash val=\"dashDot\""), "{xml}");
@@ -1558,9 +1572,13 @@ fn reverses_external_chart_legend_shape_formatting_without_a_manifest() {
         .add_series()
         .set_categories("Data!A2:A3")
         .set_values("Data!B2:B3");
-    chart
-        .legend()
-        .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0")));
+    chart.legend().set_format(
+        ChartFormat::new().set_solid_fill(
+            ChartSolidFill::new()
+                .set_color("#F0E0D0")
+                .set_transparency(40),
+        ),
+    );
     worksheet.insert_chart(0, 3, &chart).unwrap();
     workbook.save(&input).unwrap();
 
@@ -1574,6 +1592,7 @@ fn reverses_external_chart_legend_shape_formatting_without_a_manifest() {
         .success();
     let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
     assert!(source.contains("legendFillColor=\"#F0E0D0\""), "{source}");
+    assert!(source.contains("legendFillTransparency={40}"), "{source}");
 
     let rebuilt = directory
         .path()
@@ -1588,6 +1607,7 @@ fn reverses_external_chart_legend_shape_formatting_without_a_manifest() {
         .success();
     let xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
     assert!(xml.contains("val=\"F0E0D0\""), "{xml}");
+    assert!(xml.contains("alpha val=\"60000\""), "{xml}");
 }
 
 #[test]
@@ -1607,6 +1627,28 @@ fn validate_rejects_legend_fill_when_legend_is_hidden() {
         .failure()
         .stderr(predicate::str::contains(
             "Chart.legendFillColor requires a visible legend",
+        ));
+}
+
+#[test]
+fn validate_requires_chart_fill_colors_for_fill_transparency() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("chart-fill-transparency-without-color.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Sales" titleFillTransparency={25} legendFillTransparency={25}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.titleFillTransparency requires Chart.titleFillColor",
         ));
 }
 
@@ -5209,7 +5251,11 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     );
     chart.x_axis().set_name_format(
         ChartFormat::new()
-            .set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0"))
+            .set_solid_fill(
+                ChartSolidFill::new()
+                    .set_color("#F0E0D0")
+                    .set_transparency(20),
+            )
             .set_border(
                 ChartLine::new()
                     .set_color("#123456")
@@ -5220,7 +5266,11 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     );
     chart.y_axis().set_name_format(
         ChartFormat::new()
-            .set_solid_fill(ChartSolidFill::new().set_color("#D0E0F0"))
+            .set_solid_fill(
+                ChartSolidFill::new()
+                    .set_color("#D0E0F0")
+                    .set_transparency(55),
+            )
             .set_border(ChartLine::new().set_color("#654321").set_width(0.75)),
     );
     worksheet.insert_chart(0, 5, &chart).unwrap();
@@ -5265,6 +5315,14 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     );
     assert!(
         source.contains("yAxisTitleFillColor=\"#D0E0F0\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("xAxisTitleFillTransparency={20}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("yAxisTitleFillTransparency={55}"),
         "{source}"
     );
     assert!(

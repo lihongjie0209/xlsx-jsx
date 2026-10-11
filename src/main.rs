@@ -744,9 +744,18 @@ fn compile_chart(
         .get("legendFillColor")
         .and_then(Value::as_str)
     {
+        let mut fill = ChartSolidFill::new();
+        fill.set_color(color);
+        if let Some(transparency) = component
+            .props
+            .get("legendFillTransparency")
+            .and_then(Value::as_u64)
+        {
+            fill.set_transparency(u8::try_from(transparency).expect("validated transparency"));
+        }
         chart
             .legend()
-            .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)));
+            .set_format(ChartFormat::new().set_solid_fill(&fill));
     }
     if let Some(mut format) = chart_shape_format(component, "plotAreaFillColor", "plotAreaLine") {
         chart.plot_area().set_format(&mut format);
@@ -5225,7 +5234,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -5298,6 +5307,10 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .legend_fill_color
             .as_ref()
             .map(|value| format!(" legendFillColor={value:?}"))
+            .unwrap_or_default(),
+        chart
+            .legend_fill_transparency
+            .map(|value| format!(" legendFillTransparency={{{value}}}"))
             .unwrap_or_default(),
         chart
             .title_layout
@@ -5712,6 +5725,9 @@ fn append_chart_title_shape_properties(properties: &mut String, chart: &Workshee
     if let Some(color) = &chart.title_fill_color {
         let _ = write!(properties, " titleFillColor={color:?}");
     }
+    if let Some(value) = chart.title_fill_transparency {
+        let _ = write!(properties, " titleFillTransparency={{{value}}}");
+    }
     let Some(style) = &chart.title_line else {
         return;
     };
@@ -5859,6 +5875,14 @@ fn append_chart_axis_title_fill_properties(properties: &mut String, chart: &Work
     ] {
         if let Some(color) = color {
             let _ = write!(properties, " {axis}AxisTitleFillColor={color:?}");
+        }
+    }
+    for (axis, transparency) in [
+        ("x", chart.x_axis_title_fill_transparency),
+        ("y", chart.y_axis_title_fill_transparency),
+    ] {
+        if let Some(value) = transparency {
+            let _ = write!(properties, " {axis}AxisTitleFillTransparency={{{value}}}");
         }
     }
     for (axis, style) in [
@@ -9033,6 +9057,7 @@ fn parse_chart_xml(
     let mut title_font_underline: Option<bool> = None;
     let mut title_font_rotation: Option<i16> = None;
     let mut title_fill_color: Option<String> = None;
+    let mut title_fill_transparency: Option<u8> = None;
     let mut title_line: Option<WorksheetChartGridlineStyle> = None;
     let mut title_sppr_seen = false;
     let mut title_line_seen = false;
@@ -9063,6 +9088,8 @@ fn parse_chart_xml(
     let mut y_axis_title_font_rotation: Option<i16> = None;
     let mut x_axis_title_fill_color: Option<String> = None;
     let mut y_axis_title_fill_color: Option<String> = None;
+    let mut x_axis_title_fill_transparency: Option<u8> = None;
+    let mut y_axis_title_fill_transparency: Option<u8> = None;
     let mut x_axis_title_line: Option<WorksheetChartGridlineStyle> = None;
     let mut y_axis_title_line: Option<WorksheetChartGridlineStyle> = None;
     let mut x_axis_title_sppr_seen = false;
@@ -9182,6 +9209,7 @@ fn parse_chart_xml(
     let mut legend_seen = false;
     let mut legend_sppr_seen = false;
     let mut legend_fill_color: Option<String> = None;
+    let mut legend_fill_transparency: Option<u8> = None;
     let mut legend_deleted = false;
     let mut legend_delete_seen = false;
     let mut legend_position: Option<&'static str> = None;
@@ -9863,7 +9891,12 @@ fn parse_chart_xml(
                     )
                     && ((tag == "ln" && stack.last().is_some_and(|ancestor| ancestor == "spPr"))
                         || (matches!(tag.as_str(), "alpha" | "prstDash")
-                            && stack.iter().any(|ancestor| ancestor == "ln")));
+                            && (stack.iter().any(|ancestor| ancestor == "ln")
+                                || (tag == "alpha"
+                                    && stack
+                                        .last()
+                                        .is_some_and(|ancestor| ancestor == "srgbClr")
+                                    && !stack.iter().any(|ancestor| ancestor == "ln")))));
                 if stack.iter().any(|ancestor| ancestor == "title")
                     && !is_axis_title_line_element
                     && ![
@@ -13562,6 +13595,46 @@ fn parse_chart_xml(
                     }
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|item| item == "spPr")
+                            && !stack.iter().any(|item| item == "ln")
+                            && (stack.iter().any(|item| item == "legend")
+                                || stack.iter().any(|item| item == "title")) =>
+                    {
+                        let alpha = chart_element_val_attribute(
+                            &event, part, reader.decoder(), "alpha",
+                        )?
+                        .parse::<u32>().ok()
+                        .filter(|alpha| *alpha <= 100_000 && alpha % 1000 == 0)
+                        .ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has title/legend fill alpha not exactly representable by whole-percent transparency; use increments of 1%"
+                        )))?;
+                        let transparency = u8::try_from(100 - alpha / 1000).map_err(|error| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has invalid title/legend fill alpha: {error}"
+                            ))
+                        })?;
+                        let target = if stack.iter().any(|item| item == "legend") {
+                            &mut legend_fill_transparency
+                        } else {
+                            match chart_title_target {
+                                Some("title") => &mut title_fill_transparency,
+                                Some("xAxisTitle") => &mut x_axis_title_fill_transparency,
+                                Some("yAxisTitle") => &mut y_axis_title_fill_transparency,
+                                _ => {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has fill transparency outside a supported title shape"
+                                    )));
+                                }
+                            }
+                        };
+                        if target.replace(transparency).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats title/legend fill transparency; keep one alpha value"
+                            )));
+                        }
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|ancestor| ancestor == "dTable")
                             && stack.iter().any(|ancestor| ancestor == "spPr") =>
                     {
@@ -14991,6 +15064,34 @@ fn parse_chart_xml(
             }
         }
     }
+    for (label, transparency, color) in [
+        (
+            "chart title",
+            title_fill_transparency,
+            title_fill_color.as_ref(),
+        ),
+        (
+            "X-axis title",
+            x_axis_title_fill_transparency,
+            x_axis_title_fill_color.as_ref(),
+        ),
+        (
+            "Y-axis title",
+            y_axis_title_fill_transparency,
+            y_axis_title_fill_color.as_ref(),
+        ),
+        (
+            "legend",
+            legend_fill_transparency,
+            legend_fill_color.as_ref(),
+        ),
+    ] {
+        if transparency.is_some() && color.is_none() {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has {label} fill transparency without an RGB fill color; add the matching fill color or remove alpha"
+            )));
+        }
+    }
     let show_legend = legend_seen && !legend_deleted;
     if legend_sppr_seen && legend_fill_color.is_none() {
         return Err(Error::Reverse(format!(
@@ -15092,6 +15193,7 @@ fn parse_chart_xml(
         name: anchor.name,
         title: chart_title,
         title_fill_color,
+        title_fill_transparency,
         title_line,
         title_font_size,
         title_font_bold,
@@ -15112,6 +15214,7 @@ fn parse_chart_xml(
         x_axis_title_font_charset,
         x_axis_title_font_rotation,
         x_axis_title_fill_color,
+        x_axis_title_fill_transparency,
         x_axis_title_line,
         y_axis_title_font_size,
         y_axis_title_font_bold,
@@ -15123,6 +15226,7 @@ fn parse_chart_xml(
         y_axis_title_font_charset,
         y_axis_title_font_rotation,
         y_axis_title_fill_color,
+        y_axis_title_fill_transparency,
         y_axis_title_line,
         x_axis_label_font,
         y_axis_label_font,
@@ -15136,6 +15240,7 @@ fn parse_chart_xml(
         plot_area_layout,
         legend_layout,
         legend_fill_color,
+        legend_fill_transparency,
         title_layout,
         category_axis_type,
         category_axis_major_time_unit,
@@ -19219,6 +19324,7 @@ struct WorksheetChart {
     name: String,
     title: Option<String>,
     title_fill_color: Option<String>,
+    title_fill_transparency: Option<u8>,
     title_line: Option<WorksheetChartGridlineStyle>,
     title_font_size: Option<f64>,
     title_font_bold: Option<bool>,
@@ -19239,6 +19345,7 @@ struct WorksheetChart {
     x_axis_title_font_charset: Option<u8>,
     x_axis_title_font_rotation: Option<i16>,
     x_axis_title_fill_color: Option<String>,
+    x_axis_title_fill_transparency: Option<u8>,
     x_axis_title_line: Option<WorksheetChartGridlineStyle>,
     y_axis_title_font_size: Option<f64>,
     y_axis_title_font_bold: Option<bool>,
@@ -19250,6 +19357,7 @@ struct WorksheetChart {
     y_axis_title_font_charset: Option<u8>,
     y_axis_title_font_rotation: Option<i16>,
     y_axis_title_fill_color: Option<String>,
+    y_axis_title_fill_transparency: Option<u8>,
     y_axis_title_line: Option<WorksheetChartGridlineStyle>,
     x_axis_label_font: WorksheetChartAxisFont,
     y_axis_label_font: WorksheetChartAxisFont,
@@ -19263,6 +19371,7 @@ struct WorksheetChart {
     plot_area_layout: Option<[f64; 4]>,
     legend_layout: Option<[f64; 4]>,
     legend_fill_color: Option<String>,
+    legend_fill_transparency: Option<u8>,
     title_layout: Option<[f64; 2]>,
     category_axis_type: Option<&'static str>,
     category_axis_major_time_unit: Option<&'static str>,

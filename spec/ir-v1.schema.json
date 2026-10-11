@@ -500,7 +500,9 @@
             "xAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisTitleFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "xAxisTitleFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "yAxisTitleFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "yAxisTitleFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "xAxisTitleLineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "xAxisTitleLineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
             "xAxisTitleLineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
@@ -591,11 +593,13 @@
             "titleFontPitchFamily": { "type": "integer", "minimum": 0, "maximum": 255 },
             "titleFontCharset": { "type": "integer", "minimum": 0, "maximum": 127 },
             "titleFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "titleFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "titleLineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "titleLineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
             "titleLineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
             "titleLineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "legendFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "legendFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "xAxisLabelFontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
             "xAxisLabelFontBold": { "type": "boolean" },
             "xAxisLabelFontItalic": { "type": "boolean" },
@@ -698,6 +702,7 @@
             "xAxisTitleFontCharset": ["xAxisTitle"],
             "xAxisTitleFontRotation": ["xAxisTitle"],
             "xAxisTitleFillColor": ["xAxisTitle"],
+            "xAxisTitleFillTransparency": ["xAxisTitle", "xAxisTitleFillColor"],
             "xAxisTitleLineColor": ["xAxisTitle"],
             "xAxisTitleLineWidth": ["xAxisTitle"],
             "xAxisTitleLineDash": ["xAxisTitle"],
@@ -712,6 +717,9 @@
             "yAxisTitleFontCharset": ["yAxisTitle"],
             "yAxisTitleFontRotation": ["yAxisTitle"],
             "yAxisTitleFillColor": ["yAxisTitle"],
+            "yAxisTitleFillTransparency": ["yAxisTitle", "yAxisTitleFillColor"],
+            "titleFillTransparency": ["title", "titleFillColor"],
+            "legendFillTransparency": ["legendFillColor"],
             "yAxisTitleLineColor": ["yAxisTitle"],
             "yAxisTitleLineWidth": ["yAxisTitle"],
             "yAxisTitleLineDash": ["yAxisTitle"],
@@ -754,6 +762,34 @@
                   "showLegend": { "const": false }
                 },
                 "required": ["legendFillColor", "showLegend"]
+              }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": {
+                  "legendFillTransparency": { "type": "integer" },
+                  "legendOverlay": { "const": true }
+                },
+                "required": ["legendFillTransparency", "legendOverlay"]
+              }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": {
+                  "legendFillTransparency": { "type": "integer" },
+                  "showLegend": { "const": false }
+                },
+                "required": ["legendFillTransparency", "showLegend"]
               }
             },
             "required": ["props"]

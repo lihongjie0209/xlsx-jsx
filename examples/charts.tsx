@@ -83,7 +83,7 @@ export default <Workbook>
     <Chart type="scatterWithLinesAndMarkers" cell="D164" width={480} height={288}>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expense scatter points" />
     </Chart>
-    <Chart type="column" cell="D218" title="Quarterly Revenue" titleFillColor="#E8F0F8" titleLineColor="#304050" titleLineWidth={0.75} xAxisTitle="Quarter" xAxisTitleFillColor="#F0E0D0" xAxisTitleLineColor="#123456" xAxisTitleLineWidth={1.5} xAxisTitleLineDash="dashDot" xAxisTitleLineTransparency={25} yAxisTitle="Revenue" yAxisTitleFillColor="#D0E0F0" yAxisTitleLineColor="#654321" yAxisTitleLineWidth={0.75}>
+    <Chart type="column" cell="D218" title="Quarterly Revenue" titleFillColor="#E8F0F8" titleFillTransparency={15} titleLineColor="#304050" titleLineWidth={0.75} xAxisTitle="Quarter" xAxisTitleFillColor="#F0E0D0" xAxisTitleFillTransparency={20} xAxisTitleLineColor="#123456" xAxisTitleLineWidth={1.5} xAxisTitleLineDash="dashDot" xAxisTitleLineTransparency={25} yAxisTitle="Revenue" yAxisTitleFillColor="#D0E0F0" yAxisTitleFillTransparency={55} yAxisTitleLineColor="#654321" yAxisTitleLineWidth={0.75} legendFillColor="#F2F2F2" legendFillTransparency={40}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" />
     </Chart>
     <Chart type="scatterWithSmoothLines" cell="K164" width={480} height={288}>
