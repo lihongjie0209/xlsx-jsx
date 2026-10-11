@@ -1894,6 +1894,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "title",
             "xAxisTitle",
             "yAxisTitle",
+            "xAxisTitleFillColor",
+            "yAxisTitleFillColor",
             "xAxisTitleFontSize",
             "xAxisTitleFontBold",
             "xAxisTitleFontItalic",
@@ -2208,6 +2210,7 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_title_font_properties(chart)?;
     validate_chart_axis_title_fonts(chart)?;
+    validate_chart_axis_title_fill_colors(chart)?;
     validate_chart_axis_label_fonts(chart)?;
     if chart.props.contains_key("titleLayout") && !chart.props.contains_key("title") {
         return Err(Error::Compile(
@@ -2519,7 +2522,12 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
 
 fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
     if matches!(chart_type, "pie" | "doughnut") {
-        let axis_titles = ["xAxisTitle", "yAxisTitle"];
+        let axis_titles = [
+            "xAxisTitle",
+            "yAxisTitle",
+            "xAxisTitleFillColor",
+            "yAxisTitleFillColor",
+        ];
         if axis_titles
             .iter()
             .any(|property| chart.props.contains_key(*property))
@@ -2550,6 +2558,34 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
             return Err(Error::Compile(
                 "pie and doughnut Charts have no X/Y axis labels; remove xAxisLabelFont* and yAxisLabelFont* or use a chart type with axes".into(),
             ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_axis_title_fill_colors(chart: &Node) -> Result<()> {
+    for axis in ["x", "y"] {
+        let property = format!("{axis}AxisTitleFillColor");
+        let Some(value) = chart.props.get(&property) else {
+            continue;
+        };
+        if !chart.props.contains_key(&format!("{axis}AxisTitle")) {
+            return Err(Error::Compile(format!(
+                "Chart.{property} requires Chart.{axis}AxisTitle; add the matching axis title or remove {property}"
+            )));
+        }
+        let Some(color) = value.as_str() else {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be an opaque RGB color like #336699"
+            )));
+        };
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be an opaque RGB color like #336699"
+            )));
         }
     }
     Ok(())

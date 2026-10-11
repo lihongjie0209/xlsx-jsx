@@ -499,6 +499,8 @@
             "title": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "xAxisTitleFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "yAxisTitleFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "xAxisTitleFontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
             "xAxisTitleFontBold": { "type": "boolean" },
             "xAxisTitleFontItalic": { "type": "boolean" },
@@ -662,6 +664,7 @@
             "xAxisTitleFontPitchFamily": ["xAxisTitle"],
             "xAxisTitleFontCharset": ["xAxisTitle"],
             "xAxisTitleFontRotation": ["xAxisTitle"],
+            "xAxisTitleFillColor": ["xAxisTitle"],
             "yAxisTitleFontSize": ["yAxisTitle"],
             "yAxisTitleFontBold": ["yAxisTitle"],
             "yAxisTitleFontItalic": ["yAxisTitle"],
@@ -670,7 +673,8 @@
             "yAxisTitleFontName": ["yAxisTitle"],
             "yAxisTitleFontPitchFamily": ["yAxisTitle"],
             "yAxisTitleFontCharset": ["yAxisTitle"],
-            "yAxisTitleFontRotation": ["yAxisTitle"]
+            "yAxisTitleFontRotation": ["yAxisTitle"],
+            "yAxisTitleFillColor": ["yAxisTitle"]
           },
           "additionalProperties": false
         },

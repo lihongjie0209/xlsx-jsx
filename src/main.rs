@@ -876,6 +876,24 @@ fn compile_chart(
     if let Some(title) = component.props.get("yAxisTitle").and_then(Value::as_str) {
         chart.y_axis().set_name(title);
     }
+    if let Some(color) = component
+        .props
+        .get("xAxisTitleFillColor")
+        .and_then(Value::as_str)
+    {
+        chart.x_axis().set_name_format(
+            ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)),
+        );
+    }
+    if let Some(color) = component
+        .props
+        .get("yAxisTitleFillColor")
+        .and_then(Value::as_str)
+    {
+        chart.y_axis().set_name_format(
+            ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)),
+        );
+    }
     let x_axis_title_font = chart_axis_font(component, "xAxisTitleFont");
     if has_chart_axis_font(component, "xAxisTitleFont") {
         chart.x_axis().set_name_font(&x_axis_title_font);
@@ -5601,6 +5619,7 @@ fn append_chart_title_font_properties(properties: &mut String, chart: &Worksheet
 
 fn append_chart_axis_value_properties(properties: &mut String, chart: &WorksheetChart) {
     append_chart_axis_title_font_properties(properties, chart);
+    append_chart_axis_title_fill_properties(properties, chart);
     append_chart_axis_label_font_properties(properties, chart);
     for (name, value) in [
         (
@@ -5695,6 +5714,17 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
         }
     }
     append_chart_gridline_properties(properties, chart);
+}
+
+fn append_chart_axis_title_fill_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (axis, color) in [
+        ("x", &chart.x_axis_title_fill_color),
+        ("y", &chart.y_axis_title_fill_color),
+    ] {
+        if let Some(color) = color {
+            let _ = write!(properties, " {axis}AxisTitleFillColor={color:?}");
+        }
+    }
 }
 
 fn append_chart_axis_title_font_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -8867,6 +8897,10 @@ fn parse_chart_xml(
     let mut y_axis_title_font_charset: Option<u8> = None;
     let mut x_axis_title_font_rotation: Option<i16> = None;
     let mut y_axis_title_font_rotation: Option<i16> = None;
+    let mut x_axis_title_fill_color: Option<String> = None;
+    let mut y_axis_title_fill_color: Option<String> = None;
+    let mut x_axis_title_sppr_seen = false;
+    let mut y_axis_title_sppr_seen = false;
     let mut x_axis_title_font_latin_seen = false;
     let mut y_axis_title_font_latin_seen = false;
     let mut x_axis_label_font = WorksheetChartAxisFont::default();
@@ -9574,6 +9608,20 @@ fn parse_chart_xml(
                             )));
                         }
                     }
+                    if stack.last().is_some_and(|ancestor| ancestor == "title") {
+                        let seen = match chart_title_target {
+                            Some("xAxisTitle") => Some(&mut x_axis_title_sppr_seen),
+                            Some("yAxisTitle") => Some(&mut y_axis_title_sppr_seen),
+                            _ => None,
+                        };
+                        if let Some(seen) = seen
+                            && std::mem::replace(seen, true)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats axis-title shape properties; keep one opaque RGB solid fill"
+                            )));
+                        }
+                    }
                 }
                 if stack.iter().any(|ancestor| ancestor == "legendEntry")
                     && !matches!(tag.as_str(), "idx" | "delete")
@@ -9618,6 +9666,7 @@ fn parse_chart_xml(
                         "w",
                         "h",
                         "overlay",
+                        "spPr",
                     ]
                     .contains(&tag.as_str())
                 {
@@ -12752,7 +12801,8 @@ fn parse_chart_xml(
                     }
                     "srgbClr"
                         if stack.last().is_some_and(|parent| parent == "solidFill")
-                            && stack.iter().any(|ancestor| ancestor == "title") =>
+                            && stack.iter().any(|ancestor| ancestor == "title")
+                            && !stack.iter().any(|ancestor| ancestor == "spPr") =>
                     {
                         if chart_title_target.is_none() {
                             return Err(Error::Reverse(format!(
@@ -13058,22 +13108,25 @@ fn parse_chart_xml(
                         table.font_name = name;
                     }
                     "spPr" => {
-                        let has_supported_parent =
-                            stack.last().is_some_and(|ancestor| ancestor == "ser")
-                                || stack.last().is_some_and(|ancestor| ancestor == "trendline")
-                                || matches!(
+                        let has_supported_parent = stack
+                            .last()
+                            .is_some_and(|ancestor| ancestor == "ser")
+                            || stack.last().is_some_and(|ancestor| ancestor == "trendline")
+                            || matches!(
+                                stack.last().map(String::as_str),
+                                Some("chartSpace" | "plotArea")
+                            )
+                            || (stack.iter().any(|ancestor| ancestor == "dPt")
+                                && matches!(
                                     stack.last().map(String::as_str),
-                                    Some("chartSpace" | "plotArea")
-                                )
-                                || (stack.iter().any(|ancestor| ancestor == "dPt")
-                                    && matches!(
-                                        stack.last().map(String::as_str),
-                                        Some("dPt" | "marker")
-                                    ))
-                                || stack.iter().any(|ancestor| {
-                                    matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
-                                })
-                                || stack.iter().any(|ancestor| ancestor == "errBars");
+                                    Some("dPt" | "marker")
+                                ))
+                            || stack.iter().any(|ancestor| {
+                                matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
+                            })
+                            || (stack.last().is_some_and(|ancestor| ancestor == "title")
+                                && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle")))
+                            || stack.iter().any(|ancestor| ancestor == "errBars");
                         if !has_supported_parent {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has formatting outside an individual series; remove custom chart formatting or add explicit reverse support"
@@ -13168,6 +13221,29 @@ fn parse_chart_xml(
                                 }
                                 current.line_width = Some(f64::from(width_emu) / 12700.0);
                             }
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|item| item == "spPr")
+                            && stack.iter().any(|item| item == "title")
+                            && matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle")) =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "axis-title fill",
+                        )?;
+                        let target = match chart_title_target {
+                            Some("xAxisTitle") => &mut x_axis_title_fill_color,
+                            Some("yAxisTitle") => &mut y_axis_title_fill_color,
+                            _ => unreachable!(),
+                        };
+                        if target.replace(format!("#{color}")).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats an axis-title RGB fill; retain one opaque solid fill"
+                            )));
                         }
                     }
                     "srgbClr"
@@ -14378,6 +14454,7 @@ fn parse_chart_xml(
         x_axis_title_font_pitch_family,
         x_axis_title_font_charset,
         x_axis_title_font_rotation,
+        x_axis_title_fill_color,
         y_axis_title_font_size,
         y_axis_title_font_bold,
         y_axis_title_font_italic,
@@ -14387,6 +14464,7 @@ fn parse_chart_xml(
         y_axis_title_font_pitch_family,
         y_axis_title_font_charset,
         y_axis_title_font_rotation,
+        y_axis_title_fill_color,
         x_axis_label_font,
         y_axis_label_font,
         title_overlay,
@@ -18468,6 +18546,7 @@ struct WorksheetChart {
     x_axis_title_font_pitch_family: Option<u8>,
     x_axis_title_font_charset: Option<u8>,
     x_axis_title_font_rotation: Option<i16>,
+    x_axis_title_fill_color: Option<String>,
     y_axis_title_font_size: Option<f64>,
     y_axis_title_font_bold: Option<bool>,
     y_axis_title_font_italic: Option<bool>,
@@ -18477,6 +18556,7 @@ struct WorksheetChart {
     y_axis_title_font_pitch_family: Option<u8>,
     y_axis_title_font_charset: Option<u8>,
     y_axis_title_font_rotation: Option<i16>,
+    y_axis_title_fill_color: Option<String>,
     x_axis_label_font: WorksheetChartAxisFont,
     y_axis_label_font: WorksheetChartAxisFont,
     title_overlay: bool,

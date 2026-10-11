@@ -384,7 +384,9 @@ fn spec_exposes_chart_axis_title_font_properties() {
         .stdout(predicate::str::contains("xAxisTitleFontCharset"))
         .stdout(predicate::str::contains("xAxisTitleFontRotation"))
         .stdout(predicate::str::contains("yAxisTitleFontColor"))
-        .stdout(predicate::str::contains("yAxisTitleFontName"));
+        .stdout(predicate::str::contains("yAxisTitleFontName"))
+        .stdout(predicate::str::contains("xAxisTitleFillColor"))
+        .stdout(predicate::str::contains("yAxisTitleFillColor"));
 }
 
 #[test]
@@ -4655,6 +4657,7 @@ fn reverses_and_rebuilds_external_scatter_axis_crossings_without_a_manifest() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("external-scatter-titles.xlsx");
@@ -4687,6 +4690,12 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
             .set_italic()
             .set_underline()
             .set_color("#993366"),
+    );
+    chart.x_axis().set_name_format(
+        ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0")),
+    );
+    chart.y_axis().set_name_format(
+        ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#D0E0F0")),
     );
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
@@ -4724,6 +4733,14 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
         source.contains("yAxisTitleFontColor=\"#993366\""),
         "{source}"
     );
+    assert!(
+        source.contains("xAxisTitleFillColor=\"#F0E0D0\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("yAxisTitleFillColor=\"#D0E0F0\""),
+        "{source}"
+    );
 
     let rebuilt_path = directory.path().join("rebuilt-scatter-titles.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -4744,6 +4761,8 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     assert!(xml.contains("pitchFamily=\"34\" charset=\"127\""), "{xml}");
     assert!(xml.contains("rot=\"2700000\""), "{xml}");
     assert!(xml.contains("sz=\"1200\" i=\"1\" u=\"sng\""), "{xml}");
+    assert!(xml.contains("val=\"F0E0D0\""), "{xml}");
+    assert!(xml.contains("val=\"D0E0F0\""), "{xml}");
 }
 
 #[test]
@@ -4937,6 +4956,46 @@ fn rejects_axis_title_font_without_matching_title_with_repair_guidance() {
         .failure()
         .stderr(predicate::str::contains(
             "Chart.xAxisTitleFontBold requires Chart.xAxisTitle",
+        ));
+}
+
+#[test]
+fn rejects_axis_title_fill_color_without_matching_title() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-title-fill-without-title.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisTitleFillColor="#F0E0D0"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitleFillColor requires Chart.xAxisTitle",
+        ));
+}
+
+#[test]
+fn rejects_non_rgb_axis_title_fill_colors() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-title-fill-invalid-color.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisTitle="X" xAxisTitleFillColor="red"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitleFillColor must be an opaque RGB color",
         ));
 }
 

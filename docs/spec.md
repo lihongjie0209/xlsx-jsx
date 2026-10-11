@@ -266,6 +266,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   invalid. Rotation is an integer from -90–90 or 270/271 for stacked/East Asian
   vertical text. Font properties require their matching axis title; other run
   formatting remains rejected.
+- `Chart.xAxisTitleFillColor` and `Chart.yAxisTitleFillColor` set a solid opaque
+  RGB background on the matching axis-title shape via
+  `ChartAxis::set_name_format()`. Colors use `#RRGGBB`; each property requires
+  its matching axis title. Reverse supports only this solid-fill subset and
+  rejects title outlines, effects, patterns, gradients, and transparency.
 - `Chart.xAxisLabelFont*` and `Chart.yAxisLabelFont*` style axis tick labels,
   separately from axis titles. X means the category/date axis on category
   charts and the top/bottom value axis on scatter charts; Y means the value
