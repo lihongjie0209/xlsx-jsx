@@ -4,7 +4,7 @@ use predicates::prelude::*;
 use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisDisplayUnitType, ChartAxisLabelAlignment,
     ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
-    ChartDataTable as XlsxChartDataTable, ChartErrorBars, ChartErrorBarsDirection,
+    ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars, ChartErrorBarsDirection,
     ChartErrorBarsType, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartTrendline,
     ChartTrendlineType, ChartType, Workbook as XlsxWorkbook,
 };
@@ -143,6 +143,9 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("valueAxisDisplayUnit"))
         .stdout(predicate::str::contains("valueAxisDisplayUnitLabel"))
         .stdout(predicate::str::contains("dropLines"))
+        .stdout(predicate::str::contains("showHiddenData"))
+        .stdout(predicate::str::contains("emptyCellsAs"))
+        .stdout(predicate::str::contains("showNaAsEmptyCell"))
         .stdout(predicate::str::contains("valueAxisReversed"))
         .stdout(predicate::str::contains("categoryAxisLabelInterval"))
         .stdout(predicate::str::contains("categoryAxisTickInterval"))
@@ -2838,6 +2841,93 @@ fn reverses_external_chart_drop_lines_without_a_manifest() {
         .success();
     let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
     assert!(xml.contains("<c:dropLines/>"));
+}
+
+#[test]
+fn reverses_and_rebuilds_external_chart_data_display_options_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-data-display.xlsx");
+    let output_path = directory.path().join("external-chart-data-display.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-chart-data-display.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .show_hidden_data()
+        .show_empty_cells_as(ChartEmptyCells::Connected)
+        .show_na_as_empty_cell();
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("showHiddenData={true}"), "{source}");
+    assert!(source.contains("emptyCellsAs=\"span\""), "{source}");
+    assert!(source.contains("showNaAsEmptyCell={true}"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:dispBlanksAs val=\"span\"/>"), "{xml}");
+    assert!(xml.contains("<c16r3:dispNaAsBlank val=\"1\"/>"), "{xml}");
+    assert!(xml.contains("<c16r3:dataDisplayOptions16>"), "{xml}");
+    assert!(!xml.contains("<c:plotVisOnly"), "{xml}");
+
+    rewrite_part(&workbook_path, "xl/charts/chart1.xml", |xml| {
+        xml.replace(
+            "http://schemas.microsoft.com/office/drawing/2017/03/chart",
+            "http://example.invalid/chart",
+        )
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook_path)
+        .arg("--force")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown URI or namespace"))
+        .stderr(predicate::str::contains(
+            "exact Excel 2016 dispNaAsBlank extension",
+        ));
+}
+
+#[test]
+fn rejects_unknown_chart_empty_cell_mode_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-empty-cell-mode.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" emptyCellsAs="connect"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.emptyCellsAs `connect` is unsupported",
+        ))
+        .stderr(predicate::str::contains("use gap, zero, or span"));
 }
 
 #[test]

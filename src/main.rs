@@ -13,7 +13,7 @@ use quick_xml::{
 use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisDisplayUnitType, ChartAxisLabelAlignment,
     ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
-    ChartDataTable as XlsxChartDataTable, ChartErrorBars, ChartErrorBarsDirection,
+    ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars, ChartErrorBarsDirection,
     ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartLineDashType, ChartMarker,
     ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType,
     Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
@@ -508,7 +508,8 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     workbook.save(path).map_err(|error| Error::Output {
         path: path.to_path_buf(),
         source: std::io::Error::other(error.to_string()),
-    })
+    })?;
+    Ok(())
 }
 
 fn compile_table(
@@ -748,6 +749,30 @@ fn compile_chart(
     configure_chart_axis_log_base(&mut chart, component);
     configure_chart_value_axis_reversed(&mut chart, component);
     configure_chart_value_axis_display_units(&mut chart, component);
+    if component
+        .props
+        .get("showHiddenData")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        chart.show_hidden_data();
+    }
+    if let Some(empty_cells) = component.props.get("emptyCellsAs").and_then(Value::as_str) {
+        chart.show_empty_cells_as(match empty_cells {
+            "gap" => ChartEmptyCells::Gaps,
+            "zero" => ChartEmptyCells::Zero,
+            "span" => ChartEmptyCells::Connected,
+            _ => unreachable!("validated Chart.emptyCellsAs"),
+        });
+    }
+    if component
+        .props
+        .get("showNaAsEmptyCell")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        chart.show_na_as_empty_cell();
+    }
     if component.props.get("dropLines").and_then(Value::as_bool) == Some(true) {
         chart.set_drop_lines(true);
     }
@@ -4523,6 +4548,15 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if chart.drop_lines == Some(true) {
         properties.push_str(" dropLines={true}");
     }
+    if chart.show_hidden_data == Some(true) {
+        properties.push_str(" showHiddenData={true}");
+    }
+    if let Some(value) = chart.empty_cells_as {
+        let _ = write!(properties, " emptyCellsAs=\"{value}\"");
+    }
+    if chart.show_na_as_empty_cell == Some(true) {
+        properties.push_str(" showNaAsEmptyCell={true}");
+    }
     if chart.category_axis_on_tick_marks == Some(true) {
         properties.push_str(" categoryAxisOnTickMarks={true}");
     }
@@ -7424,6 +7458,9 @@ fn parse_chart_xml(
         "downBars",
         "holeSize",
         "plotVisOnly",
+        "dispBlanksAs",
+        "dataDisplayOptions16",
+        "dispNaAsBlank",
         "marker",
         "symbol",
         "size",
@@ -7506,6 +7543,15 @@ fn parse_chart_xml(
     let mut display_units_seen = false;
     let mut drop_lines = false;
     let mut drop_lines_seen = false;
+    // In OOXML the absent plotVisOnly element means hidden rows/columns are plotted.
+    let mut show_hidden_data = true;
+    let mut plot_vis_only_seen = false;
+    let mut empty_cells_as = None;
+    let mut empty_cells_as_seen = false;
+    let mut show_na_as_empty_cell = false;
+    let mut show_na_as_empty_cell_seen = false;
+    let mut c16r3_extension_seen = false;
+    let mut c16r3_options_seen = false;
     let mut current_axis_position: Option<&'static str> = None;
     let mut horizontal_major_gridlines = false;
     let mut vertical_major_gridlines = false;
@@ -7976,6 +8022,54 @@ fn parse_chart_xml(
                         }
                         drop_lines_seen = true;
                         drop_lines = true;
+                    }
+                    "plotVisOnly" => {
+                        if stack.last().is_none_or(|parent| parent != "chart") || plot_vis_only_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or misplaced plotVisOnly; keep one chart-level plotVisOnly setting"
+                            )));
+                        }
+                        plot_vis_only_seen = true;
+                        show_hidden_data = !parse_xml_bool(
+                            &chart_element_val_attribute(
+                                &event,
+                                part,
+                                reader.decoder(),
+                                "plotVisOnly",
+                            )?,
+                            part,
+                            "plotVisOnly",
+                        )?;
+                    }
+                    "dispBlanksAs" => {
+                        if stack.last().is_none_or(|parent| parent != "chart")
+                            || empty_cells_as_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or misplaced dispBlanksAs; keep one chart-level empty-cell setting"
+                            )));
+                        }
+                        empty_cells_as_seen = true;
+                        empty_cells_as = Some(
+                            match chart_element_val_attribute(
+                                &event,
+                                part,
+                                reader.decoder(),
+                                "dispBlanksAs",
+                            )?
+                            .as_str()
+                            {
+                                "gap" => "gap",
+                                "zero" => "zero",
+                                "span" => "span",
+                                value => {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` uses unsupported dispBlanksAs `{value}`; use gap, zero, or span"
+                                    )));
+                                }
+                            },
+                        );
                     }
                     "layout" if stack.last().is_some_and(|parent| parent == "dispUnitsLbl") => {
                         if !is_empty {
@@ -9420,21 +9514,71 @@ fn parse_chart_xml(
                         current.label_position = Some(position.to_owned());
                     }
                     "extLst" => {
-                        if stack.last().is_none_or(|parent| parent != "dLbls") {
+                        if !matches!(stack.last().map(String::as_str), Some("dLbls" | "chart")) {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has extLst outside series data labels; preserve only the pinned c15 leader-lines extension"
+                                "chart part `{part}` has extLst outside supported chart-level or series data-label locations; preserve only the pinned c15/c16r3 extensions"
                             )));
                         }
                     }
                     "ext" => {
-                        if stack.last().is_none_or(|parent| parent != "extLst")
-                            || !stack.iter().any(|ancestor| ancestor == "dLbls")
-                        {
+                        if stack.last().is_none_or(|parent| parent != "extLst") {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has an extension outside supported data labels; preserve only the pinned c15 leader-lines extension"
+                                "chart part `{part}` has an extension outside extLst; preserve only the pinned c15/c16r3 extensions"
                             )));
                         }
-                        validate_chart_leader_line_extension(&event, part, reader.decoder())?;
+                        if stack.iter().any(|ancestor| ancestor == "dLbls") {
+                            validate_chart_leader_line_extension(&event, part, reader.decoder())?;
+                        } else if stack.iter().any(|ancestor| ancestor == "chart") {
+                            validate_chart_na_as_blank_extension(&event, part, reader.decoder())?;
+                            if c16r3_extension_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats the c16r3 N/A-as-blank extension; keep one dispNaAsBlank setting"
+                                )));
+                            }
+                            c16r3_extension_seen = true;
+                            if is_empty {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an empty c16r3 extension; include dataDisplayOptions16/dispNaAsBlank"
+                                )));
+                            }
+                        } else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an unsupported extension location; move the supported c15 or c16r3 extension to its standard chart location"
+                            )));
+                        }
+                    }
+                    "dataDisplayOptions16" => {
+                        if stack.last().is_none_or(|parent| parent != "ext")
+                            || !c16r3_extension_seen
+                            || c16r3_options_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or misplaced dataDisplayOptions16; preserve exactly one pinned c16r3 option container"
+                            )));
+                        }
+                        c16r3_options_seen = true;
+                    }
+                    "dispNaAsBlank" => {
+                        if stack
+                            .last()
+                            .is_none_or(|parent| parent != "dataDisplayOptions16")
+                            || show_na_as_empty_cell_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or misplaced dispNaAsBlank; retain one c16r3 chart setting"
+                            )));
+                        }
+                        show_na_as_empty_cell_seen = true;
+                        show_na_as_empty_cell = parse_xml_bool(
+                            &chart_element_val_attribute(
+                                &event,
+                                part,
+                                reader.decoder(),
+                                "dispNaAsBlank",
+                            )?,
+                            part,
+                            "dispNaAsBlank",
+                        )?;
                     }
                     "separator" => {
                         if stack.last().is_none_or(|parent| parent != "dLbls")
@@ -9911,6 +10055,15 @@ fn parse_chart_xml(
             }
             Ok(Event::End(event)) => {
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if tag == "ext"
+                    && c16r3_extension_seen
+                    && stack.iter().any(|ancestor| ancestor == "chart")
+                    && !show_na_as_empty_cell_seen
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has an incomplete c16r3 extension; include exactly one dispNaAsBlank value"
+                    )));
+                }
                 if tag == "f" {
                     formula_target = None;
                 }
@@ -10416,6 +10569,9 @@ fn parse_chart_xml(
             .map(|_| value_axis_display_unit_label)
             .filter(|visible| !visible),
         drop_lines: drop_lines.then_some(true),
+        show_hidden_data: show_hidden_data.then_some(true),
+        empty_cells_as: empty_cells_as.filter(|value| *value != "gap"),
+        show_na_as_empty_cell: show_na_as_empty_cell.then_some(true),
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
             != default_chart_major_gridlines(chart_type, true))
         .then_some(horizontal_major_gridlines),
@@ -11215,11 +11371,16 @@ fn is_supported_chart_attribute(
         ("showHorzBorder" | "showVertBorder" | "showOutline" | "showKeys", "val") => {
             matches!(value, "0" | "1" | "false" | "true")
         }
-        ("ext", "uri") => value == "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}",
+        ("ext", "uri") => matches!(
+            value,
+            "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}" | "{56B9EC1D-385E-4148-901F-78D8002777C0}"
+        ),
         ("dLblPos", "val") => chart_data_label_position_from_ooxml(value).is_some(),
-        ("dispEq" | "dispRSqr" | "auto" | "plotVisOnly" | "marker" | "varyColors", "val") => {
-            value == "1"
+        ("plotVisOnly" | "dispNaAsBlank", "val") => {
+            matches!(value, "0" | "1" | "false" | "true")
         }
+        ("dispBlanksAs", "val") => matches!(value, "gap" | "zero" | "span"),
+        ("dispEq" | "dispRSqr" | "auto" | "marker" | "varyColors", "val") => value == "1",
         ("delete", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("numFmt", "sourceLinked") => {
             matches!(value, "0" | "1" | "false" | "true")
@@ -11345,19 +11506,53 @@ fn validate_chart_leader_line_extension(
     decoder: quick_xml::encoding::Decoder,
 ) -> xlsx_jsx::Result<()> {
     let mut has_expected_namespace = false;
+    let mut has_expected_uri = false;
     for attribute in event.attributes().with_checks(false) {
         let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
-        if attribute.key.as_ref() == b"xmlns:c15" {
-            has_expected_namespace = attribute
-                .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
-                .is_ok_and(|value| {
-                    value.as_ref() == "http://schemas.microsoft.com/office/drawing/2012/chart"
-                });
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+            .map_err(|error| Error::Reverse(error.to_string()))?;
+        match attribute.key.as_ref() {
+            b"xmlns:c15" => {
+                has_expected_namespace =
+                    value.as_ref() == "http://schemas.microsoft.com/office/drawing/2012/chart";
+            }
+            b"uri" => has_expected_uri = value.as_ref() == "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}",
+            _ => {}
         }
     }
-    if !has_expected_namespace {
+    if !has_expected_namespace || !has_expected_uri {
         return Err(Error::Reverse(format!(
-            "chart part `{part}` has a leader-line extension without the pinned c15 namespace; retain the standard writer-generated c15 extension"
+            "chart part `{part}` has a leader-line extension with an unknown URI or namespace; retain the standard writer-generated c15 extension"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_chart_na_as_blank_extension(
+    event: &BytesStart<'_>,
+    part: &str,
+    decoder: quick_xml::encoding::Decoder,
+) -> xlsx_jsx::Result<()> {
+    let mut has_expected_uri = false;
+    let mut has_expected_namespace = false;
+    for attribute in event.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+            .map_err(|error| Error::Reverse(error.to_string()))?;
+        match attribute.key.as_ref() {
+            b"uri" => has_expected_uri = value.as_ref() == "{56B9EC1D-385E-4148-901F-78D8002777C0}",
+            b"xmlns:c16r3" => {
+                has_expected_namespace =
+                    value.as_ref() == "http://schemas.microsoft.com/office/drawing/2017/03/chart";
+            }
+            _ => {}
+        }
+    }
+    if !has_expected_uri || !has_expected_namespace {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a c16r3 extension with an unknown URI or namespace; preserve the exact Excel 2016 dispNaAsBlank extension"
         )));
     }
     Ok(())
@@ -13861,6 +14056,9 @@ struct WorksheetChart {
     value_axis_display_unit: Option<&'static str>,
     value_axis_display_unit_label: Option<bool>,
     drop_lines: Option<bool>,
+    show_hidden_data: Option<bool>,
+    empty_cells_as: Option<&'static str>,
+    show_na_as_empty_cell: Option<bool>,
     horizontal_axis_major_gridlines: Option<bool>,
     horizontal_axis_minor_gridlines: Option<bool>,
     vertical_axis_major_gridlines: Option<bool>,

@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.70
+Version: 1.71
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -199,6 +199,21 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   keeps drop lines disabled; reverse preserves enabled lines and omits the
   default. Bar, column, radar, scatter, pie, and doughnut charts reject
   `true`. Custom drop-line formatting is not represented and is rejected.
+- `Chart.showHiddenData?: boolean` includes data from hidden rows and columns;
+  omission/`false` keeps the writer default of plotting visible data only
+  (serialized as `plotVisOnly=1`), while true omits that element per the writer
+  API. Reverse follows OOXML's omitted-element semantics and emits true when
+  `plotVisOnly` is absent.
+  `Chart.emptyCellsAs?: "gap" | "zero" | "span"` controls whether empty source
+  cells are rendered as gaps, zeroes, or connected across; omission and `"gap"`
+  use the Excel default. `Chart.showNaAsEmptyCell?: boolean` treats `#N/A` as
+  blank when true; omission/false keeps it as an error. These options apply to
+  all supported chart types. Reverse folds explicit default values, preserves
+  non-default values, and accepts the standard `c16r3:dataDisplayOptions16 /
+  c16r3:dispNaAsBlank` structure only with the exact pinned URI/namespace.
+  Unrelated or malformed extensions fail with repair guidance. The pinned
+  Open XML SDK validator currently misreports this valid extension structure;
+  see the coverage audit for the narrowly scoped validator limitation.
 - `Chart.yAxisLogBase?: integer` enables a logarithmic value axis with a base
   from 2 through 1000. Omission leaves the value axis linear. This property is
   available only when the chart has one unambiguous value axis; scatter, pie,

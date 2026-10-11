@@ -1902,6 +1902,9 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "valueAxisDisplayUnit",
             "valueAxisDisplayUnitLabel",
             "dropLines",
+            "showHiddenData",
+            "emptyCellsAs",
+            "showNaAsEmptyCell",
             "valueAxisReversed",
             "categoryAxisLabelInterval",
             "categoryAxisTickInterval",
@@ -1952,6 +1955,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     validate_chart_visual_properties(chart, chart_type)?;
     validate_chart_value_axis_display_units(chart, chart_type)?;
     validate_chart_drop_lines(chart, chart_type)?;
+    validate_chart_data_display(chart)?;
     let cell = chart
         .props
         .get("cell")
@@ -2292,6 +2296,33 @@ fn validate_chart_drop_lines(chart: &Node, chart_type: &str) -> Result<()> {
         return Err(Error::Compile(format!(
             "Chart.dropLines is supported only for area, line, and stock charts, not `{chart_type}`; remove it or choose one of those chart types"
         )));
+    }
+    Ok(())
+}
+
+fn validate_chart_data_display(chart: &Node) -> Result<()> {
+    for property in ["showHiddenData", "showNaAsEmptyCell"] {
+        if chart
+            .props
+            .get(property)
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be a boolean; use true or false"
+            )));
+        }
+    }
+    if let Some(value) = chart.props.get("emptyCellsAs") {
+        let Some(value) = value.as_str() else {
+            return Err(Error::Compile(
+                "Chart.emptyCellsAs must be a string enum; use gap, zero, or span".into(),
+            ));
+        };
+        if !matches!(value, "gap" | "zero" | "span") {
+            return Err(Error::Compile(format!(
+                "Chart.emptyCellsAs `{value}` is unsupported; use gap, zero, or span"
+            )));
+        }
     }
     Ok(())
 }
