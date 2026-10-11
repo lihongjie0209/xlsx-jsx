@@ -167,8 +167,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `showLegendKeys` are booleans. Omission uses the pinned writer defaults
   (horizontal/vertical/outline on, legend keys off). Reverse preserves the
   four OOXML display flags, treating an omitted flag element as false. Custom
-  data-table shape formatting, fonts, and extensions are rejected with repair
-  guidance rather than dropped.
+  data-table shape formatting and extensions are rejected with repair guidance.
+  `fontSize` (1–4000 points), `fontBold`, `fontItalic`, `fontUnderline`,
+  `fontColor` (opaque `#RRGGBB`), and `fontName` (1–255 XML-safe characters)
+  style data-table text through `ChartDataTable::set_font`; reverse preserves
+  this subset from external charts. Font rotation, pitch/charset, and other
+  text properties remain rejected.
 - `cell` is an A1 cell anchor. `width` and `height` are positive integer pixels
   (1–1790); omission uses the writer defaults of 480×288 pixels. `Series` has
   required `values` and optional `categories` and `name` sheet-qualified A1

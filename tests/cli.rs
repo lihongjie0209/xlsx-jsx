@@ -240,6 +240,18 @@ fn spec_exposes_chart_data_label_font_properties() {
 }
 
 #[test]
+fn spec_exposes_chart_data_table_font_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("fontSize"))
+        .stdout(predicate::str::contains("fontColor"))
+        .stdout(predicate::str::contains("fontName"));
+}
+
+#[test]
 fn spec_exposes_trendline_equation_flags() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -2791,7 +2803,16 @@ fn reverses_external_chart_data_table_without_a_manifest() {
         .show_horizontal_borders(false)
         .show_vertical_borders(true)
         .show_outline_borders(false)
-        .show_legend_keys(true);
+        .show_legend_keys(true)
+        .set_font(
+            ChartFont::new()
+                .set_size(11.0)
+                .set_bold()
+                .set_italic()
+                .set_underline()
+                .set_color("#336699")
+                .set_name("Arial"),
+        );
     chart.set_data_table(&data_table);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
@@ -2806,7 +2827,7 @@ fn reverses_external_chart_data_table_without_a_manifest() {
         .success();
     let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
     assert!(source.contains(
-        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} />"
+        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} fontSize={11} fontBold={true} fontItalic={true} fontUnderline={true} fontColor=\"#336699\" fontName=\"Arial\" />"
     ));
 
     let rebuilt_path = directory.path().join("rebuilt-chart-data-table.xlsx");
@@ -2824,6 +2845,7 @@ fn reverses_external_chart_data_table_without_a_manifest() {
     assert!(chart_xml.contains("<c:showVertBorder val=\"1\"/>"));
     assert!(!chart_xml.contains("<c:showOutline"));
     assert!(chart_xml.contains("<c:showKeys val=\"1\"/>"));
+    assert!(chart_xml.contains("<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"1100\" b=\"1\" i=\"1\" u=\"sng\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill><a:latin typeface=\"Arial\"/></a:defRPr></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p></c:txPr>"), "{chart_xml}");
 }
 
 #[test]
@@ -2841,6 +2863,29 @@ fn rejects_invalid_chart_data_table_properties_with_guidance() {
             "ChartDataTable.showHorizontalBorders must be a boolean",
         ))
         .stderr(predicate::str::contains("use true/false"));
+}
+
+#[test]
+fn rejects_invalid_chart_data_table_font_name_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-data-table-font.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ChartDataTable } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /><ChartDataTable fontName="" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ChartDataTable.fontName must contain 1–255 valid XML characters",
+        ))
+        .stderr(predicate::str::contains(
+            "use a font name without control characters",
+        ));
 }
 
 #[test]
@@ -2873,7 +2918,40 @@ fn reverse_rejects_custom_chart_data_table_formatting_with_guidance() {
             "unsupported `<spPr>` data-table formatting",
         ))
         .stderr(predicate::str::contains(
-            "remove custom fonts, shape formatting, and extensions",
+            "remove shape formatting or extensions",
+        ));
+}
+
+#[test]
+fn reverse_rejects_unmodeled_chart_data_table_font_rotation() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("rotated-chart-data-table-font.xlsx");
+    let output_path = directory.path().join("rotated-chart-data-table-font.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    let data_table = XlsxChartDataTable::new().set_font(ChartFont::new().set_rotation(45));
+    chart.set_data_table(&data_table);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook_path)
+        .args(["-o"])
+        .arg(output_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported data-table font attribute `bodyPr@rot=2700000`",
+        ))
+        .stderr(predicate::str::contains(
+            "remove rotation, pitch/charset, or other font metadata",
         ));
 }
 

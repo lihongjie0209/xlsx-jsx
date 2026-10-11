@@ -997,6 +997,44 @@ fn compile_chart(
             if let Some(value) = child.props.get("showLegendKeys").and_then(Value::as_bool) {
                 data_table = data_table.show_legend_keys(value);
             }
+            if [
+                "fontSize",
+                "fontBold",
+                "fontItalic",
+                "fontUnderline",
+                "fontColor",
+                "fontName",
+            ]
+            .iter()
+            .any(|property| child.props.contains_key(*property))
+            {
+                let mut font = rust_xlsxwriter::ChartFont::new();
+                if let Some(size) = child.props.get("fontSize").and_then(Value::as_f64) {
+                    font.set_size(size);
+                }
+                match child.props.get("fontBold").and_then(Value::as_bool) {
+                    Some(true) => {
+                        font.set_bold();
+                    }
+                    Some(false) => {
+                        font.unset_bold();
+                    }
+                    None => {}
+                }
+                if child.props.get("fontItalic").and_then(Value::as_bool) == Some(true) {
+                    font.set_italic();
+                }
+                if child.props.get("fontUnderline").and_then(Value::as_bool) == Some(true) {
+                    font.set_underline();
+                }
+                if let Some(color) = child.props.get("fontColor").and_then(Value::as_str) {
+                    font.set_color(color);
+                }
+                if let Some(name) = child.props.get("fontName").and_then(Value::as_str) {
+                    font.set_name(name);
+                }
+                data_table = data_table.set_font(&font);
+            }
             chart.set_data_table(&data_table);
         }
     }
@@ -5255,14 +5293,34 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         }
     }
     if let Some(table) = &chart.data_table {
-        let _ = writeln!(
-            output,
-            "      <ChartDataTable showHorizontalBorders={{{}}} showVerticalBorders={{{}}} showOutlineBorders={{{}}} showLegendKeys={{{}}} />",
-            table.show_horizontal_borders,
-            table.show_vertical_borders,
-            table.show_outline_borders,
-            table.show_legend_keys
-        );
+        output.push_str("      <ChartDataTable");
+        for (property, value) in [
+            ("showHorizontalBorders", table.show_horizontal_borders),
+            ("showVerticalBorders", table.show_vertical_borders),
+            ("showOutlineBorders", table.show_outline_borders),
+            ("showLegendKeys", table.show_legend_keys),
+        ] {
+            let _ = write!(output, " {property}={{{value}}}");
+        }
+        if let Some(size) = table.font_size {
+            let _ = write!(output, " fontSize={{{size}}}");
+        }
+        for (property, value) in [
+            ("fontBold", table.font_bold),
+            ("fontItalic", table.font_italic),
+            ("fontUnderline", table.font_underline),
+        ] {
+            if let Some(value) = value {
+                let _ = write!(output, " {property}={{{value}}}");
+            }
+        }
+        if let Some(color) = &table.font_color {
+            let _ = write!(output, " fontColor=\"{color}\"");
+        }
+        if let Some(name) = &table.font_name {
+            let _ = write!(output, " fontName={name:?}");
+        }
+        output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
 }
@@ -8966,6 +9024,72 @@ fn parse_chart_xml(
                         trendline.label_font_size = Some(points);
                     }
                 }
+                if matches!(tag.as_str(), "rPr" | "defRPr")
+                    && stack.iter().any(|ancestor| ancestor == "txPr")
+                    && stack.iter().any(|ancestor| ancestor == "dTable")
+                {
+                    let table = data_table.as_mut().ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "chart part `{part}` has data-table font properties without a dTable"
+                        ))
+                    })?;
+                    for (key, target) in
+                        [("b", &mut table.font_bold), ("i", &mut table.font_italic)]
+                    {
+                        if let Some(value) = chart_xml_attribute(&event, key, reader.decoder())? {
+                            let parsed = parse_xml_bool(&value, part, &format!("{tag}@{key}"))?;
+                            if target.is_some_and(|previous| previous != parsed) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has inconsistent data-table font `{key}` values; make them identical"
+                                )));
+                            }
+                            *target = Some(parsed);
+                        }
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "u", reader.decoder())? {
+                        let parsed = match value.as_str() {
+                            "sng" => true,
+                            "none" => false,
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported data-table font underline `{value}`; use single underline or remove it"
+                                )));
+                            }
+                        };
+                        if table
+                            .font_underline
+                            .is_some_and(|previous| previous != parsed)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent data-table font underlining; make txPr values identical"
+                            )));
+                        }
+                        table.font_underline = Some(parsed);
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "baseline", reader.decoder())?
+                        && value != "0"
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has unsupported data-table font baseline `{value}`; remove baseline formatting"
+                        )));
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "sz", reader.decoder())? {
+                        let hundredths = value.parse::<u32>().ok().filter(|size| (100..=400_000).contains(size)).ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has invalid data-table font size `{value}`; use 100–400000 hundredths of a point"
+                        )))?;
+                        let points = f64::from(hundredths) / 100.0;
+                        #[allow(
+                            clippy::float_cmp,
+                            reason = "Both values are integral hundredths parsed from the same OOXML size field."
+                        )]
+                        if table.font_size.is_some_and(|previous| previous != points) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent data-table font sizes; make txPr values identical"
+                            )));
+                        }
+                        table.font_size = Some(points);
+                    }
+                }
                 let area_sppr_context = chart_area_sppr_context(&stack);
                 if area_sppr_context.is_some() && !matches!(tag.as_str(), "solidFill" | "srgbClr") {
                     return Err(Error::Reverse(format!(
@@ -9184,14 +9308,30 @@ fn parse_chart_xml(
                     current_axis_position,
                     chart_title_target,
                 )?;
+                let data_table_font_content = stack.iter().any(|ancestor| ancestor == "dTable")
+                    && ((tag == "txPr" && stack.last().is_some_and(|parent| parent == "dTable"))
+                        || (stack.iter().any(|ancestor| ancestor == "txPr")
+                            && matches!(
+                                tag.as_str(),
+                                "bodyPr"
+                                    | "lstStyle"
+                                    | "p"
+                                    | "pPr"
+                                    | "defRPr"
+                                    | "endParaRPr"
+                                    | "solidFill"
+                                    | "srgbClr"
+                                    | "latin"
+                            )));
                 if stack.iter().any(|ancestor| ancestor == "dTable")
                     && !matches!(
                         tag.as_str(),
                         "showHorzBorder" | "showVertBorder" | "showOutline" | "showKeys"
                     )
+                    && !data_table_font_content
                 {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported `<{tag}>` data-table formatting; only the four display flags are represented, so remove custom fonts, shape formatting, and extensions"
+                        "chart part `{part}` has unsupported `<{tag}>` data-table formatting; keep the four display flags and supported font properties, and remove shape formatting or extensions"
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "marker")
@@ -12065,6 +12205,33 @@ fn parse_chart_xml(
                     }
                     "srgbClr"
                         if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|ancestor| ancestor == "txPr")
+                            && stack.iter().any(|ancestor| ancestor == "dTable") =>
+                    {
+                        let color =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "srgbClr")?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has non-RGB data-table font color; use one opaque six-digit RGB value"
+                            )));
+                        }
+                        let color = format!("#{color}").to_ascii_uppercase();
+                        let table = data_table
+                            .as_mut()
+                            .expect("data-table font has a table context");
+                        if table
+                            .font_color
+                            .as_ref()
+                            .is_some_and(|previous| previous != &color)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent data-table font colors; make txPr values identical"
+                            )));
+                        }
+                        table.font_color = Some(color);
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
                             && chart_area_sppr_context(&stack).is_some() =>
                     {
                         let area = chart_area_sppr_context(&stack).expect("area fill context");
@@ -12258,6 +12425,37 @@ fn parse_chart_xml(
                             )));
                         }
                         trendline.label_font_name = name;
+                    }
+                    "latin"
+                        if stack.iter().any(|ancestor| ancestor == "txPr")
+                            && stack.iter().any(|ancestor| ancestor == "dTable") =>
+                    {
+                        let name = chart_xml_attribute(&event, "typeface", reader.decoder())?;
+                        if name.as_ref().is_some_and(|name| {
+                            name.is_empty()
+                                || name.chars().count() > 255
+                                || !name.chars().all(is_valid_xml_character)
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an invalid data-table Latin typeface; use a nonempty 1–255 character XML-safe name"
+                            )));
+                        }
+                        if chart_xml_attribute(&event, "pitchFamily", reader.decoder())?.is_some()
+                            || chart_xml_attribute(&event, "charset", reader.decoder())?.is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has data-table pitchFamily/charset metadata outside the supported font subset; remove those attributes"
+                            )));
+                        }
+                        let table = data_table
+                            .as_mut()
+                            .expect("data-table font has a table context");
+                        if table.font_name.is_some() && table.font_name != name {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent data-table typefaces; make txPr Latin values identical"
+                            )));
+                        }
+                        table.font_name = name;
                     }
                     "spPr" => {
                         let has_supported_parent =
@@ -14296,6 +14494,8 @@ fn audit_chart_attributes(
         let is_trendline_equation_label_font_context =
             stack.iter().any(|ancestor| ancestor == "trendlineLbl")
                 && stack.iter().any(|ancestor| ancestor == "txPr");
+        let is_chart_data_table_font_context = stack.iter().any(|ancestor| ancestor == "dTable")
+            && stack.iter().any(|ancestor| ancestor == "txPr");
         let is_supported_chart_label_font_attribute = is_series_data_label_font_context
             && if matches!(tag, "rPr" | "defRPr") {
                 match (key.as_str(), value.as_str()) {
@@ -14348,6 +14548,24 @@ fn audit_chart_attributes(
             } else {
                 false
             };
+        let is_supported_data_table_font_attribute = is_chart_data_table_font_context
+            && if matches!(tag, "rPr" | "defRPr") {
+                match (key.as_str(), value.as_str()) {
+                    ("sz", value) => value
+                        .parse::<u32>()
+                        .is_ok_and(|size| (100..=400_000).contains(&size)),
+                    ("b" | "i", "0" | "1" | "true" | "false")
+                    | ("u", "sng" | "none")
+                    | ("baseline", "0") => true,
+                    _ => false,
+                }
+            } else if tag == "latin" {
+                key == "typeface" && !value.is_empty() && value.chars().all(is_valid_xml_character)
+            } else if tag == "endParaRPr" {
+                key == "lang" && value == "en-US"
+            } else {
+                false
+            };
         let is_supported_chart_title_font_attribute = chart_title_target == Some("title")
             && stack.iter().any(|ancestor| ancestor == "title")
             && if matches!(tag, "rPr" | "defRPr") {
@@ -14369,6 +14587,14 @@ fn audit_chart_attributes(
             } else {
                 false
             };
+        if is_chart_data_table_font_context
+            && !is_supported_data_table_font_attribute
+            && !is_supported_chart_attribute(tag, &key, &value, chart_type)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has unsupported data-table font attribute `{tag}@{key}={value}`; only point size, bold, italic, single underline, opaque RGB color, and Latin typeface are represented, so remove rotation, pitch/charset, or other font metadata"
+            )));
+        }
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
             && !is_supported_chart_title_body_attribute
@@ -14376,6 +14602,7 @@ fn audit_chart_attributes(
             && !is_supported_chart_label_body_attribute
             && !is_supported_chart_label_end_para_attribute
             && !is_supported_trendline_label_font_attribute
+            && !is_supported_data_table_font_attribute
             && !is_supported_chart_title_font_attribute
         {
             return Err(Error::Reverse(format!(
@@ -17578,6 +17805,12 @@ struct WorksheetChartDataTable {
     show_vertical_borders: bool,
     show_outline_borders: bool,
     show_legend_keys: bool,
+    font_size: Option<f64>,
+    font_bold: Option<bool>,
+    font_italic: Option<bool>,
+    font_underline: Option<bool>,
+    font_color: Option<String>,
+    font_name: Option<String>,
 }
 
 #[derive(Clone)]

@@ -3232,6 +3232,12 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     "showVerticalBorders",
                     "showOutlineBorders",
                     "showLegendKeys",
+                    "fontSize",
+                    "fontBold",
+                    "fontItalic",
+                    "fontUnderline",
+                    "fontColor",
+                    "fontName",
                 ],
                 "ChartDataTable",
             )?;
@@ -3251,6 +3257,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     )));
                 }
             }
+            validate_chart_data_table_font(&child)?;
             continue;
         }
         if child.r#type != "Series" {
@@ -3380,6 +3387,65 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
         }
     }
     validate_chart_series_spacing(chart)?;
+    Ok(())
+}
+
+fn validate_chart_data_table_font(data_table: &Node) -> Result<()> {
+    if let Some(value) = data_table.props.get("fontSize") {
+        let Some(size) = value.as_f64().filter(|size| size.is_finite()) else {
+            return Err(Error::Compile(
+                "ChartDataTable.fontSize must be a finite number in points; use a value from 1 to 4000".into(),
+            ));
+        };
+        if !(1.0..=4000.0).contains(&size) {
+            return Err(Error::Compile(
+                "ChartDataTable.fontSize must be between 1 and 4000 points; choose a value in that range".into(),
+            ));
+        }
+    }
+    for property in ["fontBold", "fontItalic", "fontUnderline"] {
+        if data_table
+            .props
+            .get(property)
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(Error::Compile(format!(
+                "ChartDataTable.{property} must be a boolean; use true or false"
+            )));
+        }
+    }
+    if let Some(value) = data_table.props.get("fontColor") {
+        let Some(color) = value.as_str() else {
+            return Err(Error::Compile(
+                "ChartDataTable.fontColor must be an opaque RGB color like #336699".into(),
+            ));
+        };
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Compile(
+                "ChartDataTable.fontColor must match #RRGGBB; use exactly six hexadecimal digits"
+                    .into(),
+            ));
+        }
+    }
+    if let Some(value) = data_table.props.get("fontName") {
+        let Some(name) = value.as_str() else {
+            return Err(Error::Compile(
+                "ChartDataTable.fontName must be a string; provide a nonempty font/typeface name"
+                    .into(),
+            ));
+        };
+        if name.is_empty()
+            || name.chars().count() > 255
+            || !name.chars().all(is_valid_xml_character)
+        {
+            return Err(Error::Compile(
+                "ChartDataTable.fontName must contain 1–255 valid XML characters; use a font name without control characters".into(),
+            ));
+        }
+    }
     Ok(())
 }
 
