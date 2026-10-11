@@ -242,7 +242,8 @@ fn spec_exposes_chart_title_font_properties() {
         .stdout(predicate::str::contains("titleFontName"))
         .stdout(predicate::str::contains("titleFontPitchFamily"))
         .stdout(predicate::str::contains("titleFontCharset"))
-        .stdout(predicate::str::contains("titleFontUnderline"));
+        .stdout(predicate::str::contains("titleFontUnderline"))
+        .stdout(predicate::str::contains("titleFontRotation"));
 }
 
 #[test]
@@ -1008,7 +1009,7 @@ fn chart_title_font_styling_round_trips_without_a_manifest() {
     let input = directory.path().join("chart-title-font-size.tsx");
     std::fs::write(
         &input,
-        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontSize={16} titleFontBold={false} titleFontItalic={true} titleFontUnderline={true} titleFontColor="#336699" titleFontName="Aptos" titleFontPitchFamily={34} titleFontCharset={127}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontSize={16} titleFontBold={false} titleFontItalic={true} titleFontUnderline={true} titleFontRotation={45} titleFontColor="#336699" titleFontName="Aptos" titleFontPitchFamily={34} titleFontCharset={127}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
     )
     .expect("source writes");
     let external = directory.path().join("chart-title-font-size.xlsx");
@@ -1034,6 +1035,7 @@ fn chart_title_font_styling_round_trips_without_a_manifest() {
     assert!(source.contains("titleFontBold={false}"), "{source}");
     assert!(source.contains("titleFontItalic={true}"), "{source}");
     assert!(source.contains("titleFontUnderline={true}"), "{source}");
+    assert!(source.contains("titleFontRotation={45}"), "{source}");
     assert!(source.contains("titleFontColor=\"#336699\""), "{source}");
     assert!(source.contains("titleFontName=\"Aptos\""), "{source}");
     assert!(source.contains("titleFontPitchFamily={34}"), "{source}");
@@ -1057,6 +1059,129 @@ fn chart_title_font_styling_round_trips_without_a_manifest() {
         .assert()
         .success();
     assert_eq!(std::fs::read_to_string(second).unwrap(), source);
+}
+
+#[test]
+fn reverses_vertical_chart_title_rotation_modes_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("vertical-title-rotations.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Stacked" titleFontRotation={270}><Series values="Data!B2:B4" categories="Data!A2:A4" title="Series 1" /></Chart><Chart type="column" cell="K2" title="East Asian vertical" titleFontRotation={271}><Series values="Data!B2:B4" categories="Data!A2:A4" title="Series 2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    let workbook = directory.path().join("vertical-title-rotations.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    let first_chart_xml = read_zip_part_for_test(&workbook, "xl/charts/chart1.xml");
+    assert!(
+        first_chart_xml.contains("rot=\"0\" vert=\"wordArtVert\""),
+        "{first_chart_xml}"
+    );
+    let second_chart_xml = read_zip_part_for_test(&workbook, "xl/charts/chart2.xml");
+    assert!(
+        second_chart_xml.contains("rot=\"0\" vert=\"eaVert\""),
+        "{second_chart_xml}"
+    );
+    let reversed = directory
+        .path()
+        .join("vertical-title-rotations-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let output = std::fs::read_to_string(reversed).expect("reverse output reads");
+    assert!(output.contains("titleFontRotation={270}"), "{output}");
+    assert!(output.contains("titleFontRotation={271}"), "{output}");
+}
+
+#[test]
+fn reverse_rejects_chart_title_rotation_with_fractional_degree() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("fractional-title-rotation.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Title" titleFontRotation={45}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    let workbook = directory.path().join("fractional-title-rotation.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
+        xml.replace("rot=\"2700000\"", "rot=\"2700001\"")
+    });
+    let reversed = directory
+        .path()
+        .join("fractional-title-rotation-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook)
+        .args(["-o"])
+        .arg(reversed)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "not an exact writer-supported degree",
+        ));
+}
+
+#[test]
+fn rejects_chart_title_rotation_outside_writer_supported_values() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-title-rotation.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Title" titleFontRotation={91}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.titleFontRotation must be from -90 through 90",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn rejects_chart_title_rotation_without_a_title() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("rotation-without-title.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" titleFontRotation={45}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.titleFontRotation requires Chart.title",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
 }
 
 #[test]

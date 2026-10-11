@@ -551,6 +551,12 @@
             "titleFontBold": { "type": "boolean" },
             "titleFontItalic": { "type": "boolean" },
             "titleFontUnderline": { "type": "boolean" },
+            "titleFontRotation": {
+              "oneOf": [
+                { "type": "integer", "minimum": -90, "maximum": 90 },
+                { "enum": [270, 271] }
+              ]
+            },
             "titleFontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "titleFontName": { "type": "string", "minLength": 1, "maxLength": 255 },
             "titleFontPitchFamily": { "type": "integer", "minimum": 0, "maximum": 255 },
@@ -605,6 +611,7 @@
             "titleFontBold": ["title"],
             "titleFontItalic": ["title"],
             "titleFontUnderline": ["title"],
+            "titleFontRotation": ["title"],
             "titleFontColor": ["title"],
             "titleFontName": ["title"],
             "titleFontPitchFamily": ["title"],

@@ -1952,6 +1952,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleFontPitchFamily",
             "titleFontCharset",
             "titleFontUnderline",
+            "titleFontRotation",
             "chartAreaFillColor",
             "plotAreaFillColor",
             "plotAreaLayout",
@@ -2265,6 +2266,7 @@ fn validate_chart_title_font_properties(chart: &Node) -> Result<()> {
             )));
         }
     }
+    validate_chart_title_rotation(chart)?;
     if let Some(value) = chart.props.get("titleFontColor") {
         let Some(color) = value.as_str() else {
             return Err(Error::Compile(
@@ -2324,6 +2326,29 @@ fn validate_chart_title_font_properties(chart: &Node) -> Result<()> {
                 "Chart.{property} requires Chart.title; add a static title or remove {property}"
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_chart_title_rotation(chart: &Node) -> Result<()> {
+    let Some(value) = chart.props.get("titleFontRotation") else {
+        return Ok(());
+    };
+    let Some(rotation) = value.as_i64() else {
+        return Err(Error::Compile(
+            "Chart.titleFontRotation must be an integer; use -90 through 90, 270, or 271 degrees"
+                .into(),
+        ));
+    };
+    if !(-90..=90).contains(&rotation) && !matches!(rotation, 270 | 271) {
+        return Err(Error::Compile(
+            "Chart.titleFontRotation must be from -90 through 90, or 270/271 for vertical text; choose one of those writer-supported values".into(),
+        ));
+    }
+    if !chart.props.contains_key("title") {
+        return Err(Error::Compile(
+            "Chart.titleFontRotation requires Chart.title; add a static title or remove titleFontRotation".into(),
+        ));
     }
     Ok(())
 }

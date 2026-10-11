@@ -785,6 +785,7 @@ fn compile_chart(
         || component.props.contains_key("titleFontPitchFamily")
         || component.props.contains_key("titleFontCharset")
         || component.props.contains_key("titleFontUnderline")
+        || component.props.contains_key("titleFontRotation")
     {
         let mut font = rust_xlsxwriter::ChartFont::new();
         if let Some(size) = component.props.get("titleFontSize").and_then(Value::as_f64) {
@@ -818,6 +819,13 @@ fn compile_chart(
             == Some(true)
         {
             font.set_underline();
+        }
+        if let Some(rotation) = component
+            .props
+            .get("titleFontRotation")
+            .and_then(Value::as_i64)
+        {
+            font.set_rotation(i16::try_from(rotation).expect("validated title font rotation"));
         }
         if let Some(color) = component
             .props
@@ -5152,6 +5160,9 @@ fn append_chart_title_font_properties(properties: &mut String, chart: &Worksheet
     if chart.title_font_underline == Some(true) {
         properties.push_str(" titleFontUnderline={true}");
     }
+    if let Some(rotation) = chart.title_font_rotation {
+        let _ = write!(properties, " titleFontRotation={{{rotation}}}");
+    }
 }
 
 fn append_chart_axis_value_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -8213,6 +8224,7 @@ fn parse_chart_xml(
     let mut title_font_pitch_family: Option<u8> = None;
     let mut title_font_charset: Option<u8> = None;
     let mut title_font_underline: Option<bool> = None;
+    let mut title_font_rotation: Option<i16> = None;
     let mut title_font_latin_seen = false;
     let mut title_overlay = false;
     let mut title_overlay_seen = false;
@@ -8379,6 +8391,47 @@ fn parse_chart_xml(
                     unreachable!()
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if tag == "bodyPr"
+                    && chart_title_target == Some("title")
+                    && stack.iter().any(|ancestor| ancestor == "title")
+                {
+                    let raw_rotation = chart_xml_attribute(&event, "rot", reader.decoder())?;
+                    let vertical = chart_xml_attribute(&event, "vert", reader.decoder())?;
+                    let parsed_rotation = match (raw_rotation.as_deref(), vertical.as_deref()) {
+                        (None, None | Some("horz")) => None,
+                        (Some("0"), Some("wordArtVert")) => Some(270),
+                        (Some("0"), Some("eaVert")) => Some(271),
+                        (Some(rotation), None | Some("horz")) => {
+                            let rotation = rotation.parse::<i32>().map_err(|_| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has invalid chart-title rotation `{rotation}`; use a whole degree from -90 to 90 or the writer's stacked vertical modes"
+                                ))
+                            })?;
+                            if rotation % 60_000 != 0
+                                || !(-5_400_000..=5_400_000).contains(&rotation)
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has chart-title rotation `{rotation}` that is not an exact writer-supported degree; use -90 through 90 degrees"
+                                )));
+                            }
+                            Some(rotation / 60_000)
+                        }
+                        _ => {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an unsupported chart-title bodyPr rot/vert combination; use horizontal integer-degree rotation or a supported vertical mode"
+                            )));
+                        }
+                    }
+                    .map(|rotation| i16::try_from(rotation).expect("rotation range fits i16"));
+                    if let Some(rotation) = parsed_rotation {
+                        if title_font_rotation.is_some_and(|previous| previous != rotation) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent chart-title rotations; make all title bodyPr values identical"
+                            )));
+                        }
+                        title_font_rotation = Some(rotation);
+                    }
+                }
                 if matches!(tag.as_str(), "rPr" | "defRPr")
                     && stack.iter().any(|ancestor| ancestor == "title")
                 {
@@ -12638,6 +12691,7 @@ fn parse_chart_xml(
         title_font_pitch_family,
         title_font_charset,
         title_font_underline,
+        title_font_rotation,
         title_overlay,
         chart_area_fill_color,
         plot_area_fill_color,
@@ -13302,6 +13356,17 @@ fn audit_chart_attributes(
             && stack.iter().any(|ancestor| ancestor == "title")
             && stack.iter().any(|ancestor| ancestor == "valAx")
             && matches!(current_axis_position, Some("l" | "r"));
+        let is_supported_chart_title_body_attribute = chart_title_target == Some("title")
+            && tag == "bodyPr"
+            && stack.iter().any(|ancestor| ancestor == "title")
+            && match (key.as_str(), value.as_str()) {
+                ("rot", value) => value.parse::<i32>().is_ok_and(|rotation| {
+                    (-5_400_000..=5_400_000).contains(&rotation)
+                        && (rotation == 0 || rotation % 60_000 == 0)
+                }),
+                ("vert", "horz" | "wordArtVert" | "eaVert") => true,
+                _ => false,
+            };
         let is_supported_chart_title_font_attribute = chart_title_target == Some("title")
             && stack.iter().any(|ancestor| ancestor == "title")
             && if matches!(tag, "rPr" | "defRPr") {
@@ -13325,6 +13390,7 @@ fn audit_chart_attributes(
             };
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
+            && !is_supported_chart_title_body_attribute
             && !is_supported_chart_title_font_attribute
         {
             return Err(Error::Reverse(format!(
@@ -16426,6 +16492,7 @@ struct WorksheetChart {
     title_font_pitch_family: Option<u8>,
     title_font_charset: Option<u8>,
     title_font_underline: Option<bool>,
+    title_font_rotation: Option<i16>,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     plot_area_fill_color: Option<String>,

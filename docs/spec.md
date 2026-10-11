@@ -168,6 +168,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   bold (including `false`, which disables Excel's default bold title), italic,
   and opaque RGB run color. `titleFontUnderline?: boolean` sets single
   underline on the title run; false is the default and is folded to omission.
+  `titleFontRotation?: integer` rotates title text by an integer degree from
+  -90 through 90, or selects 270 (stacked) / 271 (East Asian vertical); it
+  requires a static title. Reverse maps only those exact writer forms.
   Font properties preserve explicit run/default-run values only when
   consistent.
   `titleFontName?: string` sets the DrawingML Latin
