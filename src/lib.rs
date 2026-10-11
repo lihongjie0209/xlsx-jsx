@@ -2147,15 +2147,6 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
 }
 
 fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
-    if chart_type.starts_with("scatter")
-        && ["xAxisTitle", "yAxisTitle"]
-            .iter()
-            .any(|property| chart.props.contains_key(*property))
-    {
-        return Err(Error::Compile(
-            "scatter chart axis titles are not reversible because both axes are value axes; remove xAxisTitle/yAxisTitle or use a supported category-axis chart".into(),
-        ));
-    }
     if matches!(chart_type, "pie" | "doughnut")
         && ["xAxisTitle", "yAxisTitle"]
             .iter()

@@ -174,8 +174,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `<c:autoTitleDeleted val="1"/>` and folds false to omission.
 - `Chart.xAxisTitle?: string` and `Chart.yAxisTitle?: string` set static X- and
   Y-axis titles (1–255 valid XML characters) for non-pie charts. Reverse maps
-  the OOXML category axis to X and value axis to Y; only a single unformatted
-  rich-text run is supported. Formula titles and custom formatting are rejected.
+  the OOXML category axis to X and value axis to Y on category/value charts.
+  Scatter charts map horizontal top/bottom value axes to X and vertical
+  left/right value axes to Y. Only a single unformatted rich-text run is
+  supported. Formula titles and custom formatting are rejected.
 - `Chart.xAxisNumberFormat?: string` and `Chart.yAxisNumberFormat?: string`
   set Excel number-format codes on the corresponding category/date and value
   axes. Each is a non-empty, XML-safe format code of at most 255 characters;

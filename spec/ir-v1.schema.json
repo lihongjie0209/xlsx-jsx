@@ -642,8 +642,6 @@
               "props": {
                 "not": {
                   "anyOf": [
-                    { "required": ["xAxisTitle"] },
-                    { "required": ["yAxisTitle"] },
                     { "required": ["valueAxisReversed"] },
                     { "required": ["valueAxisDisplayUnit"] },
                     { "required": ["valueAxisDisplayUnitLabel"] },

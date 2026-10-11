@@ -8038,7 +8038,15 @@ fn parse_chart_xml(
                         "chart part `{part}` has unsupported `<{tag}>` data-label formatting; retain only value/category/series/percentage display flags"
                     )));
                 }
-                audit_chart_attributes(&event, &tag, part, reader.decoder(), chart_type)?;
+                audit_chart_attributes(
+                    &event,
+                    &tag,
+                    part,
+                    reader.decoder(),
+                    chart_type,
+                    &stack,
+                    current_axis_position,
+                )?;
                 if stack.iter().any(|ancestor| ancestor == "dTable")
                     && !matches!(
                         tag.as_str(),
@@ -9050,14 +9058,19 @@ fn parse_chart_xml(
                     _ => {}
                 }
                 if tag == "title" {
-                    if chart_type == Some("scatter")
+                    let target = if chart_type.is_some_and(|value| value.starts_with("scatter"))
                         && stack.iter().any(|ancestor| ancestor == "valAx")
                     {
-                        return Err(Error::Reverse(format!(
-                            "chart part `{part}` has a title on a scatter value axis; axis titles are not represented for scatter charts, so remove them or add explicit X/Y value-axis title support"
-                        )));
-                    }
-                    let target = if stack
+                        match current_axis_position {
+                            Some("b" | "t") => "xAxisTitle",
+                            Some("l" | "r") => "yAxisTitle",
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a scatter axis title without a horizontal or vertical axis position; restore a top/bottom or left/right axPos"
+                                )));
+                            }
+                        }
+                    } else if stack
                         .iter()
                         .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"))
                     {
@@ -11835,6 +11848,8 @@ fn audit_chart_attributes(
     part: &str,
     decoder: quick_xml::encoding::Decoder,
     chart_type: Option<&'static str>,
+    stack: &[String],
+    current_axis_position: Option<&'static str>,
 ) -> xlsx_jsx::Result<()> {
     for attribute in event.attributes().with_checks(false) {
         let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
@@ -11846,7 +11861,18 @@ fn audit_chart_attributes(
             .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
             .map_err(|error| Error::Reverse(error.to_string()))?
             .into_owned();
-        if !is_supported_chart_attribute(tag, &key, &value, chart_type) {
+        let is_default_scatter_y_axis_title_body = tag == "bodyPr"
+            && matches!(
+                (key.as_str(), value.as_str()),
+                ("rot", "-5400000") | ("vert", "horz")
+            )
+            && chart_type.is_some_and(|value| value.starts_with("scatter"))
+            && stack.iter().any(|ancestor| ancestor == "title")
+            && stack.iter().any(|ancestor| ancestor == "valAx")
+            && matches!(current_axis_position, Some("l" | "r"));
+        if !is_supported_chart_attribute(tag, &key, &value, chart_type)
+            && !is_default_scatter_y_axis_title_body
+        {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` has unsupported `{tag}@{key}={value}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
             )));

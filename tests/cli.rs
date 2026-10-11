@@ -3185,7 +3185,8 @@ fn reverses_and_rebuilds_external_scatter_axis_crossings_without_a_manifest() {
     chart
         .add_series()
         .set_categories("Data!A2:A4")
-        .set_values("Data!B2:B4");
+        .set_values("Data!B2:B4")
+        .set_name("Measurements");
     chart.x_axis().set_crossing(ChartAxisCrossing::Min);
     chart.y_axis().set_crossing(ChartAxisCrossing::Max);
     worksheet.insert_chart(0, 5, &chart).unwrap();
@@ -3215,6 +3216,69 @@ fn reverses_and_rebuilds_external_scatter_axis_crossings_without_a_manifest() {
     let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
     assert!(xml.contains("<c:crosses val=\"min\"/>"), "{xml}");
     assert!(xml.contains("<c:crosses val=\"max\"/>"), "{xml}");
+}
+
+#[test]
+fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-titles.xlsx");
+    let output_path = directory.path().join("external-scatter-titles.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_name("Measurements");
+    chart.x_axis().set_crossing(ChartAxisCrossing::Min);
+    chart.y_axis().set_crossing(ChartAxisCrossing::Max);
+    chart.x_axis().set_name("Sample X");
+    chart.y_axis().set_name("Sample Y");
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("xAxisTitle={\"Sample X\"}"), "{source}");
+    assert!(source.contains("yAxisTitle={\"Sample Y\"}"), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-titles.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("Sample X"), "{xml}");
+    assert!(xml.contains("Sample Y"), "{xml}");
+}
+
+#[test]
+fn validates_scatter_axis_titles() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-axis-titles.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisTitle="Sample X" yAxisTitle="Sample Y"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .success();
 }
 
 #[test]
