@@ -1390,6 +1390,28 @@ fn compile_chart(
     }
     if component.props.get("dropLines").and_then(Value::as_bool) == Some(true) {
         chart.set_drop_lines(true);
+        if component
+            .props
+            .get("dropLinesHidden")
+            .and_then(Value::as_bool)
+            == Some(true)
+        {
+            let mut line = ChartLine::new();
+            line.set_hidden(true);
+            if let Some(width) = component
+                .props
+                .get("dropLinesWidth")
+                .and_then(Value::as_f64)
+            {
+                line.set_width(width);
+            }
+            chart.set_drop_lines_format(&mut line);
+        } else {
+            let mut format = chart_shape_format(component, "__none__", "dropLines");
+            if let Some(format) = format.as_mut() {
+                chart.set_drop_lines_format(format);
+            }
+        }
     }
     configure_chart_category_axis_settings(&mut chart, component)?;
     configure_chart_axis_units(&mut chart, component);
@@ -6324,9 +6346,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if chart.value_axis_display_unit_label == Some(false) {
         properties.push_str(" valueAxisDisplayUnitLabel={false}");
     }
-    if chart.drop_lines == Some(true) {
-        properties.push_str(" dropLines={true}");
-    }
+    append_chart_drop_line_properties(&mut properties, chart);
     if chart.legend_overlay == Some(true) {
         properties.push_str(" legendOverlay={true}");
     }
@@ -6365,6 +6385,29 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
         properties.push_str(" verticalAxisHidden={true}");
     }
     properties
+}
+
+fn append_chart_drop_line_properties(properties: &mut String, chart: &WorksheetChart) {
+    if chart.drop_lines == Some(true) {
+        properties.push_str(" dropLines={true}");
+    }
+    if let Some(style) = &chart.drop_line_style {
+        if let Some(color) = &style.color {
+            let _ = write!(properties, " dropLinesColor=\"{color}\"");
+        }
+        if let Some(width) = style.width {
+            let _ = write!(properties, " dropLinesWidth={{{width}}}");
+        }
+        if let Some(dash) = style.dash {
+            let _ = write!(properties, " dropLinesDash=\"{dash}\"");
+        }
+        if let Some(transparency) = style.transparency {
+            let _ = write!(properties, " dropLinesTransparency={{{transparency}}}");
+        }
+    }
+    if chart.drop_lines_hidden == Some(true) {
+        properties.push_str(" dropLinesHidden={true}");
+    }
 }
 
 fn append_chart_axis_crossing_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -9897,6 +9940,9 @@ fn parse_chart_xml(
     let mut scatter_axis_display_unit_label = Vec::<bool>::new();
     let mut drop_lines = false;
     let mut drop_lines_seen = false;
+    let mut drop_line_style: Option<WorksheetChartGridlineStyle> = None;
+    let mut drop_lines_hidden = false;
+    let mut drop_line_outline_seen = false;
     // In OOXML the absent plotVisOnly element means hidden rows/columns are plotted.
     let mut show_hidden_data = true;
     let mut plot_vis_only_seen = false;
@@ -10701,16 +10747,21 @@ fn parse_chart_xml(
                         "chart part `{part}` has unsupported marker-outline child `<{tag}>`; remove line effects/end caps and keep only RGB color, width, preset dash, transparency, or noFill"
                     )));
                 }
-                if stack.iter().any(|ancestor| ancestor == "dropLines") {
-                    return Err(Error::Reverse(format!(
-                        "chart part `{part}` has custom drop-line formatting or content; remove spPr and keep only an empty dropLines element"
-                    )));
-                }
                 if stack.last().is_some_and(|parent| parent == "dispUnits")
                     && !matches!(tag.as_str(), "builtInUnit" | "dispUnitsLbl")
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has unsupported display-unit content `<{tag}>`; retain one builtInUnit and an optional default label"
+                    )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "dropLines")
+                    && !matches!(
+                        tag.as_str(),
+                        "spPr" | "ln" | "solidFill" | "srgbClr" | "alpha" | "prstDash" | "noFill"
+                    )
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported drop-line content `<{tag}>`; keep only RGB color, width, preset dash, transparency, or noFill"
                     )));
                 }
                 if !allowed_tags.contains(&tag.as_str()) {
@@ -14441,6 +14492,8 @@ fn parse_chart_xml(
                                         Some("title" | "xAxisTitle" | "yAxisTitle")
                                     ))
                                 || stack.iter().any(|ancestor| ancestor == "errBars");
+                        let has_supported_parent = has_supported_parent
+                            || stack.last().is_some_and(|ancestor| ancestor == "dropLines");
                         if !has_supported_parent {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has formatting outside an individual series; remove custom chart formatting or add explicit reverse support"
@@ -14477,11 +14530,18 @@ fn parse_chart_xml(
                         let in_gridlines = stack.iter().any(|ancestor| {
                             matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
                         });
+                        let in_drop_lines = stack.iter().any(|ancestor| ancestor == "dropLines");
+                        if in_drop_lines && std::mem::replace(&mut drop_line_outline_seen, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats drop-line outline; keep one a:ln line"
+                            )));
+                        }
                         if stack.last().is_none_or(|ancestor| ancestor != "spPr")
                             || (!in_gridlines
                                 && !in_error_bars
                                 && !in_trendline_line
                                 && !in_marker_line
+                                && !in_drop_lines
                                 && !in_title_shape
                                 && !in_chart_area_shape
                                 && !stack.iter().any(|ancestor| ancestor == "ser"))
@@ -14494,7 +14554,10 @@ fn parse_chart_xml(
                         for attribute in event.attributes().with_checks(false) {
                             let attribute =
                                 attribute.map_err(|error| Error::Reverse(error.to_string()))?;
-                            if (in_title_shape || in_chart_area_shape || in_marker_line)
+                            if (in_title_shape
+                                || in_chart_area_shape
+                                || in_marker_line
+                                || in_drop_lines)
                                 && attribute.key.local_name().as_ref() != b"w"
                             {
                                 return Err(Error::Reverse(format!(
@@ -14519,7 +14582,17 @@ fn parse_chart_xml(
                                 );
                             }
                         }
-                        if in_title_shape || in_chart_area_shape {
+                        if in_drop_lines {
+                            let style = drop_line_style.get_or_insert_default();
+                            if let Some(width) = line_width {
+                                let emu = width.parse::<u32>().ok().filter(|v| *v > 0 && *v <= 20_116_800 && *v % 3175 == 0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a drop-line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments")))?;
+                                if style.width.replace(f64::from(emu) / 12700.0).is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats drop-line width; keep one quarter-point line width"
+                                    )));
+                                }
+                            }
+                        } else if in_title_shape || in_chart_area_shape {
                             let width = line_width
                                 .map(|value| {
                                     value.parse::<u32>().ok().filter(|width| {
@@ -14847,7 +14920,18 @@ fn parse_chart_xml(
                                 "chart part `{part}` has non-RGB series line color; use an opaque six-digit RGB color"
                             )));
                         }
-                        if stack.iter().any(|item| item == "title")
+                        if stack.iter().any(|item| item == "dropLines") {
+                            if drop_line_style
+                                .get_or_insert_default()
+                                .color
+                                .replace(format!("#{color}").to_ascii_uppercase())
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats drop-line RGB color; keep one color"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
                             && matches!(
                                 chart_title_target,
@@ -15002,7 +15086,18 @@ fn parse_chart_xml(
                                 "chart part `{part}` has line alpha not exactly representable by integer transparency; use 1% increments"
                             )));
                         }
-                        if stack.iter().any(|item| item == "title")
+                        if stack.iter().any(|item| item == "dropLines") {
+                            if drop_line_style
+                                .get_or_insert_default()
+                                .transparency
+                                .replace(100 - alpha / 1000)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats drop-line transparency; keep one alpha"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "title")
                             && stack.iter().any(|item| item == "spPr")
                             && matches!(
                                 chart_title_target,
@@ -15145,7 +15240,18 @@ fn parse_chart_xml(
                                 )));
                             }
                         };
-                        if stack.iter().any(|item| item == "marker")
+                        if stack.iter().any(|item| item == "dropLines") {
+                            if drop_line_style
+                                .get_or_insert_default()
+                                .dash
+                                .replace(dash)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats drop-line dash; keep one preset dash"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "marker")
                             && !stack.iter().any(|item| item == "dPt")
                         {
                             let current =
@@ -15210,6 +15316,16 @@ fn parse_chart_xml(
                             }
                         } else if let Some(current) = series.last_mut() {
                             current.line_dash = Some(dash);
+                        }
+                    }
+                    "noFill"
+                        if stack.last().is_some_and(|parent| parent == "ln")
+                            && stack.iter().any(|item| item == "dropLines") =>
+                    {
+                        if std::mem::replace(&mut drop_lines_hidden, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats hidden drop-line fill; keep one noFill"
+                            )));
                         }
                     }
                     "noFill"
@@ -15873,6 +15989,17 @@ fn parse_chart_xml(
     {
         return Err(Error::Reverse(format!(
             "chart part `{part}` enables dropLines on `{chart_type}`; use area, line, or stock charts, or remove dropLines"
+        )));
+    }
+    if drop_lines_hidden
+        && drop_line_style.as_ref().is_some_and(|style| {
+            style.color.is_some()
+                || style.transparency.is_some()
+                || style.dash.is_some_and(|dash| dash != "solid")
+        })
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` combines noFill drop lines with visible line formatting; remove noFill or remove color, non-solid dash, and transparency"
         )));
     }
     if chart_type.starts_with("scatter") {
@@ -16598,6 +16725,8 @@ fn parse_chart_xml(
         y_axis_display_unit,
         y_axis_display_unit_label: y_axis_display_unit_label.filter(|visible| !visible),
         drop_lines: drop_lines.then_some(true),
+        drop_line_style: drop_line_style.filter(|style| !style.is_empty()),
+        drop_lines_hidden: drop_lines_hidden.then_some(true),
         show_hidden_data: show_hidden_data.then_some(true),
         empty_cells_as: empty_cells_as.filter(|value| *value != "gap"),
         show_na_as_empty_cell: show_na_as_empty_cell.then_some(true),
@@ -20963,6 +21092,8 @@ struct WorksheetChart {
     y_axis_display_unit: Option<&'static str>,
     y_axis_display_unit_label: Option<bool>,
     drop_lines: Option<bool>,
+    drop_line_style: Option<WorksheetChartGridlineStyle>,
+    drop_lines_hidden: Option<bool>,
     show_hidden_data: Option<bool>,
     empty_cells_as: Option<&'static str>,
     show_na_as_empty_cell: Option<bool>,

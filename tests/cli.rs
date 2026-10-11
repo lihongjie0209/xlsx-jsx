@@ -6848,7 +6848,25 @@ fn rejects_drop_lines_on_bar_charts_with_guidance() {
 }
 
 #[test]
-fn rejects_custom_external_chart_drop_line_formatting() {
+fn rejects_drop_line_style_without_enabling_drop_lines() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("implicit-drop-line-style.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" dropLinesColor="#4472C4"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+    ).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("requires dropLines={true}"))
+        .stderr(predicate::str::contains("enable drop lines"));
+}
+
+#[test]
+fn reverse_preserves_custom_external_chart_drop_line_formatting() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("custom-chart-drop-lines.xlsx");
     let mut workbook = XlsxWorkbook::new();
@@ -6858,20 +6876,108 @@ fn rejects_custom_external_chart_drop_line_formatting() {
         .add_series()
         .set_categories("Data!A2:A4")
         .set_values("Data!B2:B4");
-    chart.set_drop_lines_format(ChartLine::new().set_color("#4472C4"));
+    chart.set_drop_lines_format(
+        ChartLine::new()
+            .set_color("#4472C4")
+            .set_width(1.5)
+            .set_dash_type(ChartLineDashType::DashDot)
+            .set_transparency(25),
+    );
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
 
+    let output_path = directory.path().join("custom-chart-drop-lines.tsx");
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["reverse"])
         .arg(&workbook_path)
         .args(["-o"])
-        .arg(directory.path().join("custom-chart-drop-lines.tsx"))
+        .arg(&output_path)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("custom drop-line formatting"))
-        .stderr(predicate::str::contains("remove spPr"));
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reverse source exists");
+    assert!(source.contains("dropLinesColor=\"#4472C4\""), "{source}");
+    assert!(source.contains("dropLinesWidth={1.5}"), "{source}");
+    assert!(source.contains("dropLinesDash=\"dashDot\""), "{source}");
+    assert!(source.contains("dropLinesTransparency={25}"), "{source}");
+
+    let rebuilt = directory
+        .path()
+        .join("custom-chart-drop-lines-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_source = directory.path().join("rebuilt-drop-lines.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(rebuilt)
+        .args(["-o"])
+        .arg(&rebuilt_source)
+        .assert()
+        .success();
+    let rebuilt_source = std::fs::read_to_string(rebuilt_source).expect("roundtrip source exists");
+    assert!(
+        rebuilt_source.contains("dropLinesColor=\"#4472C4\""),
+        "{rebuilt_source}"
+    );
+    assert!(
+        rebuilt_source.contains("dropLinesWidth={1.5}"),
+        "{rebuilt_source}"
+    );
+    assert!(
+        rebuilt_source.contains("dropLinesDash=\"dashDot\""),
+        "{rebuilt_source}"
+    );
+    assert!(
+        rebuilt_source.contains("dropLinesTransparency={25}"),
+        "{rebuilt_source}"
+    );
+}
+
+#[test]
+fn reverse_preserves_hidden_external_chart_drop_lines() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("hidden-chart-drop-lines.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.set_drop_lines_format(ChartLine::new().set_hidden(true).set_width(1.25));
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    let output_path = directory.path().join("hidden-chart-drop-lines.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(output_path).expect("reverse source exists");
+    assert!(source.contains("dropLinesHidden={true}"), "{source}");
+    assert!(source.contains("dropLinesWidth={1.25}"), "{source}");
+    let rebuilt = directory
+        .path()
+        .join("hidden-chart-drop-lines-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(directory.path().join("hidden-chart-drop-lines.tsx"))
+        .args(["-o"])
+        .arg(rebuilt)
+        .assert()
+        .success();
 }
 
 #[test]

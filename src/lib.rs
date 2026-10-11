@@ -1980,6 +1980,11 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisDisplayUnit",
             "yAxisDisplayUnitLabel",
             "dropLines",
+            "dropLinesColor",
+            "dropLinesWidth",
+            "dropLinesDash",
+            "dropLinesTransparency",
+            "dropLinesHidden",
             "showHiddenData",
             "emptyCellsAs",
             "showNaAsEmptyCell",
@@ -3333,7 +3338,96 @@ fn is_chart_value_axis_display_unit(value: &str) -> bool {
     )
 }
 
+fn validate_chart_drop_line_style(chart: &Node) -> Result<()> {
+    let style_keys = [
+        "dropLinesColor",
+        "dropLinesWidth",
+        "dropLinesDash",
+        "dropLinesTransparency",
+        "dropLinesHidden",
+    ];
+    let has_style = style_keys.iter().any(|key| chart.props.contains_key(*key));
+    if has_style && chart.props.get("dropLines").and_then(Value::as_bool) != Some(true) {
+        return Err(Error::Compile("Chart drop-line style requires dropLines={true}; enable drop lines or remove dropLines* style properties".into()));
+    }
+    if let Some(color) = chart.props.get("dropLinesColor") {
+        validate_rgb_color(color, "Chart.dropLinesColor", 0, 0)?;
+    }
+    if let Some(width) = chart.props.get("dropLinesWidth") {
+        let Some(width) = width.as_f64() else {
+            return Err(Error::Compile(
+                "Chart.dropLinesWidth must be 0.25–1584 pt in quarter-point increments".into(),
+            ));
+        };
+        if !width.is_finite()
+            || !(0.25..=1584.0).contains(&width)
+            || (width * 4.0 - (width * 4.0).round()).abs() > f64::EPSILON
+        {
+            return Err(Error::Compile(
+                "Chart.dropLinesWidth must be 0.25–1584 pt in quarter-point increments".into(),
+            ));
+        }
+    }
+    if let Some(dash_value) = chart.props.get("dropLinesDash") {
+        let Some(dash) = dash_value.as_str() else {
+            return Err(Error::Compile("Chart.dropLinesDash must be a string preset; use solid, roundDot, squareDot, dash, dashDot, longDash, longDashDot, or longDashDotDot".into()));
+        };
+        if ![
+            "solid",
+            "roundDot",
+            "squareDot",
+            "dash",
+            "dashDot",
+            "longDash",
+            "longDashDot",
+            "longDashDotDot",
+        ]
+        .contains(&dash)
+        {
+            return Err(Error::Compile(format!(
+                "Chart.dropLinesDash `{dash}` is unsupported; use solid, roundDot, squareDot, dash, dashDot, longDash, longDashDot, or longDashDotDot"
+            )));
+        }
+    }
+    if chart
+        .props
+        .get("dropLinesTransparency")
+        .is_some_and(|v| v.as_u64().is_none_or(|v| v > 100))
+    {
+        return Err(Error::Compile(
+            "Chart.dropLinesTransparency must be an integer percentage from 0 through 100".into(),
+        ));
+    }
+    if chart.props.contains_key("dropLinesTransparency")
+        && !chart.props.contains_key("dropLinesColor")
+    {
+        return Err(Error::Compile("Chart.dropLinesTransparency requires dropLinesColor; add a color or remove transparency".into()));
+    }
+    if chart
+        .props
+        .get("dropLinesHidden")
+        .is_some_and(|v| !v.is_boolean())
+    {
+        return Err(Error::Compile(
+            "Chart.dropLinesHidden must be a boolean".into(),
+        ));
+    }
+    if chart.props.get("dropLinesHidden").and_then(Value::as_bool) == Some(true)
+        && (chart.props.contains_key("dropLinesColor")
+            || chart.props.contains_key("dropLinesTransparency")
+            || chart
+                .props
+                .get("dropLinesDash")
+                .and_then(Value::as_str)
+                .is_some_and(|v| v != "solid"))
+    {
+        return Err(Error::Compile("Hidden drop lines cannot combine color, non-solid dash, or transparency; remove those properties because the writer drops them".into()));
+    }
+    Ok(())
+}
+
 fn validate_chart_drop_lines(chart: &Node, chart_type: &str) -> Result<()> {
+    validate_chart_drop_line_style(chart)?;
     let Some(enabled) = chart.props.get("dropLines") else {
         return Ok(());
     };

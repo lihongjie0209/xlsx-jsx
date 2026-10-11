@@ -417,7 +417,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   to the category axis on area, line, and stock charts. Omission or `false`
   keeps drop lines disabled; reverse preserves enabled lines and omits the
   default. Bar, column, radar, scatter, pie, and doughnut charts reject
-  `true`. Custom drop-line formatting is not represented and is rejected.
+  `true`. `dropLinesColor`, `dropLinesWidth` (0.25–1584 pt in quarter-point
+  increments), `dropLinesDash` (`solid`, `roundDot`, `squareDot`, `dash`,
+  `dashDot`, `longDash`, `longDashDot`, or `longDashDotDot`), and
+  `dropLinesTransparency` (integer 0–100; requires a color) describe the
+  corresponding `ChartLine` properties. `dropLinesHidden` emits no-fill and
+  cannot be combined with color, dash, or non-zero transparency. Any style
+  property requires `dropLines={true}` and is valid only on area, line, and
+  stock charts. Reverse preserves these values from external OOXML and rejects
+  unsupported drop-line shape effects or fills.
 - `Chart.showHiddenData?: boolean` includes data from hidden rows and columns;
   omission/`false` keeps the writer default of plotting visible data only
   (serialized as `plotVisOnly=1`), while true omits that element per the writer

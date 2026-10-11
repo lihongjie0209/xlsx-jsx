@@ -572,6 +572,11 @@
             "yAxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
             "yAxisDisplayUnitLabel": { "type": "boolean" },
             "dropLines": { "type": "boolean" },
+            "dropLinesColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "dropLinesWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
+            "dropLinesDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
+            "dropLinesTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "dropLinesHidden": { "type": "boolean" },
             "showHiddenData": { "type": "boolean" },
             "emptyCellsAs": { "enum": ["gap", "zero", "span"] },
             "showNaAsEmptyCell": { "type": "boolean" },
@@ -853,6 +858,48 @@
         {
           "if": { "properties": { "props": { "properties": { "dropLines": { "const": true } }, "required": ["dropLines"] } }, "required": ["props"] },
           "then": { "properties": { "props": { "properties": { "type": { "enum": ["area", "areaStacked", "areaPercentStacked", "line", "lineStacked", "linePercentStacked", "stock"] } } } } }
+        },
+        {
+          "if": {
+            "properties": {
+              "props": {
+                "anyOf": [
+                  { "required": ["dropLinesColor"] },
+                  { "required": ["dropLinesWidth"] },
+                  { "required": ["dropLinesDash"] },
+                  { "required": ["dropLinesTransparency"] },
+                  { "required": ["dropLinesHidden"] }
+                ]
+              }
+            },
+            "required": ["props"]
+          },
+          "then": {
+            "properties": {
+              "props": {
+                "required": ["dropLines"],
+                "properties": {
+                  "dropLines": { "const": true },
+                  "type": { "enum": ["area", "areaStacked", "areaPercentStacked", "line", "lineStacked", "linePercentStacked", "stock"] }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "props": { "required": ["dropLinesTransparency"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "required": ["dropLinesColor"] } } }
+        },
+        {
+          "if": { "properties": { "props": { "properties": { "dropLinesHidden": { "const": true } }, "required": ["dropLinesHidden"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "props": {
+                "not": { "anyOf": [{ "required": ["dropLinesColor"] }, { "required": ["dropLinesTransparency"] }] },
+                "properties": { "dropLinesDash": { "enum": ["solid"] } }
+              }
+            }
+          }
         },
         {
           "if": { "properties": { "props": { "required": ["valueAxisDisplayUnitLabel"] } }, "required": ["props"] },

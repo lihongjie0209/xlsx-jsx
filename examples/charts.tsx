@@ -16,7 +16,7 @@ export default <Workbook>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" deleteFromLegend={true} />
       <ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={true} showLegendKeys={true} fontSize={10} fontBold={true} fontColor="#336699" fillColor="#EAF2F8" fillTransparency={20} />
     </Chart>
-    <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true} categoryAxisLabelInterval={2} categoryAxisTickInterval={2} dropLines={true}>
+    <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true} categoryAxisLabelInterval={2} categoryAxisTickInterval={2} dropLines={true} dropLinesColor="#4472C4" dropLinesWidth={1.5} dropLinesDash="dashDot" dropLinesTransparency={20}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" markerType="circle" markerSize={8} lineColor="#336699" lineWidth={1.5} lineDash="dashDot" smooth={true} showValue={true} showLegendKey={true} showLeaderLines={true} labelSeparator="semicolon">
         <Trendline type="linear" name="Forecast" forward={2} displayEquation={true} displayRSquared={true} labelFontSize={12} labelFontBold={true} labelFontColor="#336699" />
       </Series>
@@ -29,7 +29,7 @@ export default <Workbook>
     <Chart type="pie" cell="K20" width={480} height={288} firstSliceAngle={210} legendDeletedEntries={[1]}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" pointColors={{0: "#4472C4", 2: "#ED7D31"}} showPercentage={true} />
     </Chart>
-    <Chart type="area" cell="D38" width={480} height={288} dropLines={true}>
+    <Chart type="area" cell="D38" width={480} height={288} dropLines={true} dropLinesHidden={true} dropLinesWidth={1.25}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue area" />
     </Chart>
     <Chart type="areaStacked" cell="K38" width={480} height={288}>
