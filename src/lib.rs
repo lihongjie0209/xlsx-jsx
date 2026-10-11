@@ -1926,6 +1926,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "verticalAxisHidden",
             "showLegend",
             "autoTitleDeleted",
+            "titleOverlay",
             "legendOverlay",
             "legendDeletedEntries",
             "legendPosition",
@@ -2060,6 +2061,20 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 }
 
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
+    if let Some(value) = chart.props.get("titleOverlay")
+        && !value.is_boolean()
+    {
+        return Err(Error::Compile(
+            "Chart.titleOverlay must be a boolean; use true or false".into(),
+        ));
+    }
+    if chart.props.get("titleOverlay").and_then(Value::as_bool) == Some(true)
+        && !chart.props.contains_key("title")
+    {
+        return Err(Error::Compile(
+            "Chart.titleOverlay=true requires Chart.title; add a static title or remove titleOverlay".into(),
+        ));
+    }
     if let Some(value) = chart.props.get("autoTitleDeleted")
         && !value.is_boolean()
     {

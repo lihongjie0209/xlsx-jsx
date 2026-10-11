@@ -738,6 +738,9 @@ fn compile_chart(
     if let Some(title) = component.props.get("title").and_then(Value::as_str) {
         chart.title().set_name(title);
     }
+    if component.props.get("titleOverlay").and_then(Value::as_bool) == Some(true) {
+        chart.title().set_overlay(true);
+    }
     if component
         .props
         .get("autoTitleDeleted")
@@ -4411,7 +4414,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -4427,6 +4430,11 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .as_ref()
             .map(|value| format!(" title={{{value:?}}}"))
             .unwrap_or_default(),
+        if chart.title_overlay {
+            " titleOverlay={true}".to_owned()
+        } else {
+            String::new()
+        },
         render_chart_axis_properties(chart),
         if chart.show_legend {
             ""
@@ -7616,6 +7624,8 @@ fn parse_chart_xml(
     let mut chart_title_target: Option<&'static str> = None;
     let mut series_literal_title_open = false;
     let mut chart_title: Option<String> = None;
+    let mut title_overlay = false;
+    let mut title_overlay_seen = false;
     let mut x_axis_title: Option<String> = None;
     let mut y_axis_title: Option<String> = None;
     let mut x_axis_number_format: Option<String> = None;
@@ -7757,6 +7767,7 @@ fn parse_chart_xml(
                         "t",
                         "endParaRPr",
                         "layout",
+                        "overlay",
                     ]
                     .contains(&tag.as_str())
                 {
@@ -8663,24 +8674,49 @@ fn parse_chart_xml(
                         }
                     }
                     "overlay" => {
-                        if stack.last().is_none_or(|parent| parent != "legend")
-                            || legend_overlay_seen
-                        {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has duplicate or misplaced legend overlay; keep one overlay setting inside legend"
-                            )));
-                        }
-                        legend_overlay_seen = true;
-                        legend_overlay = parse_xml_bool(
-                            &chart_element_val_attribute(
-                                &event,
+                        if stack.last().is_some_and(|parent| parent == "title") {
+                            if title_overlay_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats chart-title overlay; keep one overlay flag"
+                                )));
+                            }
+                            title_overlay_seen = true;
+                            let value = parse_xml_bool(
+                                &chart_element_val_attribute(
+                                    &event,
+                                    part,
+                                    reader.decoder(),
+                                    "overlay",
+                                )?,
                                 part,
-                                reader.decoder(),
+                                "chart title overlay",
+                            )?;
+                            if value && chart_title_target != Some("title") {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` overlays an axis title, which has no Chart.titleOverlay equivalent; remove the axis-title overlay"
+                                )));
+                            }
+                            title_overlay = value;
+                        } else {
+                            if stack.last().is_none_or(|parent| parent != "legend")
+                                || legend_overlay_seen
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has duplicate or misplaced legend overlay; keep one overlay setting inside legend"
+                                )));
+                            }
+                            legend_overlay_seen = true;
+                            legend_overlay = parse_xml_bool(
+                                &chart_element_val_attribute(
+                                    &event,
+                                    part,
+                                    reader.decoder(),
+                                    "overlay",
+                                )?,
+                                part,
                                 "overlay",
-                            )?,
-                            part,
-                            "overlay",
-                        )?;
+                            )?;
+                        }
                     }
                     "autoTitleDeleted" => {
                         if stack.last().is_none_or(|parent| parent != "chart")
@@ -10779,6 +10815,7 @@ fn parse_chart_xml(
         height,
         name: anchor.name,
         title: chart_title,
+        title_overlay,
         x_axis_title,
         y_axis_title,
         x_axis_number_format,
@@ -14319,6 +14356,7 @@ struct WorksheetChart {
     height: u32,
     name: String,
     title: Option<String>,
+    title_overlay: bool,
     x_axis_title: Option<String>,
     y_axis_title: Option<String>,
     x_axis_number_format: Option<String>,
