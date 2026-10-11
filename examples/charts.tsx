@@ -10,7 +10,7 @@ export default <Workbook>
   <Worksheet name="Sales">
     <Chart type="column" cell="D2" width={480} height={288} name="Revenue and expenses" title="Monthly revenue &amp; expenses — 2026" titleOverlay={true} xAxisTitle="Month" yAxisTitle="Revenue ($)" yAxisNumberFormat="$#,##0.00" yAxisMin={0} yAxisMax={20} yAxisMajorUnit={5} yAxisMinorUnit={1} valueAxisDisplayUnit="thousands" categoryAxisLabelAlignment="left" categoryAxisOnTickMarks={true} style={7} xAxisCrossing="max" yAxisCrossing="min" horizontalAxisHidden={true} horizontalAxisMinorGridlines={true} verticalAxisMajorGridlines={{color: "#D9E1F2", width: 0.75, dash: "solid"}} horizontalAxisMajorTickType="none" verticalAxisMajorTickType="outside" horizontalAxisLabelPosition="high" verticalAxisLabelPosition="low" legendPosition="bottom" legendOverlay={true} showHiddenData={true} emptyCellsAs="span" showNaAsEmptyCell={true} altText="Monthly revenue compared with expenses">
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" gap={70} overlap={-25} showValue={true} showCategoryName={true} labelPosition="insideEnd" labelNumberFormat="$#,##0.00">
-        <ErrorBars axis="y" type="standardError" />
+        <ErrorBars axis="y" type="standardError" lineColor="#4472C4" lineWidth={1.5} lineDash="dash" lineTransparency={20} />
         <Trendline type="linear" deleteFromLegend={true} />
       </Series>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" deleteFromLegend={true} />

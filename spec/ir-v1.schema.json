@@ -945,8 +945,13 @@
             "type": { "enum": ["standardError", "fixedValue", "percentage", "standardDeviation"] },
             "value": { "type": "number" },
             "direction": { "enum": ["both", "minus", "plus"] },
-            "endCap": { "type": "boolean" }
+            "endCap": { "type": "boolean" },
+            "lineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "lineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
+            "lineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
+            "lineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 }
           },
+          "dependentRequired": { "lineTransparency": ["lineColor"] },
           "additionalProperties": false
         },
         "children": { "type": "array", "maxItems": 0 }

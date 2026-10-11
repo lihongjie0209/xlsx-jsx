@@ -3683,7 +3683,17 @@ fn validate_chart_series_error_bars(
         }
         reject_unknown_props(
             &error_bars,
-            &["axis", "type", "value", "direction", "endCap"],
+            &[
+                "axis",
+                "type",
+                "value",
+                "direction",
+                "endCap",
+                "lineColor",
+                "lineWidth",
+                "lineDash",
+                "lineTransparency",
+            ],
             "ErrorBars",
         )?;
         let axis = error_bars
@@ -3740,6 +3750,61 @@ fn validate_chart_series_error_bars(
                     .into(),
             ));
         }
+        validate_chart_error_bar_line(&error_bars)?;
+    }
+    Ok(())
+}
+
+fn validate_chart_error_bar_line(error_bars: &Node) -> Result<()> {
+    let prefix = "ErrorBars";
+    if let Some(color) = error_bars.props.get("lineColor") {
+        validate_rgb_color(color, "ErrorBars.lineColor", 0, 0)?;
+    }
+    if let Some(width) = error_bars.props.get("lineWidth") {
+        let Some(width) = width.as_f64() else {
+            return Err(Error::Compile("ErrorBars.lineWidth must be a number from 0.25 through 1584 in exact 0.25-point increments".into()));
+        };
+        if !width.is_finite()
+            || !(0.25..=1584.0).contains(&width)
+            || (width * 4.0 - (width * 4.0).round()).abs() > f64::EPSILON
+        {
+            return Err(Error::Compile("ErrorBars.lineWidth must be a number from 0.25 through 1584 in exact 0.25-point increments".into()));
+        }
+    }
+    if let Some(value) = error_bars.props.get("lineDash") {
+        let Some(dash) = value.as_str() else {
+            return Err(Error::Compile(
+                "ErrorBars.lineDash must be a quoted chart-line dash value".into(),
+            ));
+        };
+        if ![
+            "solid",
+            "roundDot",
+            "squareDot",
+            "dash",
+            "dashDot",
+            "longDash",
+            "longDashDot",
+            "longDashDotDot",
+        ]
+        .contains(&dash)
+        {
+            return Err(Error::Compile(format!(
+                "{prefix}.lineDash `{dash}` is unsupported; use a standard chart-line dash"
+            )));
+        }
+    }
+    if let Some(transparency) = error_bars.props.get("lineTransparency")
+        && transparency.as_u64().is_none_or(|value| value > 100)
+    {
+        return Err(Error::Compile(
+            "ErrorBars.lineTransparency must be an integer percentage from 0 through 100".into(),
+        ));
+    }
+    if error_bars.props.contains_key("lineTransparency")
+        && !error_bars.props.contains_key("lineColor")
+    {
+        return Err(Error::Compile("ErrorBars.lineTransparency requires lineColor because transparency is serialized with the RGB color; add lineColor or remove lineTransparency".into()));
     }
     Ok(())
 }

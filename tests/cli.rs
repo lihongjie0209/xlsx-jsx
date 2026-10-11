@@ -1694,6 +1694,13 @@ fn reverses_external_scatter_error_bars_without_a_manifest() {
         .set_type(ChartErrorBarsType::FixedValue(1.25))
         .set_direction(ChartErrorBarsDirection::Plus)
         .set_end_cap(false);
+    let mut error_bar_line = ChartLine::new();
+    error_bar_line
+        .set_color("#123456")
+        .set_width(1.5)
+        .set_dash_type(ChartLineDashType::DashDot)
+        .set_transparency(25);
+    x_errors.set_format(&mut error_bar_line);
     let mut y_errors = ChartErrorBars::new();
     y_errors.set_type(ChartErrorBarsType::StandardError);
     chart
@@ -1739,7 +1746,7 @@ fn reverses_external_scatter_error_bars_without_a_manifest() {
         .assert()
         .success();
     let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
-    assert!(source.contains("<ErrorBars axis=\"x\" type=\"fixedValue\" value={1.25} direction=\"plus\" endCap={false} />"));
+    assert!(source.contains("<ErrorBars axis=\"x\" type=\"fixedValue\" value={1.25} direction=\"plus\" endCap={false} lineColor=\"#123456\" lineWidth={1.5} lineDash=\"dashDot\" lineTransparency={25} />"));
     assert!(source.contains("<ErrorBars axis=\"y\" type=\"standardError\" />"));
     assert!(source.contains(
         "<ErrorBars axis=\"y\" type=\"standardDeviation\" value={1.5} direction=\"minus\" />"
@@ -1766,6 +1773,7 @@ fn reverses_external_scatter_error_bars_without_a_manifest() {
     assert!(chart_xml.contains("<c:errValType val=\"stdErr\"/>"));
     assert!(chart_xml.contains("<c:errValType val=\"stdDev\"/>"));
     assert!(chart_xml.contains("<c:val val=\"1.5\"/>"));
+    assert!(chart_xml.contains("<c:spPr><a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"123456\"><a:alpha val=\"75000\"/></a:srgbClr></a:solidFill><a:prstDash val=\"dashDot\"/></a:ln></c:spPr>"));
     assert!(chart_xml.contains("<c:errValType val=\"percentage\"/>"));
     assert!(chart_xml.contains("<c:val val=\"0\"/>"));
     let bar_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
@@ -3082,6 +3090,29 @@ fn rejects_invalid_chart_error_bar_values_with_guidance() {
             "ErrorBars.value for type=\"fixedValue\" must be greater than zero",
         ))
         .stderr(predicate::str::contains("adjust the value"));
+}
+
+#[test]
+fn rejects_error_bar_line_transparency_without_a_color_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-error-bar-line.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ErrorBars } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><ErrorBars axis="y" type="standardError" lineTransparency={20} /></Series></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ErrorBars.lineTransparency requires lineColor",
+        ))
+        .stderr(predicate::str::contains(
+            "add lineColor or remove lineTransparency",
+        ));
 }
 
 #[test]

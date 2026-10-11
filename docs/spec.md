@@ -420,8 +420,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `endCap?: boolean` defaults to true. Reverse preserves the writer's
   `errDir`, `errBarType`, `errValType`, optional `val`, and `noEndCap` values;
   for writer-defaulted bar/column directions it restores the implicit axis.
-  Custom plus/minus ranges and custom line formatting are not yet represented;
-  external instances using either are rejected instead of being flattened.
+  `lineColor?` (opaque RGB), `lineWidth?` (0.25–1584 pt in quarter-point
+  increments), `lineDash?` (a supported chart-line dash), and
+  `lineTransparency?` (integer 0–100) style the error-bar line. Transparency
+  requires a color. Reverse preserves these supported line attributes; custom
+  plus/minus ranges and other line formatting remain rejected.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed

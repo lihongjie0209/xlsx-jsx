@@ -1105,6 +1105,31 @@ fn configure_chart_series_error_bars(
         if error_bars.props.get("endCap").and_then(Value::as_bool) == Some(false) {
             settings.set_end_cap(false);
         }
+        if ["lineColor", "lineWidth", "lineDash", "lineTransparency"]
+            .iter()
+            .any(|key| error_bars.props.contains_key(*key))
+        {
+            let mut line = ChartLine::new();
+            if let Some(color) = error_bars.props.get("lineColor").and_then(Value::as_str) {
+                line.set_color(color);
+            }
+            if let Some(width) = error_bars.props.get("lineWidth").and_then(Value::as_f64) {
+                line.set_width(width);
+            }
+            if let Some(dash) = error_bars.props.get("lineDash").and_then(Value::as_str) {
+                line.set_dash_type(chart_line_dash_type(dash));
+            }
+            if let Some(transparency) = error_bars
+                .props
+                .get("lineTransparency")
+                .and_then(Value::as_u64)
+            {
+                line.set_transparency(
+                    u8::try_from(transparency).expect("validated ErrorBars.lineTransparency"),
+                );
+            }
+            settings.set_format(&mut line);
+        }
         match axis {
             "x" => {
                 chart_series.set_x_error_bars(&settings);
@@ -4712,6 +4737,18 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 if error_bar.end_cap == Some(false) {
                     output.push_str(" endCap={false}");
                 }
+                if let Some(color) = &error_bar.line_color {
+                    let _ = write!(output, " lineColor=\"{color}\"");
+                }
+                if let Some(width) = error_bar.line_width {
+                    let _ = write!(output, " lineWidth={{{width}}}");
+                }
+                if let Some(dash) = error_bar.line_dash {
+                    let _ = write!(output, " lineDash=\"{dash}\"");
+                }
+                if let Some(transparency) = error_bar.line_transparency {
+                    let _ = write!(output, " lineTransparency={{{transparency}}}");
+                }
                 output.push_str(" />\n");
             }
             if let Some(trendline) = &series.trendline {
@@ -8095,7 +8132,17 @@ fn parse_chart_xml(
                 if in_error_bars
                     && !matches!(
                         tag.as_str(),
-                        "errDir" | "errBarType" | "errValType" | "noEndCap" | "val"
+                        "errDir"
+                            | "errBarType"
+                            | "errValType"
+                            | "noEndCap"
+                            | "val"
+                            | "spPr"
+                            | "ln"
+                            | "solidFill"
+                            | "srgbClr"
+                            | "alpha"
+                            | "prstDash"
                     )
                 {
                     return Err(Error::Reverse(format!(
@@ -10504,27 +10551,32 @@ fn parse_chart_xml(
                         }
                     }
                     "spPr" => {
-                        if stack.last().is_none_or(|ancestor| ancestor != "ser")
-                            && !(stack.iter().any(|ancestor| ancestor == "dPt")
-                                && matches!(
-                                    stack.last().map(String::as_str),
-                                    Some("dPt" | "marker")
-                                ))
-                            && !stack.iter().any(|ancestor| {
-                                matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
-                            })
-                        {
+                        let has_supported_parent =
+                            stack.last().is_some_and(|ancestor| ancestor == "ser")
+                                || (stack.iter().any(|ancestor| ancestor == "dPt")
+                                    && matches!(
+                                        stack.last().map(String::as_str),
+                                        Some("dPt" | "marker")
+                                    ))
+                                || stack.iter().any(|ancestor| {
+                                    matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
+                                })
+                                || stack.iter().any(|ancestor| ancestor == "errBars");
+                        if !has_supported_parent {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has formatting outside an individual series; remove custom chart formatting or add explicit reverse support"
                             )));
                         }
                     }
                     "ln" => {
+                        let in_error_bars = stack.iter().any(|ancestor| ancestor == "errBars");
                         let in_gridlines = stack.iter().any(|ancestor| {
                             matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
                         });
                         if stack.last().is_none_or(|ancestor| ancestor != "spPr")
-                            || (!in_gridlines && !stack.iter().any(|ancestor| ancestor == "ser"))
+                            || (!in_gridlines
+                                && !in_error_bars
+                                && !stack.iter().any(|ancestor| ancestor == "ser"))
                         {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has a line outside a series shape; remove it or add explicit chart line support"
@@ -10565,6 +10617,14 @@ fn parse_chart_xml(
                                     )));
                                 }
                                 style.width = Some(f64::from(width_emu) / 12700.0);
+                            }
+                        } else if in_error_bars {
+                            if let Some(error_bar) = current_error_bar
+                                .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                                && let Some(width) = line_width
+                            {
+                                let width_emu = width.parse::<u32>().ok().filter(|width| *width > 0 && *width <= 20_116_800 && *width % 3175 == 0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has an error-bar line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments")))?;
+                                error_bar.line_width = Some(f64::from(width_emu) / 12700.0);
                             }
                         } else if let Some(current) = series.last_mut() {
                             current.line_hidden = Some(false);
@@ -10625,6 +10685,12 @@ fn parse_chart_xml(
                             )]
                             .get_or_insert_default();
                             style.color = Some(format!("#{color}"));
+                        } else if stack.iter().any(|item| item == "errBars") {
+                            if let Some(error_bar) = current_error_bar
+                                .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                            {
+                                error_bar.line_color = Some(format!("#{color}"));
+                            }
                         } else if let Some(current) = series.last_mut() {
                             current.line_color = Some(format!("#{color}"));
                         }
@@ -10645,6 +10711,12 @@ fn parse_chart_xml(
                             )]
                             .get_or_insert_default();
                             style.transparency = Some(100 - alpha / 1000);
+                        } else if stack.iter().any(|item| item == "errBars") {
+                            if let Some(error_bar) = current_error_bar
+                                .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                            {
+                                error_bar.line_transparency = Some(100 - alpha / 1000);
+                            }
                         } else if let Some(current) = series.last_mut() {
                             current.line_transparency = Some(100 - alpha / 1000);
                         }
@@ -10692,6 +10764,12 @@ fn parse_chart_xml(
                             )]
                             .get_or_insert_default();
                             style.dash = Some(dash);
+                        } else if stack.iter().any(|item| item == "errBars") {
+                            if let Some(error_bar) = current_error_bar
+                                .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                            {
+                                error_bar.line_dash = Some(dash);
+                            }
                         } else if let Some(current) = series.last_mut() {
                             current.line_dash = Some(dash);
                         }
@@ -12235,6 +12313,11 @@ fn validate_reversed_chart_error_bars(
             if error_bar.direction.is_none() {
                 return Err(Error::Reverse(format!(
                     "chart part `{part}` has errBars without errBarType; specify both, minus, or plus"
+                )));
+            }
+            if error_bar.line_transparency.is_some() && error_bar.line_color.is_none() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has error-bar line transparency without an RGB line color; add an explicit solid RGB line color or remove transparency"
                 )));
             }
             match (error_type, error_bar.value) {
@@ -15211,6 +15294,10 @@ struct WorksheetChartErrorBars {
     value: Option<f64>,
     direction: Option<&'static str>,
     end_cap: Option<bool>,
+    line_color: Option<String>,
+    line_width: Option<f64>,
+    line_dash: Option<&'static str>,
+    line_transparency: Option<u32>,
 }
 
 #[derive(Clone)]
