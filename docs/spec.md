@@ -130,6 +130,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   moving average), nonnegative `forward` / `backward` extrapolation, and finite
   `intercept`. Zero extrapolation is the default and omitted. Only one trendline
   is allowed per series, on area, bar, column, line, and scatter charts.
+  `name?: string` sets the trendline's literal legend name. It must contain 1–255
+  XML-safe characters; omission keeps the writer's default name. Reverse preserves
+  an explicit name from an external chart without a manifest.
   Reverse preserves these calculation settings without a manifest; custom
   `Trendline.deleteFromLegend?: boolean` removes only this trendline's legend
   entry; false is the writer default. Reverse preserves the deletion when its

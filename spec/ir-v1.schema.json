@@ -1054,6 +1054,7 @@
           "required": ["type"],
           "properties": {
             "type": { "enum": ["linear", "exponential", "logarithmic", "polynomial", "power", "movingAverage"] },
+            "name": { "type": "string", "minLength": 1, "maxLength": 255 },
             "order": { "type": "integer", "minimum": 2, "maximum": 5 },
             "period": { "type": "integer", "minimum": 2, "maximum": 3 },
             "forward": { "type": "number", "minimum": 0 },

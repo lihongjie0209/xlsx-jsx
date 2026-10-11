@@ -251,6 +251,16 @@ fn spec_exposes_trendline_equation_flags() {
 }
 
 #[test]
+fn spec_exposes_trendline_name() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"name\""));
+}
+
+#[test]
 fn spec_exposes_trendline_line_style_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -3387,6 +3397,27 @@ fn rejects_non_boolean_trendline_legend_deletion() {
 }
 
 #[test]
+fn rejects_empty_trendline_name_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-trendline-name.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, Trendline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><Trendline type="linear" name="" /></Series></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Trendline.name must contain 1–255 valid XML characters",
+        ))
+        .stderr(predicate::str::contains("provide a nonempty literal name"));
+}
+
+#[test]
 fn reverses_external_chart_series_line_style_and_rebuilds_it() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("external-chart-line.xlsx");
@@ -3633,6 +3664,7 @@ fn reverses_external_chart_trendline_parameters_and_rebuilds_them() {
     let mut trendline = ChartTrendline::new();
     trendline
         .set_type(ChartTrendlineType::Linear)
+        .set_name("Linear forecast")
         .set_forward_period(2.5)
         .set_backward_period(1.0)
         .set_intercept(-3.0)
@@ -3661,7 +3693,7 @@ fn reverses_external_chart_trendline_parameters_and_rebuilds_them() {
         .success();
     let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
     assert!(
-        source.contains("<Trendline type=\"linear\" forward={2.5} backward={1} intercept={-3} lineColor=\"#336699\" lineWidth={1.5} lineDash=\"longDash\" lineTransparency={20} />"),
+        source.contains("<Trendline type=\"linear\" name=\"Linear forecast\" forward={2.5} backward={1} intercept={-3} lineColor=\"#336699\" lineWidth={1.5} lineDash=\"longDash\" lineTransparency={20} />"),
         "{source}"
     );
 
@@ -3674,7 +3706,7 @@ fn reverses_external_chart_trendline_parameters_and_rebuilds_them() {
         .assert()
         .success();
     let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
-    assert!(xml.contains("<c:trendline><c:spPr><a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"336699\"><a:alpha val=\"80000\"/></a:srgbClr></a:solidFill><a:prstDash val=\"lgDash\"/></a:ln></c:spPr><c:trendlineType val=\"linear\"/><c:forward val=\"2.5\"/><c:backward val=\"1\"/><c:intercept val=\"-3\"/></c:trendline>"), "{xml}");
+    assert!(xml.contains("<c:trendline><c:name>Linear forecast</c:name><c:spPr><a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"336699\"><a:alpha val=\"80000\"/></a:srgbClr></a:solidFill><a:prstDash val=\"lgDash\"/></a:ln></c:spPr><c:trendlineType val=\"linear\"/><c:forward val=\"2.5\"/><c:backward val=\"1\"/><c:intercept val=\"-3\"/></c:trendline>"), "{xml}");
 }
 
 #[test]

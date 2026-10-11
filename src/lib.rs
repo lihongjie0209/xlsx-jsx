@@ -3565,6 +3565,7 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
             &trendline,
             &[
                 "type",
+                "name",
                 "deleteFromLegend",
                 "order",
                 "period",
@@ -3581,6 +3582,21 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
             ],
             "Trendline",
         )?;
+        if let Some(value) = trendline.props.get("name") {
+            let Some(name) = value.as_str() else {
+                return Err(Error::Compile(
+                    "Trendline.name must be a string; use a quoted literal such as name=\"Forecast\"".into(),
+                ));
+            };
+            if name.is_empty()
+                || name.chars().count() > 255
+                || !name.chars().all(is_valid_xml_character)
+            {
+                return Err(Error::Compile(
+                    "Trendline.name must contain 1–255 valid XML characters; provide a nonempty literal name without control characters".into(),
+                ));
+            }
+        }
         if let Some(value) = trendline.props.get("deleteFromLegend") {
             let Some(enabled) = value.as_bool() else {
                 return Err(Error::Compile(

@@ -1275,6 +1275,10 @@ fn configure_chart_series_error_bars(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Trendline settings are applied together to preserve the writer's one-object configuration contract."
+)]
 fn configure_chart_series_trendline(
     chart_series: &mut rust_xlsxwriter::ChartSeries,
     series: &Node,
@@ -1311,6 +1315,9 @@ fn configure_chart_series_trendline(
         _ => unreachable!("validated Trendline.type"),
     };
     settings.set_type(kind);
+    if let Some(name) = trendline.props.get("name").and_then(Value::as_str) {
+        settings.set_name(name);
+    }
     if let Some(forward) = trendline.props.get("forward").and_then(Value::as_f64) {
         settings.set_forward_period(forward);
     }
@@ -5126,6 +5133,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 output.push_str("        <Trendline");
                 let trend_type = trendline.trend_type.expect("validated trendline type");
                 let _ = write!(output, " type=\"{trend_type}\"");
+                if let Some(name) = &trendline.name {
+                    let _ = write!(output, " name={name:?}");
+                }
                 if let Some(order) = trendline.order {
                     let _ = write!(output, " order={{{order}}}");
                 }
@@ -8251,6 +8261,7 @@ fn parse_chart_xml(
         "invertIfNegative",
         "dropLines",
         "trendline",
+        "name",
         "trendlineType",
         "dispEq",
         "dispRSqr",
@@ -8388,6 +8399,7 @@ fn parse_chart_xml(
     let mut chart_title_open = false;
     let mut chart_title_target: Option<&'static str> = None;
     let mut series_literal_title_open = false;
+    let mut trendline_name_open = false;
     let mut chart_title: Option<String> = None;
     let mut title_font_size: Option<f64> = None;
     let mut title_font_size_seen = false;
@@ -9053,17 +9065,18 @@ fn parse_chart_xml(
                         "prstDash" | "noFill" => stack.last().is_some_and(|parent| parent == "ln"),
                         _ => false,
                     };
-                let supported_trendline_content =
-                    matches!(
+                let supported_trendline_content = (tag == "name"
+                    && stack.last().is_some_and(|parent| parent == "trendline"))
+                    || matches!(
                         tag.as_str(),
                         "trendlineType" | "order" | "period" | "forward" | "backward" | "intercept"
-                    ) || (matches!(tag.as_str(), "dispEq" | "dispRSqr" | "trendlineLbl")
+                    )
+                    || (matches!(tag.as_str(), "dispEq" | "dispRSqr" | "trendlineLbl")
                         && stack.last().is_some_and(|parent| parent == "trendline"))
-                        || (tag == "spPr"
-                            && stack.last().is_some_and(|parent| parent == "trendline"))
-                        || supported_trendline_line_content
-                        || (matches!(tag.as_str(), "layout" | "numFmt")
-                            && stack.last().is_some_and(|parent| parent == "trendlineLbl"));
+                    || (tag == "spPr" && stack.last().is_some_and(|parent| parent == "trendline"))
+                    || supported_trendline_line_content
+                    || (matches!(tag.as_str(), "layout" | "numFmt")
+                        && stack.last().is_some_and(|parent| parent == "trendlineLbl"));
                 if stack.iter().any(|ancestor| ancestor == "trendline")
                     && !supported_trendline_content
                 {
@@ -9094,6 +9107,24 @@ fn parse_chart_xml(
                     )));
                 }
                 match tag.as_str() {
+                    "name" if stack.last().is_some_and(|parent| parent == "trendline") => {
+                        if is_empty {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an empty trendline name element; add 1–255 characters or omit c:name"
+                            )));
+                        }
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("trendline name has a trendline context");
+                        if trendline.name.is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a trendline name; keep one c:name element"
+                            )));
+                        }
+                        trendline.name = Some(String::new());
+                        trendline_name_open = true;
+                    }
                     "manualLayout"
                         if stack.last().is_some_and(|parent| parent == "layout")
                             && stack.iter().rev().nth(1).is_some_and(|parent| {
@@ -12374,6 +12405,16 @@ fn parse_chart_xml(
                 }
             }
             Ok(Event::Text(text)) => {
+                if trendline_name_open {
+                    let name = text
+                        .xml_content(XmlVersion::Implicit1_0)
+                        .map_err(|error| Error::Reverse(error.to_string()))?;
+                    if let Some(trendline) =
+                        series.last_mut().and_then(|item| item.trendline.as_mut())
+                    {
+                        trendline.name.get_or_insert_default().push_str(&name);
+                    }
+                }
                 if stack.last().is_some_and(|tag| tag == "formatCode")
                     && stack.iter().any(|tag| tag == "errBars")
                 {
@@ -12547,7 +12588,9 @@ fn parse_chart_xml(
                     }
                 }
             }
-            Ok(Event::GeneralRef(reference)) if chart_title_open || series_literal_title_open => {
+            Ok(Event::GeneralRef(reference))
+                if chart_title_open || series_literal_title_open || trendline_name_open =>
+            {
                 let entity = reference
                     .decode()
                     .map_err(|error| Error::Reverse(error.to_string()))?;
@@ -12565,12 +12608,34 @@ fn parse_chart_xml(
                     })?;
                 if chart_title_open {
                     chart_title_text.push_str(&resolved);
+                } else if trendline_name_open {
+                    if let Some(trendline) =
+                        series.last_mut().and_then(|item| item.trendline.as_mut())
+                    {
+                        trendline.name.get_or_insert_default().push_str(&resolved);
+                    }
                 } else if let Some(current) = series.last_mut() {
                     current.title.get_or_insert_default().push_str(&resolved);
                 }
             }
             Ok(Event::End(event)) => {
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if tag == "name" && trendline_name_open {
+                    trendline_name_open = false;
+                    let name = series
+                        .last()
+                        .and_then(|item| item.trendline.as_ref())
+                        .and_then(|trendline| trendline.name.as_deref())
+                        .unwrap_or_default();
+                    if name.is_empty()
+                        || name.chars().count() > 255
+                        || !name.chars().all(is_valid_xml_character)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a trendline name outside the 1–255 valid XML character subset; provide a nonempty supported name or omit c:name"
+                        )));
+                    }
+                }
                 if tag == "manualLayout"
                     && let Some(destination) = current_manual_layout.take()
                 {
@@ -17330,6 +17395,7 @@ struct WorksheetChartSeries {
 #[derive(Clone, Default)]
 struct WorksheetChartTrendline {
     trend_type: Option<&'static str>,
+    name: Option<String>,
     order: Option<u8>,
     period: Option<u8>,
     forward: Option<f64>,
