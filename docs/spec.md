@@ -166,8 +166,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   DrawingML hundredths-of-a-point size. `titleFontBold?: boolean`,
   `titleFontItalic?: boolean`, and `titleFontColor?: "#RRGGBB"` model explicit
   bold (including `false`, which disables Excel's default bold title), italic,
-  and opaque RGB run color. All title font properties require `title`; theme,
-  indexed, automatic, and translucent colors plus other font properties remain
+  and opaque RGB run color. `titleFontName?: string` sets the DrawingML Latin
+  typeface; `titleFontPitchFamily?: integer` preserves its optional byte
+  metadata (0–255), and `titleFontCharset?: integer` preserves the OOXML
+  signed-byte charset value supported by the writer (0–127). All title font properties
+  require `title`; omitted/default zero pitch-family or charset metadata is
+  folded when equivalent. Theme, indexed, automatic, and translucent colors,
+  East Asian/complex-script typefaces, and other font properties remain
   rejected unless they have an explicit DSL property.
 - `Chart.titleLayout?: { x, y }` manually positions a static chart title using
   finite relative fractions in `[0, 1]` of the chart width and height. The

@@ -551,6 +551,9 @@
             "titleFontBold": { "type": "boolean" },
             "titleFontItalic": { "type": "boolean" },
             "titleFontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "titleFontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "titleFontPitchFamily": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "titleFontCharset": { "type": "integer", "minimum": 0, "maximum": 127 },
             "titleLayout": {
               "type": "object",
               "required": ["x", "y"],
@@ -600,7 +603,10 @@
             "titleFontSize": ["title"],
             "titleFontBold": ["title"],
             "titleFontItalic": ["title"],
-            "titleFontColor": ["title"]
+            "titleFontColor": ["title"],
+            "titleFontName": ["title"],
+            "titleFontPitchFamily": ["title"],
+            "titleFontCharset": ["title"]
           },
           "additionalProperties": false
         },

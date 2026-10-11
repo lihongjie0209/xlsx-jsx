@@ -1948,6 +1948,9 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleFontBold",
             "titleFontItalic",
             "titleFontColor",
+            "titleFontName",
+            "titleFontPitchFamily",
+            "titleFontCharset",
             "chartAreaFillColor",
             "plotAreaFillColor",
             "plotAreaLayout",
@@ -2279,6 +2282,46 @@ fn validate_chart_title_font_properties(chart: &Node) -> Result<()> {
             return Err(Error::Compile(
                 "Chart.titleFontColor requires Chart.title; add a static title or remove titleFontColor".into(),
             ));
+        }
+    }
+    if let Some(value) = chart.props.get("titleFontName") {
+        let Some(name) = value.as_str() else {
+            return Err(Error::Compile(
+                "Chart.titleFontName must be a string; provide a non-empty font/typeface name"
+                    .into(),
+            ));
+        };
+        if name.is_empty()
+            || name.chars().count() > 255
+            || !name.chars().all(is_valid_xml_character)
+        {
+            return Err(Error::Compile(
+                "Chart.titleFontName must contain 1–255 valid XML characters; use a font name without control characters".into(),
+            ));
+        }
+        if !chart.props.contains_key("title") {
+            return Err(Error::Compile(
+                "Chart.titleFontName requires Chart.title; add a static title or remove titleFontName".into(),
+            ));
+        }
+    }
+    for property in ["titleFontPitchFamily", "titleFontCharset"] {
+        let maximum = if property == "titleFontCharset" {
+            127
+        } else {
+            255
+        };
+        if let Some(value) = chart.props.get(property)
+            && value.as_u64().is_none_or(|number| number > maximum)
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be an integer from 0 to {maximum}; provide a schema-valid byte value"
+            )));
+        }
+        if chart.props.contains_key(property) && !chart.props.contains_key("title") {
+            return Err(Error::Compile(format!(
+                "Chart.{property} requires Chart.title; add a static title or remove {property}"
+            )));
         }
     }
     Ok(())

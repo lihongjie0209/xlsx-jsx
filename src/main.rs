@@ -781,6 +781,9 @@ fn compile_chart(
         || component.props.contains_key("titleFontBold")
         || component.props.contains_key("titleFontItalic")
         || component.props.contains_key("titleFontColor")
+        || component.props.contains_key("titleFontName")
+        || component.props.contains_key("titleFontPitchFamily")
+        || component.props.contains_key("titleFontCharset")
     {
         let mut font = rust_xlsxwriter::ChartFont::new();
         if let Some(size) = component.props.get("titleFontSize").and_then(Value::as_f64) {
@@ -813,6 +816,23 @@ fn compile_chart(
             .and_then(Value::as_str)
         {
             font.set_color(color);
+        }
+        if let Some(name) = component.props.get("titleFontName").and_then(Value::as_str) {
+            font.set_name(name);
+        }
+        if let Some(family) = component
+            .props
+            .get("titleFontPitchFamily")
+            .and_then(Value::as_u64)
+        {
+            font.set_pitch_family(u8::try_from(family).expect("validated title font pitch family"));
+        }
+        if let Some(charset) = component
+            .props
+            .get("titleFontCharset")
+            .and_then(Value::as_u64)
+        {
+            font.set_character_set(u8::try_from(charset).expect("validated title font charset"));
         }
         chart.title().set_font(&font);
     }
@@ -5067,18 +5087,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if chart.auto_title_deleted {
         properties.push_str(" autoTitleDeleted={true}");
     }
-    if let Some(size) = chart.title_font_size {
-        let _ = write!(properties, " titleFontSize={{{size}}}");
-    }
-    if let Some(bold) = chart.title_font_bold {
-        let _ = write!(properties, " titleFontBold={{{bold}}}");
-    }
-    if let Some(italic) = chart.title_font_italic {
-        let _ = write!(properties, " titleFontItalic={{{italic}}}");
-    }
-    if let Some(color) = &chart.title_font_color {
-        let _ = write!(properties, " titleFontColor={color:?}");
-    }
+    append_chart_title_font_properties(&mut properties, chart);
     if !chart.legend_deleted_entries.is_empty() {
         let entries = chart
             .legend_deleted_entries
@@ -5107,6 +5116,30 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
         properties.push_str(" verticalAxisHidden={true}");
     }
     properties
+}
+
+fn append_chart_title_font_properties(properties: &mut String, chart: &WorksheetChart) {
+    if let Some(size) = chart.title_font_size {
+        let _ = write!(properties, " titleFontSize={{{size}}}");
+    }
+    if let Some(bold) = chart.title_font_bold {
+        let _ = write!(properties, " titleFontBold={{{bold}}}");
+    }
+    if let Some(italic) = chart.title_font_italic {
+        let _ = write!(properties, " titleFontItalic={{{italic}}}");
+    }
+    if let Some(color) = &chart.title_font_color {
+        let _ = write!(properties, " titleFontColor={color:?}");
+    }
+    if let Some(name) = &chart.title_font_name {
+        let _ = write!(properties, " titleFontName={name:?}");
+    }
+    if let Some(family) = chart.title_font_pitch_family {
+        let _ = write!(properties, " titleFontPitchFamily={{{family}}}");
+    }
+    if let Some(charset) = chart.title_font_charset {
+        let _ = write!(properties, " titleFontCharset={{{charset}}}");
+    }
 }
 
 fn append_chart_axis_value_properties(properties: &mut String, chart: &WorksheetChart) {
@@ -7988,6 +8021,7 @@ fn parse_chart_xml(
         "rPr",
         "t",
         "endParaRPr",
+        "latin",
         "plotArea",
         "dTable",
         "showHorzBorder",
@@ -8163,6 +8197,10 @@ fn parse_chart_xml(
     let mut title_font_bold: Option<bool> = None;
     let mut title_font_italic: Option<bool> = None;
     let mut title_font_color: Option<String> = None;
+    let mut title_font_name: Option<String> = None;
+    let mut title_font_pitch_family: Option<u8> = None;
+    let mut title_font_charset: Option<u8> = None;
+    let mut title_font_latin_seen = false;
     let mut title_overlay = false;
     let mut title_overlay_seen = false;
     let mut x_axis_title: Option<String> = None;
@@ -8450,6 +8488,7 @@ fn parse_chart_xml(
                         "endParaRPr",
                         "solidFill",
                         "srgbClr",
+                        "latin",
                         "layout",
                         "manualLayout",
                         "layoutTarget",
@@ -11310,6 +11349,65 @@ fn parse_chart_xml(
                         }
                         title_font_color = Some(color);
                     }
+                    "latin" if stack.iter().any(|ancestor| ancestor == "title") => {
+                        if chart_title_target != Some("title") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a custom axis or series title typeface; only Chart title font properties are modeled"
+                            )));
+                        }
+                        let name = chart_xml_attribute(&event, "typeface", reader.decoder())?;
+                        if name.as_ref().is_some_and(|name| {
+                            name.is_empty() || !name.chars().all(is_valid_xml_character)
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an empty or invalid Latin title typeface; provide a non-empty XML-safe font name"
+                            )));
+                        }
+                        let pitch_family = chart_xml_attribute(
+                            &event,
+                            "pitchFamily",
+                            reader.decoder(),
+                        )?
+                        .map(|value| value.parse::<u8>())
+                        .transpose()
+                        .map_err(|_| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has an invalid title font pitchFamily; use a byte from 0 to 255"
+                            ))
+                        })?
+                        .filter(|value| *value != 0);
+                        let raw_charset = chart_xml_attribute(&event, "charset", reader.decoder())?
+                            .map(|value| value.parse::<u8>())
+                            .transpose()
+                            .map_err(|_| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has an invalid title font charset; use a byte from 0 to 255"
+                                ))
+                            })?;
+                        if raw_charset.is_some_and(|value| value > 127) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has title font charset above 127; the writer's u8 setter emits schema-invalid values here, so correct the OOXML charset"
+                            )));
+                        }
+                        let charset = match (raw_charset, pitch_family) {
+                            (Some(0) | None, Some(_)) => Some(0),
+                            (Some(0) | None, None) => None,
+                            (value, _) => value,
+                        };
+                        if title_font_latin_seen
+                            && (title_font_name != name
+                                || title_font_pitch_family != pitch_family
+                                || title_font_charset != charset)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent default/run title typeface metadata; make them identical"
+                            )));
+                        }
+                        title_font_name = name;
+                        title_font_pitch_family = pitch_family;
+                        title_font_charset = charset;
+                        title_font_latin_seen = true;
+                    }
                     "spPr" => {
                         let has_supported_parent =
                             stack.last().is_some_and(|ancestor| ancestor == "ser")
@@ -12505,6 +12603,9 @@ fn parse_chart_xml(
         title_font_bold,
         title_font_italic,
         title_font_color,
+        title_font_name,
+        title_font_pitch_family,
+        title_font_charset,
         title_overlay,
         chart_area_fill_color,
         plot_area_fill_color,
@@ -13171,13 +13272,22 @@ fn audit_chart_attributes(
             && matches!(current_axis_position, Some("l" | "r"));
         let is_supported_chart_title_font_attribute = chart_title_target == Some("title")
             && stack.iter().any(|ancestor| ancestor == "title")
-            && matches!(tag, "rPr" | "defRPr")
-            && match (key.as_str(), value.as_str()) {
-                ("sz", value) => value
-                    .parse::<u32>()
-                    .is_ok_and(|size| (100..=400_000).contains(&size)),
-                ("b" | "i", "0" | "1" | "true" | "false") | ("baseline", "0") => true,
-                _ => false,
+            && if matches!(tag, "rPr" | "defRPr") {
+                match (key.as_str(), value.as_str()) {
+                    ("sz", value) => value
+                        .parse::<u32>()
+                        .is_ok_and(|size| (100..=400_000).contains(&size)),
+                    ("b" | "i", "0" | "1" | "true" | "false") | ("baseline", "0") => true,
+                    _ => false,
+                }
+            } else if tag == "latin" {
+                match key.as_str() {
+                    "typeface" => !value.is_empty() && value.chars().all(is_valid_xml_character),
+                    "pitchFamily" | "charset" => value.parse::<u8>().is_ok(),
+                    _ => false,
+                }
+            } else {
+                false
             };
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
@@ -16278,6 +16388,9 @@ struct WorksheetChart {
     title_font_bold: Option<bool>,
     title_font_italic: Option<bool>,
     title_font_color: Option<String>,
+    title_font_name: Option<String>,
+    title_font_pitch_family: Option<u8>,
+    title_font_charset: Option<u8>,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     plot_area_fill_color: Option<String>,

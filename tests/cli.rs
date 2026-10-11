@@ -238,7 +238,10 @@ fn spec_exposes_chart_title_font_properties() {
         .stdout(predicate::str::contains("titleFontSize"))
         .stdout(predicate::str::contains("titleFontBold"))
         .stdout(predicate::str::contains("titleFontItalic"))
-        .stdout(predicate::str::contains("titleFontColor"));
+        .stdout(predicate::str::contains("titleFontColor"))
+        .stdout(predicate::str::contains("titleFontName"))
+        .stdout(predicate::str::contains("titleFontPitchFamily"))
+        .stdout(predicate::str::contains("titleFontCharset"));
 }
 
 #[test]
@@ -1004,7 +1007,7 @@ fn chart_title_font_styling_round_trips_without_a_manifest() {
     let input = directory.path().join("chart-title-font-size.tsx");
     std::fs::write(
         &input,
-        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontSize={16} titleFontBold={false} titleFontItalic={true} titleFontColor="#336699"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontSize={16} titleFontBold={false} titleFontItalic={true} titleFontColor="#336699" titleFontName="Aptos" titleFontPitchFamily={34} titleFontCharset={127}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
     )
     .expect("source writes");
     let external = directory.path().join("chart-title-font-size.xlsx");
@@ -1030,6 +1033,9 @@ fn chart_title_font_styling_round_trips_without_a_manifest() {
     assert!(source.contains("titleFontBold={false}"), "{source}");
     assert!(source.contains("titleFontItalic={true}"), "{source}");
     assert!(source.contains("titleFontColor=\"#336699\""), "{source}");
+    assert!(source.contains("titleFontName=\"Aptos\""), "{source}");
+    assert!(source.contains("titleFontPitchFamily={34}"), "{source}");
+    assert!(source.contains("titleFontCharset={127}"), "{source}");
     let rebuilt = directory.path().join("chart-title-font-size-rebuilt.xlsx");
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -1091,6 +1097,61 @@ fn rejects_chart_title_font_color_without_opaque_rgb_value() {
             "Chart.titleFontColor must be an opaque RGB color",
         ))
         .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn rejects_chart_title_charset_outside_openxml_signed_byte_range() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-title-font-family.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontCharset={128}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.titleFontCharset must be an integer from 0 to 127",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn reverse_rejects_chart_title_charset_outside_openxml_signed_byte_range() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("title-font-charset.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" title="Quarterly sales" titleFontCharset={127}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    let external = directory.path().join("title-font-charset.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart1.xml", |xml| {
+        xml.replace("charset=\"127\"", "charset=\"128\"")
+    });
+    let reversed = directory.path().join("title-font-charset-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .args(["-o"])
+        .arg(reversed)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("title font charset above 127"))
+        .stderr(predicate::str::contains("schema-invalid values"));
 }
 
 #[test]
@@ -6433,6 +6494,34 @@ fn reverse_rejects_formatted_chart_titles_instead_of_dropping_formatting() {
         .stderr(predicate::str::contains(
             "remove custom chart/axis/print formatting",
         ));
+}
+
+#[test]
+fn reverse_rejects_unmodeled_axis_title_typefaces() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("axis-title-typeface.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/charts.tsx", "-o"])
+        .arg(&external)
+        .assert()
+        .success();
+    rewrite_part(&external, "xl/charts/chart1.xml", |xml| {
+        xml.replace(
+            "<a:rPr lang=\"en-US\"/>",
+            "<a:rPr lang=\"en-US\"><a:latin typeface=\"Aptos\"/></a:rPr>",
+        )
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported `latin@typeface=Aptos`",
+        ))
+        .stderr(predicate::str::contains("matching DSL and reverse support"));
 }
 
 #[test]
