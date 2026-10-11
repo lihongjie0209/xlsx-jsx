@@ -383,6 +383,8 @@ fn spec_exposes_chart_axis_title_font_properties() {
         .stdout(predicate::str::contains("xAxisTitleFontPitchFamily"))
         .stdout(predicate::str::contains("xAxisTitleFontCharset"))
         .stdout(predicate::str::contains("xAxisTitleFontRotation"))
+        .stdout(predicate::str::contains("xAxisTitleLayout"))
+        .stdout(predicate::str::contains("yAxisTitleLayout"))
         .stdout(predicate::str::contains("yAxisTitleFontColor"))
         .stdout(predicate::str::contains("yAxisTitleFontName"))
         .stdout(predicate::str::contains("xAxisTitleFillColor"))
@@ -1461,6 +1463,26 @@ fn rejects_title_layout_without_a_static_title() {
             "Chart.titleLayout requires Chart.title",
         ))
         .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn rejects_axis_title_layout_dimensions_outside_supported_subset() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-title-layout-dimensions.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" xAxisTitle="Quarter" xAxisTitleLayout={{x: 0.2, y: 0.3, width: 0.5}}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitleLayout requires exactly x and y",
+        ));
 }
 
 #[test]
@@ -5232,6 +5254,12 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     chart.y_axis().set_crossing(ChartAxisCrossing::Max);
     chart.x_axis().set_name("Sample X");
     chart.y_axis().set_name("Sample Y");
+    chart
+        .x_axis()
+        .set_label_layout(&rust_xlsxwriter::ChartLayout::new().set_offset(0.2, 0.3));
+    chart
+        .y_axis()
+        .set_label_layout(&rust_xlsxwriter::ChartLayout::new().set_offset(0.6, 0.7));
     chart.x_axis().set_name_font(
         ChartFont::new()
             .set_size(14.0)
@@ -5287,6 +5315,14 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
     assert!(source.contains("xAxisTitle={\"Sample X\"}"), "{source}");
     assert!(source.contains("yAxisTitle={\"Sample Y\"}"), "{source}");
+    assert!(
+        source.contains("xAxisTitleLayout={{x: 0.2, y: 0.3}}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("yAxisTitleLayout={{x: 0.6, y: 0.7}}"),
+        "{source}"
+    );
     assert!(source.contains("xAxisTitleFontSize={14}"), "{source}");
     assert!(source.contains("xAxisTitleFontBold={true}"), "{source}");
     assert!(
@@ -5365,6 +5401,14 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     assert!(xml.contains("sz=\"1200\" i=\"1\" u=\"sng\""), "{xml}");
     assert!(xml.contains("val=\"F0E0D0\""), "{xml}");
     assert!(xml.contains("val=\"D0E0F0\""), "{xml}");
+    assert!(
+        xml.contains("<c:x val=\"0.2\"/><c:y val=\"0.3\"/>"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<c:x val=\"0.6\"/><c:y val=\"0.7\"/>"),
+        "{xml}"
+    );
     assert!(xml.contains("w=\"19050\""), "{xml}");
     assert!(xml.contains("prstDash val=\"dashDot\""), "{xml}");
     assert!(xml.contains("alpha val=\"75000\""), "{xml}");

@@ -1902,6 +1902,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "legendFillTransparency",
             "xAxisTitle",
             "yAxisTitle",
+            "xAxisTitleLayout",
+            "yAxisTitleLayout",
             "xAxisTitleFillColor",
             "xAxisTitleFillTransparency",
             "yAxisTitleFillColor",
@@ -2000,6 +2002,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "autoTitleDeleted",
             "titleOverlay",
             "titleLayout",
+            "xAxisTitleLayout",
+            "yAxisTitleLayout",
             "titleFontSize",
             "titleFontBold",
             "titleFontItalic",
@@ -2187,6 +2191,11 @@ fn validate_chart_visual_properties(chart: &Node, chart_type: &str) -> Result<()
             }
         }
     }
+    validate_chart_title_layouts(chart)?;
+    validate_chart_crossings(chart, chart_type)
+}
+
+fn validate_chart_title_layouts(chart: &Node) -> Result<()> {
     if let Some(layout) = chart.props.get("titleLayout") {
         let Some(layout) = layout.as_object() else {
             return Err(Error::Compile(
@@ -2212,7 +2221,41 @@ fn validate_chart_visual_properties(chart: &Node, chart_type: &str) -> Result<()
             }
         }
     }
-    validate_chart_crossings(chart, chart_type)
+    for (property, axis_title) in [
+        ("xAxisTitleLayout", "xAxisTitle"),
+        ("yAxisTitleLayout", "yAxisTitle"),
+    ] {
+        let Some(layout) = chart.props.get(property) else {
+            continue;
+        };
+        let Some(layout) = layout.as_object() else {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be an object with x and y fractions; provide both offsets"
+            )));
+        };
+        if layout.len() != 2 || !layout.contains_key("x") || !layout.contains_key("y") {
+            return Err(Error::Compile(format!(
+                "Chart.{property} requires exactly x and y; provide both offsets and remove extra keys"
+            )));
+        }
+        for key in ["x", "y"] {
+            if !layout
+                .get(key)
+                .and_then(Value::as_f64)
+                .is_some_and(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+            {
+                return Err(Error::Compile(format!(
+                    "Chart.{property}.{key} must be a finite relative offset in [0, 1]; use chart fractions, not pixels or percentages"
+                )));
+            }
+        }
+        if !chart.props.contains_key(axis_title) {
+            return Err(Error::Compile(format!(
+                "Chart.{property} requires Chart.{axis_title}; add the matching axis title or remove {property}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
@@ -2574,6 +2617,8 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
         let axis_titles = [
             "xAxisTitle",
             "yAxisTitle",
+            "xAxisTitleLayout",
+            "yAxisTitleLayout",
             "xAxisTitleFillColor",
             "xAxisTitleFillTransparency",
             "yAxisTitleFillColor",

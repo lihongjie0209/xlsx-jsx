@@ -243,6 +243,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   writer uses outer/default layout target and edge positioning. It requires
   `title`; reverse accepts an omitted or explicit `outer` target and rejects
   other targets/modes, title width/height overrides, and incomplete offsets.
+- `Chart.xAxisTitleLayout?: { x, y }` and `Chart.yAxisTitleLayout?: { x, y }`
+  manually position static axis-title text through `ChartAxis::set_label_layout()`.
+  Both finite offsets are relative fractions in `[0, 1]` and use the writer's
+  outer/default target and edge modes. Each requires its matching axis title;
+  reverse preserves only complete x/y offsets without dimensions or mode overrides.
 - `Chart.titleOverlay?: boolean` places an explicit static chart title over the
   plot area via `ChartTitle::set_overlay()`. Omission/false keeps the title
   outside the plot area. True requires `Chart.title`; reverse preserves an

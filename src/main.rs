@@ -885,6 +885,22 @@ fn compile_chart(
     if let Some(title) = component.props.get("yAxisTitle").and_then(Value::as_str) {
         chart.y_axis().set_name(title);
     }
+    if let Some(layout) = component.props.get("xAxisTitleLayout") {
+        chart
+            .x_axis()
+            .set_label_layout(&ChartLayout::new().set_offset(
+                layout["x"].as_f64().expect("validated xAxisTitleLayout.x"),
+                layout["y"].as_f64().expect("validated xAxisTitleLayout.y"),
+            ));
+    }
+    if let Some(layout) = component.props.get("yAxisTitleLayout") {
+        chart
+            .y_axis()
+            .set_label_layout(&ChartLayout::new().set_offset(
+                layout["x"].as_f64().expect("validated yAxisTitleLayout.x"),
+                layout["y"].as_f64().expect("validated yAxisTitleLayout.y"),
+            ));
+    }
     if let Some(format) = chart_axis_title_format(component, "x") {
         let mut format = format;
         chart.x_axis().set_name_format(&mut format);
@@ -5615,6 +5631,14 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     append_chart_scatter_axis_display_unit_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
     append_chart_axis_label_properties(&mut properties, chart);
+    for (name, layout) in [
+        ("xAxisTitleLayout", chart.x_axis_title_layout),
+        ("yAxisTitleLayout", chart.y_axis_title_layout),
+    ] {
+        if let Some([x, y]) = layout {
+            let _ = write!(properties, " {name}={{{{x: {x}, y: {y}}}}}");
+        }
+    }
     if chart.category_axis_type == Some("date") {
         properties.push_str(" categoryAxisType=\"date\"");
     }
@@ -9236,9 +9260,13 @@ fn parse_chart_xml(
     let mut plot_area_layout: Option<[f64; 4]> = None;
     let mut legend_layout: Option<[f64; 4]> = None;
     let mut title_layout: Option<[f64; 2]> = None;
+    let mut x_axis_title_layout: Option<[f64; 2]> = None;
+    let mut y_axis_title_layout: Option<[f64; 2]> = None;
     let mut plot_layout_seen = false;
     let mut legend_layout_seen = false;
     let mut title_layout_seen = false;
+    let mut x_axis_title_layout_seen = false;
+    let mut y_axis_title_layout_seen = false;
     let mut current_manual_layout = None;
     let mut manual_layout_target_inner = false;
     let mut manual_layout_target_seen = false;
@@ -10222,18 +10250,31 @@ fn parse_chart_xml(
                                     .iter()
                                     .rev()
                                     .nth(2)
-                                    .is_some_and(|parent| parent == "chart")) =>
+                                    .is_some_and(|parent| parent == "chart")
+                                || matches!(
+                                    chart_title_target,
+                                    Some("xAxisTitle" | "yAxisTitle")
+                                )) =>
                     {
                         let destination = match stack.iter().rev().nth(1).map(String::as_str) {
                             Some("plotArea") => "plotArea",
                             Some("legend") => "legend",
-                            Some("title") => "chartTitle",
+                            Some("title") => match chart_title_target {
+                                Some("title") => "chartTitle",
+                                Some("xAxisTitle") => "xAxisTitle",
+                                Some("yAxisTitle") => "yAxisTitle",
+                                _ => unreachable!("title target was set when c:title opened"),
+                            },
                             _ => unreachable!("manual layout parent was validated"),
                         };
                         let seen = if destination == "plotArea" {
                             &mut plot_layout_seen
                         } else if destination == "legend" {
                             &mut legend_layout_seen
+                        } else if destination == "xAxisTitle" {
+                            &mut x_axis_title_layout_seen
+                        } else if destination == "yAxisTitle" {
+                            &mut y_axis_title_layout_seen
                         } else {
                             &mut title_layout_seen
                         };
@@ -10252,7 +10293,7 @@ fn parse_chart_xml(
                     }
                     "manualLayout" => {
                         return Err(Error::Reverse(format!(
-                            "chart part `{part}` has a manual layout outside a supported plot area, legend, or chart title; remove custom axis positioning"
+                            "chart part `{part}` has a manual layout outside a supported plot area, legend, or chart/axis title; remove custom positioning"
                         )));
                     }
                     "layoutTarget"
@@ -10315,9 +10356,11 @@ fn parse_chart_xml(
                             chart_element_val_attribute(&event, part, reader.decoder(), &tag)?;
                         let destination =
                             current_manual_layout.expect("layout destination is active");
-                        if destination == "chartTitle" && matches!(tag.as_str(), "w" | "h") {
+                        if matches!(destination, "chartTitle" | "xAxisTitle" | "yAxisTitle")
+                            && matches!(tag.as_str(), "w" | "h")
+                        {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a title layout dimension `{tag}`; Chart.titleLayout represents only x/y offsets because title size is font-driven"
+                                "chart part `{part}` has a {destination} layout dimension `{tag}`; {destination}Layout represents only x/y offsets, so remove the dimension"
                             )));
                         }
                         let value = raw.parse::<f64>().ok().filter(|value| {
@@ -14381,7 +14424,9 @@ fn parse_chart_xml(
                 {
                     let target_is_representable = match destination {
                         "plotArea" => manual_layout_target_seen && manual_layout_target_inner,
-                        "legend" | "chartTitle" => !manual_layout_target_inner,
+                        "legend" | "chartTitle" | "xAxisTitle" | "yAxisTitle" => {
+                            !manual_layout_target_inner
+                        }
                         _ => unreachable!("manual layout target was validated on start"),
                     };
                     if !target_is_representable
@@ -14393,13 +14438,18 @@ fn parse_chart_xml(
                         )));
                     }
                     match destination {
-                        "chartTitle" => {
+                        "chartTitle" | "xAxisTitle" | "yAxisTitle" => {
                             let [Some(x), Some(y), None, None] = manual_layout_values else {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` has an incomplete or sized chart-title layout; include only x and y offsets"
+                                    "chart part `{part}` has an incomplete or sized {destination} layout; include only x and y offsets"
                                 )));
                             };
-                            title_layout = Some([x, y]);
+                            match destination {
+                                "chartTitle" => title_layout = Some([x, y]),
+                                "xAxisTitle" => x_axis_title_layout = Some([x, y]),
+                                "yAxisTitle" => y_axis_title_layout = Some([x, y]),
+                                _ => unreachable!("title layout destination was matched"),
+                            }
                         }
                         "plotArea" | "legend" => {
                             let [Some(x), Some(y), Some(width), Some(height)] =
@@ -15242,6 +15292,8 @@ fn parse_chart_xml(
         legend_fill_color,
         legend_fill_transparency,
         title_layout,
+        x_axis_title_layout,
+        y_axis_title_layout,
         category_axis_type,
         category_axis_major_time_unit,
         category_axis_minor_time_unit,
@@ -19373,6 +19425,8 @@ struct WorksheetChart {
     legend_fill_color: Option<String>,
     legend_fill_transparency: Option<u8>,
     title_layout: Option<[f64; 2]>,
+    x_axis_title_layout: Option<[f64; 2]>,
+    y_axis_title_layout: Option<[f64; 2]>,
     category_axis_type: Option<&'static str>,
     category_axis_major_time_unit: Option<&'static str>,
     category_axis_minor_time_unit: Option<&'static str>,

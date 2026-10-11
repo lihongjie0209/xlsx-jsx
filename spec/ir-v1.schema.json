@@ -627,6 +627,24 @@
               },
               "additionalProperties": false
             },
+            "xAxisTitleLayout": {
+              "type": "object",
+              "required": ["x", "y"],
+              "properties": {
+                "x": { "type": "number", "minimum": 0, "maximum": 1 },
+                "y": { "type": "number", "minimum": 0, "maximum": 1 }
+              },
+              "additionalProperties": false
+            },
+            "yAxisTitleLayout": {
+              "type": "object",
+              "required": ["x", "y"],
+              "properties": {
+                "x": { "type": "number", "minimum": 0, "maximum": 1 },
+                "y": { "type": "number", "minimum": 0, "maximum": 1 }
+              },
+              "additionalProperties": false
+            },
             "chartAreaFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "chartAreaFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "chartAreaLineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
@@ -674,6 +692,8 @@
           },
           "dependentRequired": {
             "titleLayout": ["title"],
+            "xAxisTitleLayout": ["xAxisTitle"],
+            "yAxisTitleLayout": ["yAxisTitle"],
             "titleFontSize": ["title"],
             "titleFontBold": ["title"],
             "titleFontItalic": ["title"],
@@ -813,6 +833,8 @@
                   "anyOf": [
                     { "required": ["xAxisTitle"] },
                     { "required": ["yAxisTitle"] },
+                    { "required": ["xAxisTitleLayout"] },
+                    { "required": ["yAxisTitleLayout"] },
                     { "required": ["xAxisNumberFormat"] },
                     { "required": ["yAxisNumberFormat"] },
                     { "required": ["xAxisMin"] },
