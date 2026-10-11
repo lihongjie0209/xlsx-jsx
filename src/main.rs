@@ -12,19 +12,19 @@ use quick_xml::{
 };
 use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
-    ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color, ConditionalFormat2ColorScale,
-    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
-    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
-    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
-    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
-    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
-    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
-    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
-    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
-    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
-    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
-    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
-    Workbook,
+    ChartDataLabel, ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color,
+    ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
+    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
+    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
+    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
+    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
+    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
+    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
+    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
+    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
+    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
+    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
+    TableColumn, TableStyle, Url, Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -778,6 +778,7 @@ fn compile_chart(
         if let Some(title) = series.props.get("title").and_then(Value::as_str) {
             chart_series.set_name(title);
         }
+        configure_chart_series_data_labels(chart_series, &series);
         if component.props.get("type").and_then(Value::as_str) == Some("stock") {
             chart_series
                 .set_format(ChartLine::new().set_hidden(true))
@@ -788,6 +789,38 @@ fn compile_chart(
         .insert_chart(row, column, &chart)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+}
+
+fn configure_chart_series_data_labels(
+    chart_series: &mut rust_xlsxwriter::ChartSeries,
+    series: &Node,
+) {
+    let show_value = series.props.get("showValue").and_then(Value::as_bool) == Some(true);
+    let show_category_name = series
+        .props
+        .get("showCategoryName")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let show_series_name =
+        series.props.get("showSeriesName").and_then(Value::as_bool) == Some(true);
+    let show_percentage = series.props.get("showPercentage").and_then(Value::as_bool) == Some(true);
+    if !(show_value || show_category_name || show_series_name || show_percentage) {
+        return;
+    }
+    let mut data_label = ChartDataLabel::new();
+    if show_value {
+        data_label.show_value();
+    }
+    if show_category_name {
+        data_label.show_category_name();
+    }
+    if show_series_name {
+        data_label.show_series_name();
+    }
+    if show_percentage {
+        data_label.show_percentage();
+    }
+    chart_series.set_data_label(&data_label);
 }
 
 fn configure_chart_axis_number_formats(chart: &mut Chart, component: &Node) {
@@ -3909,6 +3942,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(title) = &series.title {
             let _ = write!(output, " title={{{title:?}}}");
         }
+        for (name, enabled) in [
+            ("showValue", series.show_value),
+            ("showCategoryName", series.show_category_name),
+            ("showSeriesName", series.show_series_name),
+            ("showPercentage", series.show_percentage),
+        ] {
+            if enabled == Some(true) {
+                let _ = write!(output, " {name}={{true}}");
+            }
+        }
         output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
@@ -6793,6 +6836,11 @@ fn parse_chart_xml(
         "symbol",
         "varyColors",
         "firstSliceAng",
+        "dLbls",
+        "showVal",
+        "showCatName",
+        "showSerName",
+        "showPercent",
         "style",
         "txPr",
     ];
@@ -6927,6 +6975,16 @@ fn parse_chart_xml(
                 if !allowed_tags.contains(&tag.as_str()) {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` contains unsupported `<{tag}>` semantics; remove chart titles/formatting or add matching Chart properties and reverse support"
+                    )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "dLbls")
+                    && !matches!(
+                        tag.as_str(),
+                        "showVal" | "showCatName" | "showSerName" | "showPercent"
+                    )
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported `<{tag}>` data-label formatting; retain only value/category/series/percentage display flags"
                     )));
                 }
                 audit_chart_attributes(&event, &tag, part, reader.decoder(), chart_type)?;
@@ -8024,7 +8082,80 @@ fn parse_chart_xml(
                         marker: None,
                         smooth: None,
                         line_hidden: None,
+                        show_value: None,
+                        show_category_name: None,
+                        show_series_name: None,
+                        show_percentage: None,
+                        data_label_flags_seen: [false; 4],
+                        data_labels_seen: false,
                     }),
+                    "dLbls" => {
+                        if stack.last().is_none_or(|ancestor| ancestor != "ser") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has dLbls outside a data series; use per-series labels or add chart-level label support"
+                            )));
+                        }
+                        let current = series.last_mut().expect("series context");
+                        if current.data_labels_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats dLbls for a series; retain one data-label group per series"
+                            )));
+                        }
+                        current.data_labels_seen = true;
+                    }
+                    "showVal" | "showCatName" | "showSerName" | "showPercent" => {
+                        if !stack.iter().any(|ancestor| ancestor == "dLbls")
+                            || !stack.iter().any(|ancestor| ancestor == "ser")
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} outside series data labels; repair the dLbls structure"
+                            )));
+                        }
+                        if tag == "showPercent" && !matches!(chart_type, Some("pie" | "doughnut")) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` uses showPercent on a non-pie chart; remove the percentage label or use a pie/doughnut chart"
+                            )));
+                        }
+                        let Some(raw_value) = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            })
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} without a val; add an explicit OOXML boolean"
+                            )));
+                        };
+                        let Ok(enabled) = parse_xml_bool(&raw_value, part, &tag) else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has invalid {tag}={raw_value}; use 0/1 or false/true"
+                            )));
+                        };
+                        let current = series.last_mut().expect("series context");
+                        let (index, target) = match tag.as_str() {
+                            "showVal" => (0, &mut current.show_value),
+                            "showCatName" => (1, &mut current.show_category_name),
+                            "showSerName" => (2, &mut current.show_series_name),
+                            "showPercent" => (3, &mut current.show_percentage),
+                            _ => unreachable!("data-label flag tag was matched"),
+                        };
+                        if current.data_label_flags_seen[index] {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats {tag}; retain one value for each series data-label option"
+                            )));
+                        }
+                        current.data_label_flags_seen[index] = true;
+                        *target = enabled.then_some(true);
+                    }
                     "marker" if stack.iter().any(|ancestor| ancestor == "ser") => {
                         if let Some(current) = series.last_mut() {
                             current.marker = Some(true);
@@ -8351,6 +8482,17 @@ fn parse_chart_xml(
         return Err(Error::Reverse(format!(
             "chart part `{part}` contains no data series; add at least one series"
         )));
+    }
+    for item in &series {
+        if item.show_series_name == Some(true)
+            && item.show_value != Some(true)
+            && item.show_category_name != Some(true)
+            && item.show_percentage != Some(true)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` shows only series names in data labels, which rust_xlsxwriter cannot reproduce without also enabling values; enable showValue or add category/percentage labels"
+            )));
+        }
     }
     if chart_type == "stock" {
         if !matches!(series.len(), 3 | 4)
@@ -9130,6 +9272,9 @@ fn is_supported_chart_attribute(
             matches!(value, "cross" | "in" | "out" | "none")
         }
         ("crosses", "val") => matches!(value, "autoZero" | "min" | "max"),
+        ("showVal" | "showCatName" | "showSerName" | "showPercent", "val") => {
+            matches!(value, "0" | "1" | "false" | "true")
+        }
         ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
         ("delete", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("numFmt", "sourceLinked") => {
@@ -11712,6 +11857,12 @@ struct WorksheetChartSeries {
     marker: Option<bool>,
     smooth: Option<bool>,
     line_hidden: Option<bool>,
+    show_value: Option<bool>,
+    show_category_name: Option<bool>,
+    show_series_name: Option<bool>,
+    show_percentage: Option<bool>,
+    data_label_flags_seen: [bool; 4],
+    data_labels_seen: bool,
 }
 
 #[derive(Clone)]

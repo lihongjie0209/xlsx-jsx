@@ -612,6 +612,16 @@
           }
         },
         {
+          "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["pie", "doughnut"] } } }, "required": ["type"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "children": {
+                "items": { "properties": { "props": { "not": { "required": ["showPercentage"] } } } }
+              }
+            }
+          }
+        },
+        {
           "not": {
             "properties": {
               "props": {
@@ -662,7 +672,11 @@
             "values": { "type": "string", "minLength": 1 },
             "categories": { "type": "string", "minLength": 1 },
             "name": { "type": "string", "minLength": 1 },
-            "title": { "type": "string", "minLength": 1, "maxLength": 255 }
+            "title": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "showValue": { "type": "boolean" },
+            "showCategoryName": { "type": "boolean" },
+            "showSeriesName": { "type": "boolean" },
+            "showPercentage": { "type": "boolean" }
           },
           "additionalProperties": false
         },

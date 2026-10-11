@@ -2517,9 +2517,19 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
         }
         reject_unknown_props(
             &series,
-            &["values", "categories", "name", "title"],
+            &[
+                "values",
+                "categories",
+                "name",
+                "title",
+                "showValue",
+                "showCategoryName",
+                "showSeriesName",
+                "showPercentage",
+            ],
             "Series",
         )?;
+        validate_series_data_label_props(chart, &series)?;
         let values = series
             .props
             .get("values")
@@ -2584,6 +2594,34 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 )));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
+    for property in [
+        "showValue",
+        "showCategoryName",
+        "showSeriesName",
+        "showPercentage",
+    ] {
+        if let Some(value) = series.props.get(property)
+            && !value.is_boolean()
+        {
+            return Err(Error::Compile(format!(
+                "Series.{property} must be a boolean; use true to display that data-label field or omit it"
+            )));
+        }
+    }
+    if series.props.get("showPercentage").and_then(Value::as_bool) == Some(true)
+        && !matches!(
+            chart.props.get("type").and_then(Value::as_str),
+            Some("pie" | "doughnut")
+        )
+    {
+        return Err(Error::Compile(
+            "Series.showPercentage is supported only for pie and doughnut charts; omit it or choose one of those chart types".into(),
+        ));
     }
     Ok(())
 }

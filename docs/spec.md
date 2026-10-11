@@ -202,6 +202,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   are folded on reverse. The names follow rust_xlsxwriter's x/y axis handles,
   including its bar-chart axis swap. Numeric `crossesAt` values and crossing
   metadata on secondary, date, or ambiguous axes are rejected with repair guidance.
+- `Series.showValue?: boolean`, `Series.showCategoryName?: boolean`,
+  `Series.showSeriesName?: boolean`, and
+  `Series.showPercentage?: boolean` configure per-series data-label contents
+  through `ChartDataLabel`. `showPercentage` is valid only for pie/doughnut
+  charts. The writer's default value-label behavior is retained when labels are
+  requested without another visible field; default false flags are omitted on
+  reverse. Numeric formats, custom text, positions, fonts, and point-specific
+  labels are not represented and are rejected with repair guidance.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed
