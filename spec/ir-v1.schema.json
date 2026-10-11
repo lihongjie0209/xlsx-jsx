@@ -516,6 +516,8 @@
             "categoryAxisType": { "enum": ["category", "date"] },
             "categoryAxisMajorTimeUnit": { "enum": ["days", "months", "years"] },
             "categoryAxisMinorTimeUnit": { "enum": ["days", "months", "years"] },
+            "categoryAxisMinDate": { "type": "string", "minLength": 10, "maxLength": 23 },
+            "categoryAxisMaxDate": { "type": "string", "minLength": 10, "maxLength": 23 },
             "horizontalAxisHidden": { "type": "boolean" },
             "verticalAxisHidden": { "type": "boolean" },
             "yAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
@@ -595,6 +597,8 @@
                     { "required": ["categoryAxisType"] },
                     { "required": ["categoryAxisMajorTimeUnit"] },
                     { "required": ["categoryAxisMinorTimeUnit"] },
+                    { "required": ["categoryAxisMinDate"] },
+                    { "required": ["categoryAxisMaxDate"] },
                     { "required": ["xAxisCrossing"] },
                     { "required": ["yAxisCrossing"] },
                     { "required": ["horizontalAxisHidden"] },
@@ -617,7 +621,7 @@
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },
           "then": {
             "properties": {
-              "props": { "not": { "anyOf": [{ "required": ["categoryAxisLabelAlignment"] }, { "required": ["categoryAxisOnTickMarks"] }, { "required": ["categoryAxisType"] }, { "required": ["categoryAxisMajorTimeUnit"] }, { "required": ["categoryAxisMinorTimeUnit"] }, { "required": ["xAxisCrossing"] }, { "required": ["yAxisCrossing"] }] } }
+              "props": { "not": { "anyOf": [{ "required": ["categoryAxisLabelAlignment"] }, { "required": ["categoryAxisOnTickMarks"] }, { "required": ["categoryAxisType"] }, { "required": ["categoryAxisMajorTimeUnit"] }, { "required": ["categoryAxisMinorTimeUnit"] }, { "required": ["categoryAxisMinDate"] }, { "required": ["categoryAxisMaxDate"] }, { "required": ["xAxisCrossing"] }, { "required": ["yAxisCrossing"] }] } }
             }
           }
         },
@@ -726,7 +730,9 @@
               "props": {
                 "anyOf": [
                   { "required": ["categoryAxisMajorTimeUnit"] },
-                  { "required": ["categoryAxisMinorTimeUnit"] }
+                  { "required": ["categoryAxisMinorTimeUnit"] },
+                  { "required": ["categoryAxisMinDate"] },
+                  { "required": ["categoryAxisMaxDate"] }
                 ]
               }
             },

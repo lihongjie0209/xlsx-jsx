@@ -1462,7 +1462,7 @@ fn configure_chart_category_axis_settings(
     {
         // rust_xlsxwriter selects date-axis serialization from X, but swaps
         // the unit-bearing axis data for bars before writing the plot area.
-        configure_chart_date_axis(chart, component, is_bar);
+        configure_chart_date_axis(chart, component, is_bar)?;
     }
     if component
         .props
@@ -1480,8 +1480,17 @@ fn configure_chart_category_axis_settings(
     Ok(())
 }
 
-fn configure_chart_date_axis(chart: &mut Chart, component: &Node, is_bar: bool) {
+fn configure_chart_date_axis(
+    chart: &mut Chart,
+    component: &Node,
+    is_bar: bool,
+) -> xlsx_jsx::Result<()> {
     chart.x_axis().set_date_axis(true);
+    if is_bar {
+        // rust_xlsxwriter serializes bounds from the swapped Y-axis value object
+        // while deciding whether to emit dateAx from the logical X-axis.
+        chart.y_axis().set_date_axis(true);
+    }
     let axis = if is_bar {
         chart.y_axis()
     } else {
@@ -1501,6 +1510,25 @@ fn configure_chart_date_axis(chart: &mut Chart, component: &Node, is_bar: bool) 
     {
         axis.set_minor_unit_date_type(parse_chart_date_unit(unit));
     }
+    for (property, is_minimum) in [
+        ("categoryAxisMinDate", true),
+        ("categoryAxisMaxDate", false),
+    ] {
+        let Some(value) = component.props.get(property).and_then(Value::as_str) else {
+            continue;
+        };
+        let datetime = rust_xlsxwriter::ExcelDateTime::parse_from_str(value).map_err(|error| {
+            Error::Compile(format!(
+                "Chart.{property} `{value}` cannot be converted to an Excel date serial: {error}; use a date from 1900-01-01 through 9999-12-31"
+            ))
+        })?;
+        if is_minimum {
+            axis.set_min_date(datetime);
+        } else {
+            axis.set_max_date(datetime);
+        }
+    }
+    Ok(())
 }
 
 fn parse_chart_date_unit(unit: &str) -> ChartAxisDateUnitType {
@@ -4683,6 +4711,14 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
             "categoryAxisMinorTimeUnit",
             chart.category_axis_minor_time_unit,
         ),
+        (
+            "categoryAxisMinDate",
+            chart.category_axis_min_date.as_deref(),
+        ),
+        (
+            "categoryAxisMaxDate",
+            chart.category_axis_max_date.as_deref(),
+        ),
     ] {
         if let Some(value) = value {
             let _ = write!(properties, " {name}=\"{value}\"");
@@ -6072,6 +6108,38 @@ fn render_datetime_cell(
 fn serial_has_millisecond_precision(serial: f64) -> bool {
     let milliseconds = serial * 86_400_000.0;
     milliseconds.is_finite() && (milliseconds - milliseconds.round()).abs() < 1e-5
+}
+
+fn reverse_chart_date_axis_bound(serial: f64, part: &str, bound: &str) -> xlsx_jsx::Result<String> {
+    if !serial.is_finite()
+        || !(1.0..=2_958_465.0).contains(&serial)
+        || (60.0..61.0).contains(&serial)
+        || !serial_has_millisecond_precision(serial)
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a {bound} date-axis serial outside the reversible Excel date/time range or precision; use a 1900-system date from 1900-01-01 through 9999-12-31 with millisecond precision"
+        )));
+    }
+    let datetime = calamine::ExcelDateTime::new(
+        serial,
+        calamine::ExcelDateTimeType::DateTime,
+        false,
+    )
+    .as_datetime()
+    .ok_or_else(|| {
+        Error::Reverse(format!(
+            "chart part `{part}` has an invalid {bound} date-axis serial; use a valid Excel date"
+        ))
+    })?;
+    if serial.fract() == 0.0 {
+        Ok(datetime.date().format("%Y-%m-%d").to_string())
+    } else {
+        let milliseconds = datetime.and_utc().timestamp_subsec_millis();
+        Ok(format!(
+            "{}.{milliseconds:03}",
+            datetime.format("%Y-%m-%dT%H:%M:%S")
+        ))
+    }
 }
 
 fn reverse_date_value(
@@ -7707,6 +7775,12 @@ fn parse_chart_xml(
     let mut category_axis_minor_time_unit: Option<&'static str> = None;
     let mut category_axis_major_time_unit_seen = false;
     let mut category_axis_minor_time_unit_seen = false;
+    let mut category_axis_min_date: Option<String> = None;
+    let mut category_axis_max_date: Option<String> = None;
+    let mut category_axis_min_date_seen = false;
+    let mut category_axis_max_date_seen = false;
+    let mut category_axis_min_date_serial = None;
+    let mut category_axis_max_date_serial = None;
     let mut category_axis_label_interval_seen = false;
     let mut category_axis_tick_interval_seen = false;
     let mut y_axis_min_seen = false;
@@ -9281,19 +9355,22 @@ fn parse_chart_xml(
                             .iter()
                             .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"));
                         let value_axis_context = stack.iter().any(|ancestor| ancestor == "valAx");
-                        if category_axis_context {
+                        let date_axis_context = stack.iter().any(|ancestor| ancestor == "dateAx");
+                        if category_axis_context && !date_axis_context {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has bounds on a category/date axis, which this DSL does not model; remove those bounds or use only value-axis bounds"
+                                "chart part `{part}` has numeric bounds on a text category axis; use a date axis with ISO categoryAxisMinDate/categoryAxisMaxDate or remove those bounds"
                             )));
                         }
-                        if !value_axis_context {
+                        if !date_axis_context && !value_axis_context {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has bounds outside a primary value axis; repair the axis structure"
                             )));
                         }
-                        if chart_type.is_some_and(|value| {
-                            value.starts_with("scatter") || matches!(value, "pie" | "doughnut")
-                        }) {
+                        if !date_axis_context
+                            && chart_type.is_some_and(|value| {
+                                value.starts_with("scatter") || matches!(value, "pie" | "doughnut")
+                            })
+                        {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has value-axis bounds for a chart without one unambiguous value axis; remove the bounds or use a supported category/value chart"
                             )));
@@ -9317,18 +9394,43 @@ fn parse_chart_xml(
                                 "chart part `{part}` has a non-finite or missing axis bound; provide a finite numeric val"
                             )));
                         };
-                        let (seen, target) = if tag == "min" {
-                            (&mut y_axis_min_seen, &mut y_axis_min)
+                        if date_axis_context {
+                            let iso_date = reverse_chart_date_axis_bound(bound, part, &tag)?;
+                            let (seen, target, serial_target) = if tag == "min" {
+                                (
+                                    &mut category_axis_min_date_seen,
+                                    &mut category_axis_min_date,
+                                    &mut category_axis_min_date_serial,
+                                )
+                            } else {
+                                (
+                                    &mut category_axis_max_date_seen,
+                                    &mut category_axis_max_date,
+                                    &mut category_axis_max_date_serial,
+                                )
+                            };
+                            if *seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats date-axis {tag}; keep at most one date bound of each kind"
+                                )));
+                            }
+                            *seen = true;
+                            *target = Some(iso_date);
+                            *serial_target = Some(bound);
                         } else {
-                            (&mut y_axis_max_seen, &mut y_axis_max)
-                        };
-                        if *seen {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` repeats the {tag} axis bound; keep at most one bound of each kind"
-                            )));
+                            let (seen, target) = if tag == "min" {
+                                (&mut y_axis_min_seen, &mut y_axis_min)
+                            } else {
+                                (&mut y_axis_max_seen, &mut y_axis_max)
+                            };
+                            if *seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats the {tag} axis bound; keep at most one bound of each kind"
+                                )));
+                            }
+                            *seen = true;
+                            *target = Some(bound);
                         }
-                        *seen = true;
-                        *target = Some(bound);
                     }
                     "logBase" => {
                         if stack.last().is_none_or(|ancestor| ancestor != "scaling") {
@@ -10838,6 +10940,14 @@ fn parse_chart_xml(
             "chart part `{part}` has y-axis minimum greater than or equal to its maximum; lower the minimum or raise the maximum"
         )));
     }
+    if category_axis_min_date_serial
+        .zip(category_axis_max_date_serial)
+        .is_some_and(|(minimum, maximum)| minimum >= maximum)
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a date-axis minimum that does not precede its maximum; lower categoryAxisMinDate or raise categoryAxisMaxDate"
+        )));
+    }
     if y_axis_log_base.is_some()
         && y_axis_min
             .into_iter()
@@ -10929,6 +11039,8 @@ fn parse_chart_xml(
         category_axis_type,
         category_axis_major_time_unit,
         category_axis_minor_time_unit,
+        category_axis_min_date,
+        category_axis_max_date,
         x_axis_title,
         y_axis_title,
         x_axis_number_format,
@@ -14476,6 +14588,8 @@ struct WorksheetChart {
     category_axis_type: Option<&'static str>,
     category_axis_major_time_unit: Option<&'static str>,
     category_axis_minor_time_unit: Option<&'static str>,
+    category_axis_min_date: Option<String>,
+    category_axis_max_date: Option<String>,
     x_axis_title: Option<String>,
     y_axis_title: Option<String>,
     x_axis_number_format: Option<String>,

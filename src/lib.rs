@@ -1925,6 +1925,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "categoryAxisType",
             "categoryAxisMajorTimeUnit",
             "categoryAxisMinorTimeUnit",
+            "categoryAxisMinDate",
+            "categoryAxisMaxDate",
             "horizontalAxisHidden",
             "verticalAxisHidden",
             "showLegend",
@@ -2408,7 +2410,12 @@ fn validate_chart_category_axis_date_properties(chart: &Node, chart_type: &str) 
             ));
         }
     }
-    for property in ["categoryAxisMajorTimeUnit", "categoryAxisMinorTimeUnit"] {
+    for property in [
+        "categoryAxisMajorTimeUnit",
+        "categoryAxisMinorTimeUnit",
+        "categoryAxisMinDate",
+        "categoryAxisMaxDate",
+    ] {
         let Some(value) = chart.props.get(property) else {
             continue;
         };
@@ -2417,14 +2424,23 @@ fn validate_chart_category_axis_date_properties(chart: &Node, chart_type: &str) 
                 "Chart.{property} requires a Cartesian date category axis; omit it for scatter, radar, pie, or doughnut charts"
             )));
         }
-        let Some(unit) = value.as_str() else {
+        let Some(value) = value.as_str() else {
             return Err(Error::Compile(format!(
-                "Chart.{property} must be `days`, `months`, or `years`; use a quoted value"
+                "Chart.{property} must be a string; use a quoted ISO value"
             )));
         };
-        if !matches!(unit, "days" | "months" | "years") {
+        if matches!(
+            property,
+            "categoryAxisMajorTimeUnit" | "categoryAxisMinorTimeUnit"
+        ) {
+            if !matches!(value, "days" | "months" | "years") {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} `{value}` is unsupported; use `days`, `months`, or `years`"
+                )));
+            }
+        } else if !is_supported_chart_axis_date(value) {
             return Err(Error::Compile(format!(
-                "Chart.{property} `{unit}` is unsupported; use `days`, `months`, or `years`"
+                "Chart.{property} `{value}` is not a supported local ISO date/time; use YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss[.fff] without a timezone"
             )));
         }
         if chart.props.get("categoryAxisType").and_then(Value::as_str) != Some("date") {
@@ -2433,7 +2449,43 @@ fn validate_chart_category_axis_date_properties(chart: &Node, chart_type: &str) 
             )));
         }
     }
+    if let (Some(minimum), Some(maximum)) = (
+        chart
+            .props
+            .get("categoryAxisMinDate")
+            .and_then(Value::as_str),
+        chart
+            .props
+            .get("categoryAxisMaxDate")
+            .and_then(Value::as_str),
+    ) {
+        let parse_date = |value: &str| {
+            chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+                .map(|date| date.and_time(chrono::NaiveTime::MIN))
+                .or_else(|_| chrono::NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%M:%S%.f"))
+        };
+        let min_value = parse_date(minimum).map_err(|_| {
+            Error::Compile("Chart.categoryAxisMinDate must be a supported ISO date/time".into())
+        })?;
+        let max_value = parse_date(maximum).map_err(|_| {
+            Error::Compile("Chart.categoryAxisMaxDate must be a supported ISO date/time".into())
+        })?;
+        if min_value >= max_value {
+            return Err(Error::Compile(
+                "Chart.categoryAxisMinDate must precede categoryAxisMaxDate; lower the minimum or raise the maximum".into(),
+            ));
+        }
+    }
     Ok(())
+}
+
+fn is_supported_chart_axis_date(value: &str) -> bool {
+    if !is_supported_iso_date(value) {
+        return false;
+    }
+    value
+        .split_once('.')
+        .is_none_or(|(_, fractional_seconds)| fractional_seconds.len() <= 3)
 }
 
 fn validate_chart_axis_tick_types(chart: &Node, chart_type: &str) -> Result<()> {

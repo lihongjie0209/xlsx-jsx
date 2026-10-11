@@ -2087,12 +2087,26 @@ fn reverses_and_rebuilds_external_date_category_axis_units_without_a_manifest() 
         .set_values("Data!B2:B4")
         .set_name("Data!B1");
     chart.x_axis().set_date_axis(true);
+    chart.y_axis().set_date_axis(true);
+    let min_date = rust_xlsxwriter::ExcelDateTime::parse_from_str("2026-01-15").unwrap();
+    let max_date = rust_xlsxwriter::ExcelDateTime::parse_from_str("2026-03-15").unwrap();
     chart
         .y_axis()
         .set_major_unit_date_type(ChartAxisDateUnitType::Months)
-        .set_minor_unit_date_type(ChartAxisDateUnitType::Days);
+        .set_minor_unit_date_type(ChartAxisDateUnitType::Days)
+        .set_min_date(min_date)
+        .set_max_date(max_date);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
+    let external_xml = read_zip_part_for_test(&workbook_path, "xl/charts/chart1.xml");
+    assert!(
+        external_xml.contains("<c:min val=\"46037\"/>"),
+        "{external_xml}"
+    );
+    assert!(
+        external_xml.contains("<c:max val=\"46096\"/>"),
+        "{external_xml}"
+    );
 
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -2112,6 +2126,14 @@ fn reverses_and_rebuilds_external_date_category_axis_units_without_a_manifest() 
         source.contains("categoryAxisMinorTimeUnit=\"days\""),
         "{source}"
     );
+    assert!(
+        source.contains("categoryAxisMinDate=\"2026-01-15\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("categoryAxisMaxDate=\"2026-03-15\""),
+        "{source}"
+    );
 
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -2125,6 +2147,8 @@ fn reverses_and_rebuilds_external_date_category_axis_units_without_a_manifest() 
     assert!(xml.contains("<c:dateAx>"), "{xml}");
     assert!(xml.contains("<c:majorTimeUnit val=\"months\"/>"), "{xml}");
     assert!(xml.contains("<c:minorTimeUnit val=\"days\"/>"), "{xml}");
+    assert!(xml.contains("<c:min val=\"46037\"/>"), "{xml}");
+    assert!(xml.contains("<c:max val=\"46096\"/>"), "{xml}");
 }
 
 #[test]
@@ -2146,6 +2170,27 @@ fn rejects_date_axis_time_unit_without_date_axis_with_repair_guidance() {
             "Chart.categoryAxisMajorTimeUnit requires Chart.categoryAxisType=\"date\"",
         ))
         .stderr(predicate::str::contains("set that property"));
+}
+
+#[test]
+fn rejects_reversed_date_axis_bounds_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("reversed-date-axis-bounds.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" categoryAxisType="date" categoryAxisMinDate="2026-04-01" categoryAxisMaxDate="2026-02-01"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.categoryAxisMinDate must precede categoryAxisMaxDate",
+        ))
+        .stderr(predicate::str::contains("raise the maximum"));
 }
 
 #[test]

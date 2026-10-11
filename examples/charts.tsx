@@ -108,7 +108,7 @@ export default <Workbook>
     </Chart>
   </Worksheet>
   <Worksheet name="Timeline">
-    <Chart type="line" cell="D2" title="Monthly revenue" categoryAxisType="date" categoryAxisMajorTimeUnit="months" categoryAxisMinorTimeUnit="days">
+    <Chart type="line" cell="D2" title="Monthly revenue" categoryAxisType="date" categoryAxisMajorTimeUnit="months" categoryAxisMinorTimeUnit="days" categoryAxisMinDate="2026-01-01" categoryAxisMaxDate="2026-03-01">
       <Series values="Timeline!$B$2:$B$4" categories="Timeline!$A$2:$A$4" title="Revenue" />
     </Chart>
     <Row><Cell>Date</Cell><Cell>Revenue</Cell></Row>

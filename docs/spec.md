@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.77
+Version: 1.78
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -290,6 +290,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   major/minor time units and require `categoryAxisType="date"`. Reverse
   preserves `dateAx`, `majorTimeUnit`, and `minorTimeUnit`; numeric date-axis
   major/minor units remain unsupported and fail with repair guidance.
+- `Chart.categoryAxisMinDate?: string` and `categoryAxisMaxDate?: string` set
+  date-axis bounds using local ISO date or date-time text (`YYYY-MM-DD` or
+  `YYYY-MM-DDTHH:mm:ss[.fff]`). They require `categoryAxisType="date"`; when
+  both are set, the minimum must precede the maximum. Reverse converts the
+  date-axis serial bounds back to the same supported ISO precision. Bounds on
+  text-category axes remain rejected because those axes have no date scale.
 - `Chart.style?: integer` selects the built-in Excel chart style written as
   `<c:style val="…">`; valid values are 1–48. Omission uses
   `rust_xlsxwriter` style 2, and reverse omits style 2 while preserving other
