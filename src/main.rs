@@ -777,6 +777,12 @@ fn compile_chart(
     if let Some(title) = component.props.get("title").and_then(Value::as_str) {
         chart.title().set_name(title);
     }
+    if let Some(layout) = component.props.get("titleLayout") {
+        chart.title().set_layout(&ChartLayout::new().set_offset(
+            layout["x"].as_f64().expect("validated titleLayout.x"),
+            layout["y"].as_f64().expect("validated titleLayout.y"),
+        ));
+    }
     if component.props.get("titleOverlay").and_then(Value::as_bool) == Some(true) {
         chart.title().set_overlay(true);
     }
@@ -4718,7 +4724,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -4778,6 +4784,10 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .map(|[x, y, width, height]| {
                 format!(" legendLayout={{{{x: {x}, y: {y}, width: {width}, height: {height}}}}}")
             })
+            .unwrap_or_default(),
+        chart
+            .title_layout
+            .map(|[x, y]| format!(" titleLayout={{{{x: {x}, y: {y}}}}}"))
             .unwrap_or_default(),
     );
     for (series_index, series) in chart.series.iter().enumerate() {
@@ -8227,8 +8237,10 @@ fn parse_chart_xml(
     let mut plot_area_fill_color: Option<String> = None;
     let mut plot_area_layout: Option<[f64; 4]> = None;
     let mut legend_layout: Option<[f64; 4]> = None;
+    let mut title_layout: Option<[f64; 2]> = None;
     let mut plot_layout_seen = false;
     let mut legend_layout_seen = false;
+    let mut title_layout_seen = false;
     let mut current_manual_layout = None;
     let mut manual_layout_target_inner = false;
     let mut manual_layout_target_seen = false;
@@ -8316,6 +8328,14 @@ fn parse_chart_xml(
                         "t",
                         "endParaRPr",
                         "layout",
+                        "manualLayout",
+                        "layoutTarget",
+                        "xMode",
+                        "yMode",
+                        "x",
+                        "y",
+                        "w",
+                        "h",
                         "overlay",
                     ]
                     .contains(&tag.as_str())
@@ -8483,18 +8503,31 @@ fn parse_chart_xml(
                     "manualLayout"
                         if stack.last().is_some_and(|parent| parent == "layout")
                             && stack.iter().rev().nth(1).is_some_and(|parent| {
-                                matches!(parent.as_str(), "plotArea" | "legend")
-                            }) =>
+                                matches!(parent.as_str(), "plotArea" | "legend" | "title")
+                            })
+                            && (stack
+                                .iter()
+                                .rev()
+                                .nth(1)
+                                .is_none_or(|parent| parent != "title")
+                                || stack
+                                    .iter()
+                                    .rev()
+                                    .nth(2)
+                                    .is_some_and(|parent| parent == "chart")) =>
                     {
                         let destination = match stack.iter().rev().nth(1).map(String::as_str) {
                             Some("plotArea") => "plotArea",
                             Some("legend") => "legend",
+                            Some("title") => "chartTitle",
                             _ => unreachable!("manual layout parent was validated"),
                         };
                         let seen = if destination == "plotArea" {
                             &mut plot_layout_seen
-                        } else {
+                        } else if destination == "legend" {
                             &mut legend_layout_seen
+                        } else {
+                            &mut title_layout_seen
                         };
                         if std::mem::replace(seen, true) {
                             return Err(Error::Reverse(format!(
@@ -8511,7 +8544,7 @@ fn parse_chart_xml(
                     }
                     "manualLayout" => {
                         return Err(Error::Reverse(format!(
-                            "chart part `{part}` has a manual layout outside a supported plot area or legend; remove custom title or axis positioning"
+                            "chart part `{part}` has a manual layout outside a supported plot area, legend, or chart title; remove custom axis positioning"
                         )));
                     }
                     "layoutTarget"
@@ -8574,7 +8607,19 @@ fn parse_chart_xml(
                             chart_element_val_attribute(&event, part, reader.decoder(), &tag)?;
                         let destination =
                             current_manual_layout.expect("layout destination is active");
-                        let value = raw.parse::<f64>().ok().filter(|value| value.is_finite() && *value > 0.0 && *value <= 1.0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has invalid {destination} layout {tag} `{raw}`; use a finite relative fraction in (0, 1]")))?;
+                        if destination == "chartTitle" && matches!(tag.as_str(), "w" | "h") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a title layout dimension `{tag}`; Chart.titleLayout represents only x/y offsets because title size is font-driven"
+                            )));
+                        }
+                        let value = raw.parse::<f64>().ok().filter(|value| {
+                            value.is_finite()
+                                && if matches!(tag.as_str(), "x" | "y") {
+                                    *value >= 0.0 && *value <= 1.0
+                                } else {
+                                    *value > 0.0 && *value <= 1.0
+                                }
+                        }).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has invalid {destination} layout {tag} `{raw}`; x/y positions must be in [0, 1], while dimensions must be in (0, 1]")))?;
                         if manual_layout_values[index].replace(value).is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats {destination} layout {tag}; keep exactly one value"
@@ -11637,10 +11682,10 @@ fn parse_chart_xml(
                 if tag == "manualLayout"
                     && let Some(destination) = current_manual_layout.take()
                 {
-                    let target_is_representable = if destination == "plotArea" {
-                        manual_layout_target_seen && manual_layout_target_inner
-                    } else {
-                        !manual_layout_target_inner
+                    let target_is_representable = match destination {
+                        "plotArea" => manual_layout_target_seen && manual_layout_target_inner,
+                        "legend" | "chartTitle" => !manual_layout_target_inner,
+                        _ => unreachable!("manual layout target was validated on start"),
                     };
                     if !target_is_representable
                         || !manual_layout_horizontal_edge
@@ -11650,14 +11695,29 @@ fn parse_chart_xml(
                             "chart part `{part}` has a {destination} layout with unsupported target or position modes; use the writer's target semantics and xMode/yMode=edge"
                         )));
                     }
-                    let [Some(x), Some(y), Some(width), Some(height)] = manual_layout_values else {
-                        return Err(Error::Reverse(format!(
-                            "chart part `{part}` has an incomplete {destination} layout; include x, y, w, and h values"
-                        )));
-                    };
                     match destination {
-                        "plotArea" => plot_area_layout = Some([x, y, width, height]),
-                        "legend" => legend_layout = Some([x, y, width, height]),
+                        "chartTitle" => {
+                            let [Some(x), Some(y), None, None] = manual_layout_values else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an incomplete or sized chart-title layout; include only x and y offsets"
+                                )));
+                            };
+                            title_layout = Some([x, y]);
+                        }
+                        "plotArea" | "legend" => {
+                            let [Some(x), Some(y), Some(width), Some(height)] =
+                                manual_layout_values
+                            else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an incomplete {destination} layout; include x, y, w, and h values"
+                                )));
+                            };
+                            if destination == "plotArea" {
+                                plot_area_layout = Some([x, y, width, height]);
+                            } else {
+                                legend_layout = Some([x, y, width, height]);
+                            }
+                        }
                         _ => unreachable!("manual layout target was validated on start"),
                     }
                 }
@@ -12295,6 +12355,7 @@ fn parse_chart_xml(
         plot_area_fill_color,
         plot_area_layout,
         legend_layout,
+        title_layout,
         category_axis_type,
         category_axis_major_time_unit,
         category_axis_minor_time_unit,
@@ -13242,7 +13303,7 @@ fn is_supported_chart_attribute(
         ("xMode" | "yMode", "val") => value == "edge",
         ("x" | "y" | "w" | "h", "val") => value
             .parse::<f64>()
-            .is_ok_and(|number| number.is_finite() && number > 0.0 && number <= 1.0),
+            .is_ok_and(|number| number.is_finite() && (0.0..=1.0).contains(&number)),
         ("alpha", "val") => value.parse::<u32>().is_ok_and(|alpha| alpha <= 100_000),
         ("prstDash", "val") => matches!(
             value,
@@ -16028,6 +16089,7 @@ struct WorksheetChart {
     plot_area_fill_color: Option<String>,
     plot_area_layout: Option<[f64; 4]>,
     legend_layout: Option<[f64; 4]>,
+    title_layout: Option<[f64; 2]>,
     category_axis_type: Option<&'static str>,
     category_axis_major_time_unit: Option<&'static str>,
     category_axis_minor_time_unit: Option<&'static str>,

@@ -162,6 +162,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.title?: string` is a static chart title (1–255 valid XML characters).
   External titles are reversible only when they are one unformatted rich-text
   run; formulas, multiple runs, and custom title formatting fail with guidance.
+- `Chart.titleLayout?: { x, y }` manually positions a static chart title using
+  finite relative fractions in `[0, 1]` of the chart width and height. The
+  writer uses outer/default layout target and edge positioning. It requires
+  `title`; reverse accepts an omitted or explicit `outer` target and rejects
+  other targets/modes, title width/height overrides, and incomplete offsets.
 - `Chart.titleOverlay?: boolean` places an explicit static chart title over the
   plot area via `ChartTitle::set_overlay()`. Omission/false keeps the title
   outside the plot area. True requires `Chart.title`; reverse preserves an
@@ -175,13 +180,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   transparency, theme/indexed colors, no-fill overrides, and area borders are
   not represented and are rejected rather than discarded.
 - `Chart.plotAreaLayout?: { x, y, width, height }` manually positions the plot
-  area using finite relative fractions in `(0, 1]` of the chart width/height.
+  area using x/y position fractions in `[0, 1]` and width/height fractions in
+  `(0, 1]` of the chart dimensions.
   All four values are required together; coordinates are fractions, not pixels
   or percentages (for example `x: 0.2`). The writer emits an inner layout with
   edge positioning. Reverse preserves only that exact OOXML layout form and
   rejects factor modes, outer layouts, missing values, and extra layout data.
 - `Chart.legendLayout?: { x, y, width, height }` manually positions and sizes a
-  visible legend with complete finite relative fractions in `(0, 1]`. Unlike
+  visible legend with x/y position fractions in `[0, 1]` and width/height
+  fractions in `(0, 1]`. Unlike
   `plotAreaLayout`, the writer's legend layout uses the default outer target;
   x/y use edge mode and width/height use the default fractional mode. Reverse
   accepts that target when omitted or explicitly `outer`, and rejects inner

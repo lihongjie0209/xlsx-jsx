@@ -1943,6 +1943,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "showLegend",
             "autoTitleDeleted",
             "titleOverlay",
+            "titleLayout",
             "chartAreaFillColor",
             "plotAreaFillColor",
             "plotAreaLayout",
@@ -2073,10 +2074,48 @@ fn validate_chart_visual_properties(chart: &Node, chart_type: &str) -> Result<()
             if !layout
                 .get(key)
                 .and_then(Value::as_f64)
-                .is_some_and(|value| value.is_finite() && value > 0.0 && value <= 1.0)
+                .is_some_and(|value| {
+                    value.is_finite()
+                        && (if matches!(key, "x" | "y") {
+                            value >= 0.0
+                        } else {
+                            value > 0.0
+                        })
+                        && value <= 1.0
+                })
             {
                 return Err(Error::Compile(format!(
-                    "Chart.{property}.{key} must be a finite fraction in (0, 1]; use a positive relative chart dimension, not pixels or a percentage"
+                    "Chart.{property}.{key} must be a finite relative fraction in {}; x/y are positions, width/height are dimensions; do not use pixels or percentages",
+                    if matches!(key, "x" | "y") {
+                        "[0, 1]"
+                    } else {
+                        "(0, 1]"
+                    }
+                )));
+            }
+        }
+    }
+    if let Some(layout) = chart.props.get("titleLayout") {
+        let Some(layout) = layout.as_object() else {
+            return Err(Error::Compile(
+                "Chart.titleLayout must be an object with x and y fractions; provide both offsets"
+                    .into(),
+            ));
+        };
+        let expected = ["x", "y"];
+        if layout.len() != expected.len() || expected.iter().any(|key| !layout.contains_key(*key)) {
+            return Err(Error::Compile(
+                "Chart.titleLayout requires exactly x and y; provide both fractions and remove extra keys".into(),
+            ));
+        }
+        for key in expected {
+            if !layout
+                .get(key)
+                .and_then(Value::as_f64)
+                .is_some_and(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+            {
+                return Err(Error::Compile(format!(
+                    "Chart.titleLayout.{key} must be a finite relative offset in [0, 1]; use chart fractions, not pixels or percentages"
                 )));
             }
         }
@@ -2122,6 +2161,12 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 }
 
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
+    if chart.props.contains_key("titleLayout") && !chart.props.contains_key("title") {
+        return Err(Error::Compile(
+            "Chart.titleLayout requires Chart.title; add a static title or remove titleLayout"
+                .into(),
+        ));
+    }
     if let Some(value) = chart.props.get("titleOverlay")
         && !value.is_boolean()
     {

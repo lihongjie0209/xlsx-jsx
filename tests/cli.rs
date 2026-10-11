@@ -181,6 +181,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("xAxisCrossing"))
         .stdout(predicate::str::contains("yAxisCrossing"))
         .stdout(predicate::str::contains("chartAreaFillColor"))
+        .stdout(predicate::str::contains("titleLayout"))
         .stdout(predicate::str::contains("plotAreaFillColor"))
         .stdout(predicate::str::contains("plotAreaLayout"))
         .stdout(predicate::str::contains("legendLayout"))
@@ -775,12 +776,12 @@ fn reverses_external_plot_area_manual_layout_and_rebuilds_it() {
         .set_values("Data!B2:B3");
     chart.plot_area().set_layout(
         &rust_xlsxwriter::ChartLayout::new()
-            .set_offset(0.2, 0.3)
+            .set_offset(0.0, 0.3)
             .set_dimensions(0.7, 0.5),
     );
     chart.legend().set_layout(
         &rust_xlsxwriter::ChartLayout::new()
-            .set_offset(0.1, 0.2)
+            .set_offset(0.1, 0.0)
             .set_dimensions(0.3, 0.4),
     );
     worksheet.insert_chart(0, 3, &chart).unwrap();
@@ -797,11 +798,11 @@ fn reverses_external_plot_area_manual_layout_and_rebuilds_it() {
         .success();
     let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
     assert!(
-        source.contains("plotAreaLayout={{x: 0.2, y: 0.3, width: 0.7, height: 0.5}}"),
+        source.contains("plotAreaLayout={{x: 0, y: 0.3, width: 0.7, height: 0.5}}"),
         "{source}"
     );
     assert!(
-        source.contains("legendLayout={{x: 0.1, y: 0.2, width: 0.3, height: 0.4}}"),
+        source.contains("legendLayout={{x: 0.1, y: 0, width: 0.3, height: 0.4}}"),
         "{source}"
     );
 
@@ -905,6 +906,83 @@ fn reverses_external_legend_manual_layout_and_rebuilds_it() {
         .assert()
         .success();
     assert_eq!(std::fs::read_to_string(second).unwrap(), source);
+}
+
+#[test]
+fn reverses_external_chart_title_manual_layout_and_rebuilds_it() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-title-layout.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_string(0, 0, "Quarter").unwrap();
+    worksheet.write_string(1, 0, "Q1").unwrap();
+    worksheet.write_string(2, 0, "Q2").unwrap();
+    worksheet.write_number(1, 1, 10).unwrap();
+    worksheet.write_number(2, 1, 20).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3");
+    chart
+        .title()
+        .set_name("Quarterly totals")
+        .set_layout(&rust_xlsxwriter::ChartLayout::new().set_offset(0.0, 0.15));
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    let reversed = directory.path().join("chart-title-layout.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("titleLayout={{x: 0, y: 0.15}}"), "{source}");
+
+    let rebuilt = directory.path().join("chart-title-layout-roundtrip.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second = directory.path().join("chart-title-layout-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(rebuilt)
+        .args(["-o"])
+        .arg(&second)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read_to_string(second).unwrap(), source);
+}
+
+#[test]
+fn rejects_title_layout_without_a_static_title() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("title-layout-without-title.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" titleLayout={{x: 0.25, y: 0.15}}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.titleLayout requires Chart.title",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
 }
 
 #[test]
