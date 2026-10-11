@@ -38,6 +38,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("altText"))
         .stdout(predicate::str::contains("\"const\": \"Note\""))
         .stdout(predicate::str::contains("moveAndSizeAfter"))
+        .stdout(predicate::str::contains("\"customLabels\""))
         .stdout(predicate::str::contains("underline"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
@@ -7229,6 +7230,109 @@ fn reverses_external_chart_gridline_visibility_and_writer_defaults() {
     assert!(first_chart.contains("<c:minorGridlines/>"));
     let second_chart = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
     assert!(second_chart.contains("<c:majorGridlines/>"));
+}
+
+#[test]
+fn reverse_custom_chart_data_labels_round_trips_literal_text_and_gaps() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("custom-chart-labels.xlsx");
+    let output_path = directory.path().join("custom-chart-labels.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    let labels = [
+        ChartDataLabel::new().set_value("Forecast").to_custom(),
+        ChartDataLabel::default(),
+        ChartDataLabel::new().set_value("Actual").to_custom(),
+    ];
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_custom_data_labels(&labels);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    let mut archive = ZipArchive::new(std::fs::File::open(&workbook_path).unwrap()).unwrap();
+    let mut chart_xml = String::new();
+    archive
+        .by_name("xl/charts/chart1.xml")
+        .unwrap()
+        .read_to_string(&mut chart_xml)
+        .unwrap();
+    assert!(chart_xml.contains("<c:dLbl>"), "{chart_xml}");
+    assert!(chart_xml.contains("<c:idx val=\"0\"/>"), "{chart_xml}");
+    assert!(chart_xml.contains("<c:idx val=\"2\"/>"), "{chart_xml}");
+    assert!(chart_xml.contains("<a:t>Forecast</a:t>"), "{chart_xml}");
+    assert!(chart_xml.contains("<a:t>Actual</a:t>"), "{chart_xml}");
+
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path);
+    command.assert().success();
+    let source = std::fs::read_to_string(&output_path).expect("reverse source exists");
+    assert!(
+        source.contains("customLabels={[ \"Forecast\", null, \"Actual\" ]}"),
+        "{source}"
+    );
+    assert!(
+        !source.contains("showValue={true}"),
+        "custom labels already produce the writer's default show-value behavior: {source}"
+    );
+
+    let rebuilt = directory.path().join("custom-chart-labels-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second_reverse = directory.path().join("custom-chart-labels-second.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(rebuilt)
+        .args(["-o"])
+        .arg(&second_reverse)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(second_reverse).expect("second reverse source exists"),
+        source
+    );
+}
+
+#[test]
+fn reverse_rejects_formula_backed_custom_chart_labels_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("formula-chart-label.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    let labels = [ChartDataLabel::new().set_value("=Data!$A$2").to_custom()];
+    chart
+        .add_series()
+        .set_categories("Data!A2:A2")
+        .set_values("Data!B2:B2")
+        .set_custom_data_labels(&labels);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "formula/range-backed custom data label",
+        ))
+        .stderr(predicate::str::contains("convert it to static text"));
 }
 
 #[test]

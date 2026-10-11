@@ -4013,6 +4013,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "showLeaderLines",
                 "labelSeparator",
                 "labelNumberFormat",
+                "customLabels",
                 "labelFontSize",
                 "labelFontBold",
                 "labelFontItalic",
@@ -5159,6 +5160,7 @@ fn validate_chart_error_bar_amount(error_bars: &Node, series: &Node) -> Result<(
 
 fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
     validate_series_data_label_font_properties(series)?;
+    validate_custom_chart_data_labels(series)?;
     for property in [
         "showValue",
         "showCategoryName",
@@ -5255,6 +5257,63 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
                 "Series.labelNumberFormat must contain 1–255 valid XML characters; shorten the format code or remove control characters".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn validate_custom_chart_data_labels(series: &Node) -> Result<()> {
+    let Some(labels) = series.props.get("customLabels") else {
+        return Ok(());
+    };
+    let Some(labels) = labels.as_array() else {
+        return Err(Error::Compile(
+            "Series.customLabels must be an array of non-empty text or null; use null for a default point label".into(),
+        ));
+    };
+    if labels.is_empty() {
+        return Err(Error::Compile(
+            "Series.customLabels cannot be empty; add a non-empty custom label or omit the property".into(),
+        ));
+    }
+    for (index, label) in labels.iter().enumerate() {
+        if label.is_null() {
+            continue;
+        }
+        let Some(text) = label.as_str() else {
+            return Err(Error::Compile(format!(
+                "Series.customLabels[{}] must be non-empty text or null; use a string or null",
+                index + 1
+            )));
+        };
+        if text.is_empty() || !text.chars().all(is_valid_xml_character) {
+            return Err(Error::Compile(format!(
+                "Series.customLabels[{}] must contain non-empty XML-safe text; remove control characters or use null for the default label",
+                index + 1
+            )));
+        }
+    }
+    if !labels.iter().any(Value::is_string) {
+        return Err(Error::Compile(
+            "Series.customLabels must include at least one non-empty text label; remove the property or add a string entry".into(),
+        ));
+    }
+    let point_count = series
+        .props
+        .get("values")
+        .and_then(Value::as_str)
+        .and_then(|formula| formula.split_once('!'))
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length);
+    let Some(point_count) = point_count else {
+        return Err(Error::Compile(
+            "Series.customLabels requires Series.values to be a one-dimensional A1 cell/range; use a single column or row range so point indices remain unambiguous".into(),
+        ));
+    };
+    if labels.len() > point_count as usize {
+        return Err(Error::Compile(format!(
+            "Series.customLabels has {} entries but Series.values contains {point_count} points; shorten the array to at most {point_count} entries",
+            labels.len()
+        )));
     }
     Ok(())
 }
@@ -9422,6 +9481,66 @@ mod tests {
         )]);
         let validation = input.validate();
         assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_chart_series_custom_data_labels_with_default_gaps() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3",
+                    "customLabels":["Forecast",null,"Actual"]
+                },"children":[]}]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn rejects_empty_chart_series_custom_label_with_repair_guidance() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3",
+                    "customLabels":["Forecast", "", "Actual"]
+                },"children":[]}]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("empty custom point labels are ambiguous");
+        assert!(error.to_string().contains("customLabels[2]"), "{error}");
+        assert!(
+            error.to_string().contains("non-empty XML-safe text"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_chart_series_custom_label_past_value_range() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B2",
+                    "customLabels":["First", null, "Out of range"]
+                },"children":[]}]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("custom label indices cannot exceed the points in values");
+        assert!(error.to_string().contains("contains 2 points"), "{error}");
+        assert!(error.to_string().contains("shorten the array"), "{error}");
     }
 
     #[test]

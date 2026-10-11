@@ -2098,6 +2098,32 @@ fn configure_chart_series_data_labels(
     chart_series: &mut rust_xlsxwriter::ChartSeries,
     series: &Node,
 ) {
+    if let Some(labels) = compile_custom_chart_data_labels(series) {
+        chart_series.set_custom_data_labels(&labels);
+    }
+    if let Some(data_label) = compile_series_chart_data_label(series) {
+        chart_series.set_data_label(&data_label);
+    }
+}
+
+fn compile_custom_chart_data_labels(series: &Node) -> Option<Vec<ChartDataLabel>> {
+    series
+        .props
+        .get("customLabels")
+        .and_then(Value::as_array)
+        .map(|labels| {
+            labels
+                .iter()
+                .map(|label| {
+                    label.as_str().map_or_else(ChartDataLabel::default, |text| {
+                        ChartDataLabel::new().set_value(text).to_custom()
+                    })
+                })
+                .collect()
+        })
+}
+
+fn compile_series_chart_data_label(series: &Node) -> Option<ChartDataLabel> {
     let show_value = series.props.get("showValue").and_then(Value::as_bool) == Some(true);
     let show_category_name = series
         .props
@@ -2148,7 +2174,7 @@ fn configure_chart_series_data_labels(
         && number_format.is_none()
         && !has_font
     {
-        return;
+        return None;
     }
     let mut data_label = ChartDataLabel::new();
     if show_value {
@@ -2181,7 +2207,7 @@ fn configure_chart_series_data_labels(
     if has_font {
         configure_chart_data_label_font(&mut data_label, series);
     }
-    chart_series.set_data_label(&data_label);
+    Some(data_label)
 }
 
 fn configure_chart_data_label_font(data_label: &mut ChartDataLabel, series: &Node) {
@@ -5900,7 +5926,7 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             ("showSeriesName", series.show_series_name),
             ("showPercentage", series.show_percentage),
         ] {
-            if enabled == Some(true) {
+            if enabled == Some(true) && (series.custom_labels.is_empty() || name != "showValue") {
                 let _ = write!(output, " {name}={{true}}");
             }
         }
@@ -5918,6 +5944,26 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         }
         if let Some(number_format) = &series.label_number_format {
             let _ = write!(output, " labelNumberFormat={number_format:?}");
+        }
+        if !series.custom_labels.is_empty() {
+            output.push_str(" customLabels={[ ");
+            for index in 0..=series
+                .custom_labels
+                .keys()
+                .next_back()
+                .copied()
+                .unwrap_or_default()
+            {
+                if index > 0 {
+                    output.push_str(", ");
+                }
+                if let Some(label) = series.custom_labels.get(&index) {
+                    let _ = write!(output, "{label:?}");
+                } else {
+                    output.push_str("null");
+                }
+            }
+            output.push_str(" ]}");
         }
         append_chart_series_label_font_properties(output, series);
         if series.error_bars.is_empty() && series.trendline.is_none() {
@@ -9431,11 +9477,12 @@ fn parse_chart_xml(
         "latin",
         "plotArea",
         "dTable",
+        "dLbl",
+        "layout",
         "showHorzBorder",
         "showVertBorder",
         "showOutline",
         "showKeys",
-        "layout",
         "manualLayout",
         "layoutTarget",
         "xMode",
@@ -9601,6 +9648,9 @@ fn parse_chart_xml(
     let mut chart_title_open = false;
     let mut chart_title_target: Option<&'static str> = None;
     let mut series_literal_title_open = false;
+    let mut custom_label_text_open = false;
+    let mut custom_label_text = String::new();
+    let mut custom_label_text_nodes = 0_usize;
     let mut trendline_name_open = false;
     let mut chart_title: Option<String> = None;
     let mut title_font_size: Option<f64> = None;
@@ -10139,8 +10189,14 @@ fn parse_chart_xml(
                         *seen = true;
                     }
                 }
+                let default_custom_label_run = tag == "rPr"
+                    && stack.iter().any(|ancestor| ancestor == "dLbl")
+                    && event.attributes().with_checks(false).count() == 1
+                    && chart_xml_attribute(&event, "lang", reader.decoder())?.as_deref()
+                        == Some("en-US");
                 if matches!(tag.as_str(), "rPr" | "defRPr")
                     && stack.iter().any(|ancestor| ancestor == "dLbls")
+                    && !default_custom_label_run
                 {
                     if !stack.iter().any(|ancestor| ancestor == "txPr")
                         || !stack.iter().any(|ancestor| ancestor == "ser")
@@ -10561,6 +10617,13 @@ fn parse_chart_xml(
                         "chart part `{part}` has {tag} outside an errBars group; custom error-bar values must be attached to one supported series error-bar group"
                     )));
                 }
+                if stack.iter().any(|ancestor| ancestor == "dLbl")
+                    && matches!(tag.as_str(), "strRef" | "f" | "strCache")
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has a formula/range-backed custom data label; convert it to static text or remove the custom label"
+                    )));
+                }
                 if stack.iter().any(|ancestor| ancestor == "dLbls")
                     && !matches!(
                         tag.as_str(),
@@ -10577,6 +10640,23 @@ fn parse_chart_xml(
                             | "extLst"
                             | "ext"
                     )
+                    && !((tag == "dLbl" && stack.last().is_some_and(|parent| parent == "dLbls"))
+                        || stack.iter().any(|ancestor| ancestor == "dLbl")
+                            && matches!(
+                                tag.as_str(),
+                                "dLbl"
+                                    | "idx"
+                                    | "layout"
+                                    | "tx"
+                                    | "rich"
+                                    | "bodyPr"
+                                    | "lstStyle"
+                                    | "p"
+                                    | "r"
+                                    | "rPr"
+                                    | "t"
+                                    | "showVal"
+                            ))
                     && !(stack.iter().any(|ancestor| ancestor == "txPr")
                         && matches!(
                             tag.as_str(),
@@ -10595,6 +10675,30 @@ fn parse_chart_xml(
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has unsupported `<{tag}>` data-label formatting; retain only display flags and supported series-level label-font properties"
                     )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "dLbl") {
+                    let valid_parent = match tag.as_str() {
+                        "idx" | "layout" | "tx" | "showVal" => {
+                            stack.last().is_some_and(|parent| parent == "dLbl")
+                        }
+                        "rich" => stack.last().is_some_and(|parent| parent == "tx"),
+                        "bodyPr" | "lstStyle" | "p" => {
+                            stack.last().is_some_and(|parent| parent == "rich")
+                        }
+                        "r" => stack.last().is_some_and(|parent| parent == "p"),
+                        "rPr" | "t" => stack.last().is_some_and(|parent| parent == "r"),
+                        _ => false,
+                    };
+                    if !valid_parent {
+                        if matches!(tag.as_str(), "strRef" | "f" | "strCache") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a formula/range-backed custom data label; convert it to static text or remove the custom label"
+                            )));
+                        }
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has unsupported point-label structure at `<{tag}>`; retain the writer's literal rich-text label form"
+                        )));
+                    }
                 }
                 if tag == "txPr"
                     && stack.iter().any(|ancestor| ancestor == "dLbls")
@@ -12936,6 +13040,8 @@ fn parse_chart_xml(
                         line_dash: None,
                         line_transparency: None,
                         point_colors: BTreeMap::new(),
+                        custom_labels: BTreeMap::new(),
+                        pending_custom_label_index: None,
                         trendline: None,
                         show_value: None,
                         show_category_name: None,
@@ -13299,6 +13405,61 @@ fn parse_chart_xml(
                             )));
                         }
                         current.data_labels_seen = true;
+                    }
+                    "dLbl" => {
+                        if is_empty
+                            || stack.last().is_none_or(|parent| parent != "dLbls")
+                            || !stack.iter().any(|ancestor| ancestor == "ser")
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a point-level dLbl outside a series data-label group; attach it to one Series"
+                            )));
+                        }
+                        let current = series.last_mut().expect("series context");
+                        if current.pending_custom_label_index.is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` nests custom data labels; keep one dLbl per point"
+                            )));
+                        }
+                        current.pending_custom_label_index = Some(usize::MAX);
+                        custom_label_text.clear();
+                        custom_label_text_nodes = 0;
+                    }
+                    "idx" if stack.last().is_some_and(|parent| parent == "dLbl") => {
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "idx")?;
+                        let index = raw.parse::<usize>().ok().filter(|index| *index <= 1_048_575)
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has an invalid custom data-label index `{raw}`; use a zero-based point index"
+                            )))?;
+                        let current = series.last_mut().expect("series context");
+                        if current
+                            .pending_custom_label_index
+                            .replace(index)
+                            .is_some_and(|old| old != usize::MAX)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats the custom data-label idx; keep one point index per dLbl"
+                            )));
+                        }
+                    }
+                    "t" if stack.iter().any(|ancestor| ancestor == "dLbl") => {
+                        custom_label_text_nodes += 1;
+                        if custom_label_text_nodes > 1 {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a multi-run custom data label; use one literal text run per point"
+                            )));
+                        }
+                        custom_label_text_open = true;
+                    }
+                    "showVal" if stack.iter().any(|ancestor| ancestor == "dLbl") => {
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "showVal")?;
+                        if !parse_xml_bool(&raw, part, "point showVal")? {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a custom data label that suppresses its value; only visible literal text labels are supported"
+                            )));
+                        }
                     }
                     "showVal" | "showCatName" | "showSerName" | "showPercent" | "showLegendKey"
                     | "showLeaderLines" => {
@@ -14737,7 +14898,11 @@ fn parse_chart_xml(
                             }
                         }
                     }
-                    "tx" if !series.is_empty() => title_source_open = true,
+                    "tx" if !series.is_empty()
+                        && !stack.iter().any(|ancestor| ancestor == "dLbl") =>
+                    {
+                        title_source_open = true;
+                    }
                     "v" if !series.is_empty()
                         && stack.last().is_some_and(|ancestor| ancestor == "tx") =>
                     {
@@ -14813,6 +14978,13 @@ fn parse_chart_xml(
                 }
             }
             Ok(Event::Text(text)) => {
+                if custom_label_text_open {
+                    custom_label_text.push_str(
+                        &text
+                            .xml_content(XmlVersion::Implicit1_0)
+                            .map_err(|error| Error::Reverse(error.to_string()))?,
+                    );
+                }
                 if trendline_name_open {
                     let name = text
                         .xml_content(XmlVersion::Implicit1_0)
@@ -14997,7 +15169,10 @@ fn parse_chart_xml(
                 }
             }
             Ok(Event::GeneralRef(reference))
-                if chart_title_open || series_literal_title_open || trendline_name_open =>
+                if chart_title_open
+                    || series_literal_title_open
+                    || trendline_name_open
+                    || custom_label_text_open =>
             {
                 let entity = reference
                     .decode()
@@ -15016,6 +15191,8 @@ fn parse_chart_xml(
                     })?;
                 if chart_title_open {
                     chart_title_text.push_str(&resolved);
+                } else if custom_label_text_open {
+                    custom_label_text.push_str(&resolved);
                 } else if trendline_name_open {
                     if let Some(trendline) =
                         series.last_mut().and_then(|item| item.trendline.as_mut())
@@ -15107,6 +15284,39 @@ fn parse_chart_xml(
                 }
                 if tag == "v" && series_literal_title_open {
                     series_literal_title_open = false;
+                }
+                if tag == "t" && custom_label_text_open {
+                    custom_label_text_open = false;
+                }
+                if tag == "dLbl" {
+                    let current = series.last_mut().ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "chart part `{part}` contains a custom data label outside a series"
+                        ))
+                    })?;
+                    let index = current
+                        .pending_custom_label_index
+                        .take()
+                        .filter(|index| *index != usize::MAX)
+                        .ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has a custom data label without a valid idx; add one zero-based point index"
+                        )))?;
+                    if custom_label_text.is_empty()
+                        || !custom_label_text.chars().all(is_valid_xml_character)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an empty or invalid literal custom data label at point {index}; use non-empty XML-safe text"
+                        )));
+                    }
+                    if current
+                        .custom_labels
+                        .insert(index, std::mem::take(&mut custom_label_text))
+                        .is_some()
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats a custom data label for point {index}; keep one label per point"
+                        )));
+                    }
                 }
                 if tag == "title" && chart_title_open {
                     chart_title_open = false;
@@ -15443,6 +15653,21 @@ fn parse_chart_xml(
         )));
     }
     for item in &series {
+        if let Some(max_index) = item.custom_labels.keys().next_back().copied() {
+            let point_count = item
+                .values
+                .split_once('!')
+                .and_then(|(_, range)| parse_a1_range(range))
+                .and_then(one_dimensional_range_length)
+                .ok_or_else(|| Error::Reverse(format!(
+                    "chart part `{part}` has custom labels on a non-one-dimensional value range; use a one-dimensional Series.values range"
+                )))?;
+            if u32::try_from(max_index).is_ok_and(|index| index >= point_count) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` labels point {max_index} beyond the series value range of {point_count} points; extend the source range or remove that custom label"
+                )));
+            }
+        }
         if let Some(max_index) = item.point_colors.keys().next_back().copied() {
             let point_count = item
                 .values
@@ -20442,6 +20667,8 @@ struct WorksheetChartSeries {
     line_dash: Option<&'static str>,
     line_transparency: Option<u32>,
     point_colors: BTreeMap<usize, String>,
+    custom_labels: BTreeMap<usize, String>,
+    pending_custom_label_index: Option<usize>,
     trendline: Option<WorksheetChartTrendline>,
     show_value: Option<bool>,
     show_category_name: Option<bool>,
