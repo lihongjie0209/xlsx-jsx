@@ -1896,6 +1896,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisTitle",
             "xAxisNumberFormat",
             "yAxisNumberFormat",
+            "xAxisMin",
+            "xAxisMax",
             "yAxisMin",
             "yAxisMax",
             "yAxisLogBase",
@@ -2199,23 +2201,45 @@ fn validate_chart_axis_number_formats(chart: &Node, chart_type: &str) -> Result<
 }
 
 fn validate_chart_axis_bounds(chart: &Node, chart_type: &str) -> Result<()> {
+    let scatter_chart = chart_type.starts_with("scatter");
+    if (chart.props.contains_key("xAxisMin") || chart.props.contains_key("xAxisMax"))
+        && !scatter_chart
+    {
+        return Err(Error::Compile(
+            "Chart.xAxisMin/xAxisMax are supported only for scatter charts; use yAxisMin/yAxisMax for the value axis on a category chart".into(),
+        ));
+    }
+    validate_chart_axis_bound_pair(chart, "xAxisMin", "xAxisMax")?;
     if !chart.props.contains_key("yAxisMin") && !chart.props.contains_key("yAxisMax") {
         return Ok(());
     }
-    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+    if matches!(chart_type, "pie" | "doughnut") {
         return Err(Error::Compile(
-            "yAxisMin/yAxisMax are not supported for scatter, pie, or doughnut charts; use a chart with one category axis and one value axis, or omit the bounds for automatic scaling".into(),
+            "yAxisMin/yAxisMax are not supported for pie or doughnut charts; use a chart with a value axis, or omit the bounds for automatic scaling".into(),
         ));
     }
-    let minimum = parse_chart_axis_bound(chart, "yAxisMin")?;
-    let maximum = parse_chart_axis_bound(chart, "yAxisMax")?;
+    validate_chart_axis_bound_pair(chart, "yAxisMin", "yAxisMax")
+}
+
+fn validate_chart_axis_bound_pair(
+    chart: &Node,
+    minimum_property: &str,
+    maximum_property: &str,
+) -> Result<()> {
+    for property in [minimum_property, maximum_property] {
+        if chart.props.contains_key(property) {
+            parse_chart_axis_bound(chart, property)?;
+        }
+    }
+    let minimum = parse_chart_axis_bound(chart, minimum_property)?;
+    let maximum = parse_chart_axis_bound(chart, maximum_property)?;
     if minimum
         .zip(maximum)
         .is_some_and(|(minimum, maximum)| minimum >= maximum)
     {
-        return Err(Error::Compile(
-            "Chart.yAxisMin must be less than yAxisMax; increase the maximum, lower the minimum, or omit one bound to use automatic scaling".into(),
-        ));
+        return Err(Error::Compile(format!(
+            "Chart.{minimum_property} must be less than {maximum_property}; increase the maximum, lower the minimum, or omit one bound to use automatic scaling"
+        )));
     }
     Ok(())
 }

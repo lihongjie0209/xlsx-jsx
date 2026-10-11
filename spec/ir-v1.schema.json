@@ -501,6 +501,8 @@
             "yAxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisMin": { "type": "number" },
             "yAxisMax": { "type": "number" },
+            "xAxisMin": { "type": "number" },
+            "xAxisMax": { "type": "number" },
             "yAxisLogBase": { "type": "integer", "minimum": 2, "maximum": 1000 },
             "valueAxisReversed": { "type": "boolean" },
             "categoryAxisLabelInterval": { "type": "integer", "minimum": 1, "maximum": 65535 },
@@ -580,6 +582,8 @@
                     { "required": ["yAxisTitle"] },
                     { "required": ["xAxisNumberFormat"] },
                     { "required": ["yAxisNumberFormat"] },
+                    { "required": ["xAxisMin"] },
+                    { "required": ["xAxisMax"] },
                     { "required": ["yAxisMin"] },
                     { "required": ["yAxisMax"] },
                     { "required": ["yAxisLogBase"] },
@@ -636,8 +640,6 @@
                     { "required": ["yAxisTitle"] },
                     { "required": ["xAxisNumberFormat"] },
                     { "required": ["yAxisNumberFormat"] },
-                    { "required": ["yAxisMin"] },
-                    { "required": ["yAxisMax"] },
                     { "required": ["yAxisLogBase"] },
                     { "required": ["valueAxisReversed"] },
                     { "required": ["yAxisMajorUnit"] },
@@ -651,6 +653,10 @@
               }
             }
           }
+        },
+        {
+          "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } } }, "required": ["type"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }] } } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["pie", "doughnut"] } } }, "required": ["type"] } }, "required": ["props"] },

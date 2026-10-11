@@ -139,6 +139,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisNumberFormat"))
         .stdout(predicate::str::contains("yAxisMin"))
         .stdout(predicate::str::contains("yAxisMax"))
+        .stdout(predicate::str::contains("xAxisMin"))
+        .stdout(predicate::str::contains("xAxisMax"))
         .stdout(predicate::str::contains("yAxisLogBase"))
         .stdout(predicate::str::contains("valueAxisDisplayUnit"))
         .stdout(predicate::str::contains("valueAxisDisplayUnitLabel"))
@@ -1762,6 +1764,52 @@ fn reverses_external_scatter_error_bars_without_a_manifest() {
     assert!(bar_xml.contains("<c:errBars>"));
     assert!(bar_xml.contains("<c:errValType val=\"fixedVal\"/>"));
     assert!(bar_xml.contains("<c:val val=\"0.5\"/>"));
+}
+
+#[test]
+fn reverses_and_rebuilds_external_scatter_axis_bounds_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-axis-bounds.xlsx");
+    let output_path = directory.path().join("external-scatter-axis-bounds.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.x_axis().set_min(-5.0).set_max(5.0);
+    chart.y_axis().set_min(-20.0).set_max(20.0);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("xAxisMin={-5}"), "{source}");
+    assert!(source.contains("xAxisMax={5}"), "{source}");
+    assert!(source.contains("yAxisMin={-20}"), "{source}");
+    assert!(source.contains("yAxisMax={20}"), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-axis-bounds.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert_eq!(xml.matches("<c:min val=\"-5\"/>").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<c:max val=\"5\"/>").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<c:min val=\"-20\"/>").count(), 1, "{xml}");
+    assert_eq!(xml.matches("<c:max val=\"20\"/>").count(), 1, "{xml}");
 }
 
 #[test]
@@ -4343,12 +4391,29 @@ fn rejects_chart_value_axis_bounds_when_minimum_is_not_below_maximum() {
 }
 
 #[test]
-fn rejects_value_axis_bounds_for_scatter_charts_with_actionable_guidance() {
+fn validates_independent_scatter_x_and_y_axis_bounds() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("scatter-axis-bounds.tsx");
     std::fs::write(
         &input,
-        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" yAxisMin={0}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisMin={-1} xAxisMax={5} yAxisMin={0} yAxisMax={20}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .success();
+}
+
+#[test]
+fn rejects_reversed_scatter_x_axis_bounds_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("reversed-scatter-axis-bounds.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisMin={5} xAxisMax={-5}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
     )
     .expect("source writes");
     Command::cargo_bin("xlsx-jsx")
@@ -4357,8 +4422,31 @@ fn rejects_value_axis_bounds_for_scatter_charts_with_actionable_guidance() {
         .arg(input)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not supported for scatter"))
-        .stderr(predicate::str::contains("automatic scaling"));
+        .stderr(predicate::str::contains(
+            "Chart.xAxisMin must be less than xAxisMax",
+        ))
+        .stderr(predicate::str::contains("increase the maximum"));
+}
+
+#[test]
+fn rejects_scatter_x_axis_bounds_on_category_charts_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("category-chart-x-axis-bounds.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" xAxisMin={0}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "xAxisMin/xAxisMax are supported only for scatter charts",
+        ))
+        .stderr(predicate::str::contains("use yAxisMin/yAxisMax"));
 }
 
 #[test]

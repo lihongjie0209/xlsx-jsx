@@ -1278,6 +1278,12 @@ fn configure_chart_axis_number_formats(chart: &mut Chart, component: &Node) {
 }
 
 fn configure_chart_axis_bounds(chart: &mut Chart, component: &Node) {
+    if let Some(minimum) = component.props.get("xAxisMin").and_then(Value::as_f64) {
+        chart.x_axis().set_min(minimum);
+    }
+    if let Some(maximum) = component.props.get("xAxisMax").and_then(Value::as_f64) {
+        chart.x_axis().set_max(maximum);
+    }
     let value_axis = if component
         .props
         .get("type")
@@ -4803,6 +4809,14 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
                 .map(|value| format!("{{{value:?}}}")),
         ),
         (
+            "xAxisMin",
+            chart.x_axis_min.map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "xAxisMax",
+            chart.x_axis_max.map(|value| format!("{{{value}}}")),
+        ),
+        (
             "yAxisMin",
             chart.y_axis_min.map(|value| format!("{{{value}}}")),
         ),
@@ -7761,6 +7775,8 @@ fn parse_chart_xml(
     let mut y_axis_number_format: Option<String> = None;
     let mut x_axis_number_format_seen = false;
     let mut y_axis_number_format_seen = false;
+    let mut x_axis_min = None;
+    let mut x_axis_max = None;
     let mut y_axis_min = None;
     let mut y_axis_max = None;
     let mut y_axis_log_base = None;
@@ -7785,6 +7801,9 @@ fn parse_chart_xml(
     let mut category_axis_tick_interval_seen = false;
     let mut y_axis_min_seen = false;
     let mut y_axis_max_seen = false;
+    let mut scatter_axis_bounds = Vec::<(Option<f64>, Option<f64>)>::new();
+    let mut scatter_axis_positions = Vec::<Option<&'static str>>::new();
+    let mut current_value_axis_index = None;
     let mut y_axis_major_unit = None;
     let mut y_axis_minor_unit = None;
     let mut y_axis_major_unit_seen = false;
@@ -8216,8 +8235,12 @@ fn parse_chart_xml(
                         }
                         chart_axis_count += 1;
                         if tag == "valAx" {
+                            current_value_axis_index = Some(value_axis_count as usize);
                             value_axis_count += 1;
+                            scatter_axis_bounds.push((None, None));
+                            scatter_axis_positions.push(None);
                         } else if tag == "dateAx" {
+                            current_value_axis_index = None;
                             if category_axis_type.is_some() {
                                 return Err(Error::Reverse(format!(
                                     "chart part `{part}` has multiple date axes; keep one primary date category axis"
@@ -8381,6 +8404,11 @@ fn parse_chart_xml(
                                         _ => "unsupported",
                                     })
                             });
+                        if let Some(index) = current_value_axis_index
+                            && let Some(position) = scatter_axis_positions.get_mut(index)
+                        {
+                            *position = current_axis_position;
+                        }
                         if let Some(hidden) = pending_axis_hidden.take() {
                             let Some(position @ ("b" | "t" | "l" | "r")) = current_axis_position
                             else {
@@ -9367,12 +9395,11 @@ fn parse_chart_xml(
                             )));
                         }
                         if !date_axis_context
-                            && chart_type.is_some_and(|value| {
-                                value.starts_with("scatter") || matches!(value, "pie" | "doughnut")
-                            })
+                            && !chart_type.is_some_and(|value| value.starts_with("scatter"))
+                            && chart_type.is_some_and(|value| matches!(value, "pie" | "doughnut"))
                         {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has value-axis bounds for a chart without one unambiguous value axis; remove the bounds or use a supported category/value chart"
+                                "chart part `{part}` has value-axis bounds on a chart without axes; remove the bounds or use a chart with numeric axes"
                             )));
                         }
                         let mut bound = None;
@@ -9417,6 +9444,25 @@ fn parse_chart_xml(
                             *seen = true;
                             *target = Some(iso_date);
                             *serial_target = Some(bound);
+                        } else if chart_type.is_some_and(|value| value.starts_with("scatter")) {
+                            let Some(index) = current_value_axis_index else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a scatter value-axis bound outside a value axis; repair the axis structure"
+                                )));
+                            };
+                            let Some((minimum, maximum)) = scatter_axis_bounds.get_mut(index)
+                            else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a scatter bound on an untracked value axis; keep exactly two primary axes"
+                                )));
+                            };
+                            let target = if tag == "min" { minimum } else { maximum };
+                            if target.is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats a scatter {tag} axis bound; retain one bound per axis"
+                                )));
+                            }
+                            *target = Some(bound);
                         } else {
                             let (seen, target) = if tag == "min" {
                                 (&mut y_axis_min_seen, &mut y_axis_min)
@@ -10932,6 +10978,38 @@ fn parse_chart_xml(
             "chart part `{part}` has firstSliceAng without a valid value; set val to an integer from 0 through 360"
         )));
     }
+    if chart_type.starts_with("scatter") {
+        let x_axis_index = scatter_axis_positions
+            .iter()
+            .position(|position| *position == Some("b"));
+        let y_axis_index = scatter_axis_positions
+            .iter()
+            .position(|position| *position == Some("l"));
+        let (Some(x_axis_index), Some(y_axis_index)) = (x_axis_index, y_axis_index) else {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` scatter chart must have one horizontal bottom value axis and one vertical left value axis; restore the primary axis positions"
+            )));
+        };
+        if value_axis_count != 2 {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` scatter chart must have exactly two primary value axes; remove secondary axes"
+            )));
+        }
+        let (x_minimum, x_maximum) = scatter_axis_bounds[x_axis_index];
+        let (y_minimum, y_maximum) = scatter_axis_bounds[y_axis_index];
+        x_axis_min = x_minimum;
+        x_axis_max = x_maximum;
+        y_axis_min = y_minimum;
+        y_axis_max = y_maximum;
+        if x_axis_min
+            .zip(x_axis_max)
+            .is_some_and(|(minimum, maximum)| minimum >= maximum)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has a scatter X-axis minimum greater than or equal to its maximum; lower xAxisMin or raise xAxisMax"
+            )));
+        }
+    }
     if y_axis_min
         .zip(y_axis_max)
         .is_some_and(|(minimum, maximum)| minimum >= maximum)
@@ -11045,6 +11123,8 @@ fn parse_chart_xml(
         y_axis_title,
         x_axis_number_format,
         y_axis_number_format,
+        x_axis_min,
+        x_axis_max,
         y_axis_min,
         y_axis_max,
         y_axis_log_base,
@@ -14594,6 +14674,8 @@ struct WorksheetChart {
     y_axis_title: Option<String>,
     x_axis_number_format: Option<String>,
     y_axis_number_format: Option<String>,
+    x_axis_min: Option<f64>,
+    x_axis_max: Option<f64>,
     y_axis_min: Option<f64>,
     y_axis_max: Option<f64>,
     y_axis_log_base: Option<u16>,

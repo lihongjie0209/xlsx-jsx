@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.78
+Version: 1.79
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -187,11 +187,19 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.yAxisMin?: number` and `Chart.yAxisMax?: number` set the numeric bounds
   of the chart's value axis and default to automatic scaling when omitted. Each
   value must be finite; if both are supplied, the minimum must be less than the
-  maximum. These properties are not valid for scatter, pie, or doughnut charts.
+  maximum. These properties are not valid for pie or doughnut charts; on scatter
+  charts they address the vertical Y-value axis.
   Reverse preserves `<valAx><scaling><min/max>` values and rejects bounds on a
   category/date axis because this DSL currently exposes only value-axis bounds.
   Horizontal bar charts use the same value-axis meaning even though the writer
   swaps its internal axis objects.
+- `Chart.xAxisMin?: number` and `Chart.xAxisMax?: number` set numeric bounds on
+  the horizontal X-value axis of scatter charts. They are finite numbers and,
+  when both are supplied, the minimum must be less than the maximum. They are
+  valid only for scatter chart types; ordinary category axes cannot use numeric
+  bounds. Reverse identifies the horizontal and vertical value axes from their
+  OOXML bottom/left axis positions, preserving X and Y bounds independently
+  without a manifest.
 - `Chart.yAxisMajorUnit?: number` and `Chart.yAxisMinorUnit?: number` set the
   major and minor tick intervals on the numeric value axis. Each provided
   interval must be finite and greater than zero; omission leaves Excel's
