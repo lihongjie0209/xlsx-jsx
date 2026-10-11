@@ -382,6 +382,18 @@ fn spec_exposes_chart_components_and_properties() {
 }
 
 #[test]
+fn spec_exposes_scatter_data_label_aliases() {
+    let output = Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .arg("spec")
+        .assert()
+        .success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("showXValue"));
+    assert!(stdout.contains("showYValue"));
+}
+
+#[test]
 fn spec_exposes_chart_axis_title_font_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -4921,6 +4933,104 @@ fn reverses_and_rebuilds_external_trendline_equation_label_shape_without_manifes
     assert!(xml.contains("<a:solidFill><a:srgbClr val=\"FFF2CC\"><a:alpha val=\"80000\"/></a:srgbClr></a:solidFill>"), "{xml}");
     assert!(xml.contains("<a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"336699\"><a:alpha val=\"75000\"/></a:srgbClr></a:solidFill><a:prstDash val=\"dashDot\"/></a:ln>"), "{xml}");
     assert!(xml.contains("<a:ln><a:noFill/></a:ln>"), "{xml}");
+}
+
+#[test]
+fn scatter_series_x_y_value_aliases_compile_to_writer_data_label_flags() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-xy-labels.tsx");
+    let output = directory.path().join("scatter-xy-labels.xlsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatterWithLines" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" showXValue={true} showYValue={true} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(input)
+        .args(["-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&output, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:showVal val=\"1\"/>"), "{xml}");
+    assert!(xml.contains("<c:showCatName val=\"1\"/>"), "{xml}");
+}
+
+#[test]
+fn reverses_external_scatter_xy_value_aliases_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-xy-labels.xlsx");
+    let source_path = directory.path().join("external-scatter-xy-labels.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-scatter-xy-labels.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    let mut data_label = ChartDataLabel::new();
+    data_label.show_x_value().show_y_value();
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_data_label(&data_label);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("showXValue={true}"), "{source}");
+    assert!(source.contains("showYValue={true}"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        rebuilt_xml.contains("<c:showVal val=\"1\"/>"),
+        "{rebuilt_xml}"
+    );
+    assert!(
+        rebuilt_xml.contains("<c:showCatName val=\"1\"/>"),
+        "{rebuilt_xml}"
+    );
+}
+
+#[test]
+fn rejects_conflicting_scatter_data_label_aliases() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("conflicting-scatter-label-aliases.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" showValue={true} showYValue={false} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Series.showValue and Series.showYValue are aliases and must match",
+        ))
+        .stderr(predicate::str::contains(
+            "keep only one spelling or use the same value",
+        ));
 }
 
 #[test]

@@ -2216,12 +2216,12 @@ fn compile_custom_chart_data_labels(series: &Node) -> Option<Vec<ChartDataLabel>
 }
 
 fn compile_series_chart_data_label(series: &Node) -> Option<ChartDataLabel> {
-    let show_value = series.props.get("showValue").and_then(Value::as_bool) == Some(true);
-    let show_category_name = series
-        .props
-        .get("showCategoryName")
-        .and_then(Value::as_bool)
-        == Some(true);
+    let show_value = ["showValue", "showYValue"]
+        .iter()
+        .any(|property| series.props.get(*property).and_then(Value::as_bool) == Some(true));
+    let show_category_name = ["showCategoryName", "showXValue"]
+        .iter()
+        .any(|property| series.props.get(*property).and_then(Value::as_bool) == Some(true));
     let show_series_name =
         series.props.get("showSeriesName").and_then(Value::as_bool) == Some(true);
     let show_percentage = series.props.get("showPercentage").and_then(Value::as_bool) == Some(true);
@@ -6061,13 +6061,21 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if series.invert_if_negative == Some(true) {
             output.push_str(" invertIfNegative={true}");
         }
+        let (value_label_property, category_label_property) =
+            if chart.chart_type.starts_with("scatter") {
+                ("showYValue", "showXValue")
+            } else {
+                ("showValue", "showCategoryName")
+            };
         for (name, enabled) in [
-            ("showValue", series.show_value),
-            ("showCategoryName", series.show_category_name),
+            (value_label_property, series.show_value),
+            (category_label_property, series.show_category_name),
             ("showSeriesName", series.show_series_name),
             ("showPercentage", series.show_percentage),
         ] {
-            if enabled == Some(true) && (series.custom_labels.is_empty() || name != "showValue") {
+            if enabled == Some(true)
+                && (series.custom_labels.is_empty() || name != value_label_property)
+            {
                 let _ = write!(output, " {name}={{true}}");
             }
         }

@@ -1247,6 +1247,8 @@
             "title": { "type": "string", "minLength": 1, "maxLength": 255 },
             "showValue": { "type": "boolean" },
             "showCategoryName": { "type": "boolean" },
+            "showXValue": { "type": "boolean" },
+            "showYValue": { "type": "boolean" },
             "showSeriesName": { "type": "boolean" },
             "showPercentage": { "type": "boolean" },
             "deleteFromLegend": { "type": "boolean" },
@@ -1341,6 +1343,50 @@
           "not": {
             "properties": {
               "props": { "required": ["name", "title"] }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": { "showValue": { "const": true }, "showYValue": { "const": false } },
+                "required": ["showValue", "showYValue"]
+              }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": { "showValue": { "const": false }, "showYValue": { "const": true } },
+                "required": ["showValue", "showYValue"]
+              }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": { "showCategoryName": { "const": true }, "showXValue": { "const": false } },
+                "required": ["showCategoryName", "showXValue"]
+              }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": { "showCategoryName": { "const": false }, "showXValue": { "const": true } },
+                "required": ["showCategoryName", "showXValue"]
+              }
             },
             "required": ["props"]
           }

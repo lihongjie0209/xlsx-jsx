@@ -1019,6 +1019,42 @@ fn validate_worksheet_page_setup(sheet: &Node, name: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_series_data_label_flags(series: &Node) -> Result<()> {
+    for property in [
+        "showValue",
+        "showCategoryName",
+        "showXValue",
+        "showYValue",
+        "showSeriesName",
+        "showPercentage",
+        "showLegendKey",
+        "showLeaderLines",
+    ] {
+        if let Some(value) = series.props.get(property)
+            && !value.is_boolean()
+        {
+            return Err(Error::Compile(format!(
+                "Series.{property} must be a boolean; use true to display that data-label field or omit it"
+            )));
+        }
+    }
+    for (left, right) in [
+        ("showValue", "showYValue"),
+        ("showCategoryName", "showXValue"),
+    ] {
+        if let (Some(left_value), Some(right_value)) = (
+            series.props.get(left).and_then(Value::as_bool),
+            series.props.get(right).and_then(Value::as_bool),
+        ) && left_value != right_value
+        {
+            return Err(Error::Compile(format!(
+                "Series.{left} and Series.{right} are aliases and must match; keep only one spelling or use the same value"
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn validate_worksheet_header_footer(sheet: &Node, name: &str) -> Result<()> {
     for property in ["header", "footer"] {
         let Some(value) = sheet.props.get(property) else {
@@ -4210,6 +4246,8 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "title",
                 "showValue",
                 "showCategoryName",
+                "showXValue",
+                "showYValue",
                 "showSeriesName",
                 "showPercentage",
                 "deleteFromLegend",
@@ -5695,22 +5733,7 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
     validate_series_data_label_font_properties(series)?;
     validate_series_data_label_shape_format(series)?;
     validate_custom_chart_data_labels(series)?;
-    for property in [
-        "showValue",
-        "showCategoryName",
-        "showSeriesName",
-        "showPercentage",
-        "showLegendKey",
-        "showLeaderLines",
-    ] {
-        if let Some(value) = series.props.get(property)
-            && !value.is_boolean()
-        {
-            return Err(Error::Compile(format!(
-                "Series.{property} must be a boolean; use true to display that data-label field or omit it"
-            )));
-        }
-    }
+    validate_series_data_label_flags(series)?;
     if series.props.get("showPercentage").and_then(Value::as_bool) == Some(true)
         && !matches!(
             chart.props.get("type").and_then(Value::as_str),
@@ -5721,8 +5744,10 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
             "Series.showPercentage is supported only for pie and doughnut charts; omit it or choose one of those chart types".into(),
         ));
     }
-    let value_suppressed = series.props.get("showValue").and_then(Value::as_bool) == Some(false);
-    let category_or_percentage_shown = ["showCategoryName", "showPercentage"]
+    let value_suppressed = ["showValue", "showYValue"]
+        .iter()
+        .any(|property| series.props.get(*property).and_then(Value::as_bool) == Some(false));
+    let category_or_percentage_shown = ["showCategoryName", "showXValue", "showPercentage"]
         .iter()
         .any(|property| series.props.get(*property).and_then(Value::as_bool) == Some(true));
     let another_label_option = ["showSeriesName", "showLegendKey", "showLeaderLines"]
@@ -5734,7 +5759,7 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
         || series_has_data_label_style(series);
     if value_suppressed && !category_or_percentage_shown && another_label_option {
         return Err(Error::Compile(
-            "Series.showValue={false} cannot be combined with Series.showLegendKey, showLeaderLines, showSeriesName, labelPosition, labelSeparator, labelNumberFormat, or labelFont* properties because rust_xlsxwriter automatically enables values; enable showCategoryName or showPercentage, or remove the conflicting options".into(),
+            "Series.showValue={false} cannot be combined with Series.showLegendKey, showLeaderLines, showSeriesName, labelPosition, labelSeparator, labelNumberFormat, or labelFont* properties because rust_xlsxwriter automatically enables values; the showYValue alias has the same restriction. enable showCategoryName or showPercentage; for scatter charts, showXValue is the category-name alias. Remove the conflicting options otherwise".into(),
         ));
     }
     if let Some(value) = series.props.get("labelPosition") {
@@ -5761,23 +5786,17 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
             .and_then(chart_data_label_separator_value)
             .is_none()
     {
-        return Err(Error::Compile(
-            "Series.labelSeparator must be comma, semicolon, period, space, or newline; choose one of those values or omit the property".into(),
-        ));
+        return Err(Error::Compile("Series.labelSeparator must be comma, semicolon, period, space, or newline; choose one of those values or omit the property".into()));
     }
     if let Some(value) = series.props.get("labelNumberFormat") {
         let Some(format) = value.as_str() else {
-            return Err(Error::Compile(
-                "Series.labelNumberFormat must be a string; use a quoted Excel number-format code or omit the property".into(),
-            ));
+            return Err(Error::Compile("Series.labelNumberFormat must be a string; use a quoted Excel number-format code or omit the property".into()));
         };
         if format.is_empty()
             || format.chars().count() > 255
             || !format.chars().all(is_valid_xml_character)
         {
-            return Err(Error::Compile(
-                "Series.labelNumberFormat must contain 1–255 valid XML characters; shorten the format code or remove control characters".into(),
-            ));
+            return Err(Error::Compile("Series.labelNumberFormat must contain 1–255 valid XML characters; shorten the format code or remove control characters".into()));
         }
     }
     Ok(())

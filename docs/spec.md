@@ -566,8 +566,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Series.showValue?: boolean`, `Series.showCategoryName?: boolean`,
   `Series.showSeriesName?: boolean`, and
   `Series.showPercentage?: boolean` configure per-series data-label contents
-  through `ChartDataLabel`. `showPercentage` is valid only for pie/doughnut
-  charts. `Series.labelPosition?: string` configures the label position using
+  through `ChartDataLabel`. `Series.showXValue?: boolean` and
+  `Series.showYValue?: boolean` are exact aliases for
+  `showCategoryName` / `showValue`, matching the writer's
+  `ChartDataLabel::show_x_value()` / `show_y_value()` APIs; they are available
+  on every chart type, though the X/Y names are most useful for scatter charts.
+  Do not provide both names of an alias pair with different values. Reverse
+  uses X/Y names for scatter charts and generic names for other chart types
+  because the serialized flags are identical. `showPercentage` is valid only
+  for pie/doughnut charts. `Series.labelPosition?: string` configures the label position using
   `center`, `right`, `left`, `above`, `below`, `insideBase`, `insideEnd`,
   `outsideEnd`, or `bestFit`. Line/scatter charts accept the first five;
   column/bar charts accept `center`, `insideBase`, `insideEnd`, and `outsideEnd`;
