@@ -102,6 +102,10 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("unique"))
         .stdout(predicate::str::contains("upBarColor"))
         .stdout(predicate::str::contains("downBarColor"))
+        .stdout(predicate::str::contains("upBarTransparency"))
+        .stdout(predicate::str::contains("downBarTransparency"))
+        .stdout(predicate::str::contains("upBarLineDash"))
+        .stdout(predicate::str::contains("downBarLineHidden"))
         .stdout(predicate::str::contains("checkbox"));
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command.args(["spec", "--format", "json"]);
@@ -2706,11 +2710,31 @@ fn reverses_and_rebuilds_external_stock_up_down_bar_fills_without_manifest() {
             .set_format(ChartLine::new().set_hidden(true))
             .set_marker(ChartMarker::new().set_none());
     }
+    let mut up_bar = ChartFormat::new();
+    up_bar
+        .set_solid_fill(
+            ChartSolidFill::new()
+                .set_color("#00AA00")
+                .set_transparency(25),
+        )
+        .set_border(
+            ChartLine::new()
+                .set_color("#112233")
+                .set_width(1.5)
+                .set_dash_type(ChartLineDashType::DashDot)
+                .set_transparency(10),
+        );
+    let mut down_bar = ChartFormat::new();
+    down_bar.set_solid_fill(
+        ChartSolidFill::new()
+            .set_color("#CC0000")
+            .set_transparency(40),
+    );
     chart
         .set_high_low_lines(true)
         .set_up_down_bars(true)
-        .set_up_bar_format(ChartSolidFill::new().set_color("#00AA00"))
-        .set_down_bar_format(ChartSolidFill::new().set_color("#CC0000"));
+        .set_up_bar_format(&mut up_bar)
+        .set_down_bar_format(&mut down_bar);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
 
@@ -2725,6 +2749,12 @@ fn reverses_and_rebuilds_external_stock_up_down_bar_fills_without_manifest() {
     let source = std::fs::read_to_string(&reversed_path).expect("reversed JSX exists");
     assert!(source.contains("upBarColor=\"#00AA00\""), "{source}");
     assert!(source.contains("downBarColor=\"#CC0000\""), "{source}");
+    assert!(source.contains("upBarTransparency={25}"), "{source}");
+    assert!(source.contains("downBarTransparency={40}"), "{source}");
+    assert!(source.contains("upBarLineColor=\"#112233\""), "{source}");
+    assert!(source.contains("upBarLineWidth={1.5}"), "{source}");
+    assert!(source.contains("upBarLineDash=\"dashDot\""), "{source}");
+    assert!(source.contains("upBarLineTransparency={10}"), "{source}");
 
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -2736,13 +2766,18 @@ fn reverses_and_rebuilds_external_stock_up_down_bar_fills_without_manifest() {
         .success();
     let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
     assert!(
-        xml.contains("<c:upBars><c:spPr><a:solidFill><a:srgbClr val=\"00AA00\""),
+        xml.contains(
+            "<c:upBars><c:spPr><a:solidFill><a:srgbClr val=\"00AA00\"><a:alpha val=\"75000\""
+        ),
         "{xml}"
     );
     assert!(
-        xml.contains("<c:downBars><c:spPr><a:solidFill><a:srgbClr val=\"CC0000\""),
+        xml.contains(
+            "<c:downBars><c:spPr><a:solidFill><a:srgbClr val=\"CC0000\"><a:alpha val=\"60000\""
+        ),
         "{xml}"
     );
+    assert!(xml.contains("<c:upBars><c:spPr><a:solidFill><a:srgbClr val=\"00AA00\"><a:alpha val=\"75000\"/></a:srgbClr></a:solidFill><a:ln w=\"19050\"><a:solidFill><a:srgbClr val=\"112233\"><a:alpha val=\"90000\""), "{xml}");
 }
 
 #[test]
@@ -2762,6 +2797,27 @@ fn rejects_stock_bar_colors_without_four_series_with_repair_guidance() {
         .failure()
         .stderr(predicate::str::contains("require exactly four Series"))
         .stderr(predicate::str::contains("OHLC"));
+}
+
+#[test]
+fn rejects_stock_bar_transparency_without_fill_color_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("stock-bar-transparency.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="stock" cell="D2" upBarTransparency={25}><Series values="Data!B2:B4" categories="Data!A2:A4" /><Series values="Data!C2:C4" categories="Data!A2:A4" /><Series values="Data!D2:D4" categories="Data!A2:A4" /><Series values="Data!E2:E4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "upBarTransparency requires Chart.upBarColor",
+        ))
+        .stderr(predicate::str::contains("add the fill color"));
 }
 
 #[test]

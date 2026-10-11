@@ -100,7 +100,7 @@ export default <Workbook>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Low" />
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Close" />
     </Chart>
-    <Chart type="stock" cell="K200" width={480} height={288} xAxisTitle="Date" yAxisTitle="Price" upBarColor="#00AA00" downBarColor="#CC0000">
+    <Chart type="stock" cell="K200" width={480} height={288} xAxisTitle="Date" yAxisTitle="Price" upBarColor="#00AA00" upBarTransparency={25} upBarLineColor="#112233" upBarLineWidth={1.5} upBarLineDash="dashDot" upBarLineTransparency={10} downBarColor="#CC0000" downBarTransparency={40}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Open" />
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="High" />
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Low" />

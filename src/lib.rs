@@ -1931,6 +1931,18 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "movement",
             "upBarColor",
             "downBarColor",
+            "upBarTransparency",
+            "downBarTransparency",
+            "upBarLineColor",
+            "upBarLineWidth",
+            "upBarLineDash",
+            "upBarLineTransparency",
+            "upBarLineHidden",
+            "downBarLineColor",
+            "downBarLineWidth",
+            "downBarLineDash",
+            "downBarLineTransparency",
+            "downBarLineHidden",
             "title",
             "titleFillColor",
             "titleFillTransparency",
@@ -2193,9 +2205,26 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
 }
 
 fn validate_stock_up_down_bar_formats(chart: &Node, chart_type: &str) -> Result<()> {
-    let has_colors =
-        chart.props.contains_key("upBarColor") || chart.props.contains_key("downBarColor");
-    if !has_colors {
+    let properties = [
+        "upBarColor",
+        "downBarColor",
+        "upBarTransparency",
+        "downBarTransparency",
+        "upBarLineColor",
+        "upBarLineWidth",
+        "upBarLineDash",
+        "upBarLineTransparency",
+        "upBarLineHidden",
+        "downBarLineColor",
+        "downBarLineWidth",
+        "downBarLineDash",
+        "downBarLineTransparency",
+        "downBarLineHidden",
+    ];
+    if !properties
+        .iter()
+        .any(|property| chart.props.contains_key(*property))
+    {
         return Ok(());
     }
     if chart_type != "stock" {
@@ -2216,6 +2245,50 @@ fn validate_stock_up_down_bar_formats(chart: &Node, chart_type: &str) -> Result<
     for property in ["upBarColor", "downBarColor"] {
         if let Some(value) = chart.props.get(property) {
             validate_rgb_color(value, &format!("Chart.{property}"), 0, 0)?;
+        }
+    }
+    for (transparency, color) in [
+        ("upBarTransparency", "upBarColor"),
+        ("downBarTransparency", "downBarColor"),
+    ] {
+        if let Some(value) = chart.props.get(transparency) {
+            if value.as_u64().is_none_or(|value| value > 100) {
+                return Err(Error::Compile(format!(
+                    "Chart.{transparency} must be an integer percentage from 0 through 100"
+                )));
+            }
+            if !chart.props.contains_key(color) {
+                return Err(Error::Compile(format!(
+                    "Chart.{transparency} requires Chart.{color}; add the fill color or remove transparency"
+                )));
+            }
+        }
+    }
+    validate_chart_area_shape_formats(chart)?;
+    for prefix in ["upBarLine", "downBarLine"] {
+        let hidden = format!("{prefix}Hidden");
+        if chart
+            .props
+            .get(&hidden)
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(Error::Compile(format!("Chart.{hidden} must be a boolean")));
+        }
+        let color = format!("{prefix}Color");
+        let transparency = format!("{prefix}Transparency");
+        let dash = format!("{prefix}Dash");
+        if chart.props.get(&hidden).and_then(Value::as_bool) == Some(true)
+            && (chart.props.contains_key(&color)
+                || chart.props.contains_key(&transparency)
+                || chart
+                    .props
+                    .get(&dash)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value != "solid"))
+        {
+            return Err(Error::Compile(format!(
+                "Chart.{hidden}=true cannot be combined with line color, transparency, or a non-solid dash; remove those properties or show the outline"
+            )));
         }
     }
     Ok(())
@@ -3252,7 +3325,7 @@ fn validate_chart_legend_line_style(chart: &Node) -> Result<()> {
 }
 
 fn validate_chart_area_shape_formats(chart: &Node) -> Result<()> {
-    for prefix in ["chartAreaLine", "plotAreaLine"] {
+    for prefix in ["chartAreaLine", "plotAreaLine", "upBarLine", "downBarLine"] {
         let properties =
             ["Color", "Width", "Dash", "Transparency"].map(|suffix| format!("{prefix}{suffix}"));
         let [color_key, width_key, dash_key, transparency_key] = properties.as_slice() else {
