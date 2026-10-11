@@ -174,8 +174,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `showLegendKeys` are booleans. Omission uses the pinned writer defaults
   (horizontal/vertical/outline on, legend keys off). Reverse preserves the
   four OOXML display flags, treating an omitted flag element as false.
-  `fillColor` accepts an opaque RGB color and applies a solid data-table shape
-  fill through `ChartDataTable::set_format()`. Other shape properties (including
+  `fillColor` accepts an RGB color and applies a solid data-table shape fill
+  through `ChartDataTable::set_format()`. Optional `fillTransparency` is an
+  integer percentage from 0 (opaque) through 100 (fully transparent) and
+  requires `fillColor`; reverse preserves solid RGB alpha only when it is
+  representable in whole percentages. Other shape properties (including
   borders, patterns, and gradients) remain rejected.
   `fontSize` (1–4000 points), `fontBold`, `fontItalic`, `fontUnderline`,
   `fontColor` (opaque `#RRGGBB`), and `fontName` (1–255 XML-safe characters)

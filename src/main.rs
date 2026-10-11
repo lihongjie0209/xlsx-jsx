@@ -1022,9 +1022,17 @@ fn compile_chart(
                 data_table = data_table.show_legend_keys(value);
             }
             if let Some(color) = child.props.get("fillColor").and_then(Value::as_str) {
-                data_table = data_table.set_format(
-                    ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)),
-                );
+                let mut fill = ChartSolidFill::new();
+                fill.set_color(color);
+                if let Some(transparency) = child
+                    .props
+                    .get("fillTransparency")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| u8::try_from(value).ok())
+                {
+                    fill.set_transparency(transparency);
+                }
+                data_table = data_table.set_format(ChartFormat::new().set_solid_fill(&fill));
             }
             if [
                 "fontSize",
@@ -5533,6 +5541,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         }
         if let Some(color) = &table.fill_color {
             let _ = write!(output, " fillColor={color:?}");
+        }
+        if let Some(transparency) = table.fill_transparency {
+            let _ = write!(output, " fillTransparency={{{transparency}}}");
         }
         output.push_str(" />\n");
     }
@@ -10049,7 +10060,10 @@ fn parse_chart_xml(
                 let data_table_shape_content = stack.iter().any(|ancestor| ancestor == "dTable")
                     && ((tag == "spPr" && stack.last().is_some_and(|parent| parent == "dTable"))
                         || (stack.iter().any(|ancestor| ancestor == "spPr")
-                            && matches!(tag.as_str(), "solidFill" | "srgbClr")));
+                            && matches!(tag.as_str(), "solidFill" | "srgbClr"))
+                        || (tag == "alpha"
+                            && stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|ancestor| ancestor == "spPr")));
                 if stack.iter().any(|ancestor| ancestor == "dTable")
                     && !matches!(
                         tag.as_str(),
@@ -10059,7 +10073,7 @@ fn parse_chart_xml(
                     && !data_table_shape_content
                 {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported `<{tag}>` data-table formatting; keep the four display flags, one opaque RGB solid fill, and supported font properties, and remove borders or extensions"
+                        "chart part `{part}` has unsupported `<{tag}>` data-table formatting; keep the four display flags, one RGB solid fill with representable transparency, and supported font properties, and remove borders or extensions"
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "marker")
@@ -13543,6 +13557,39 @@ fn parse_chart_xml(
                         if table.fill_color.replace(format!("#{color}")).is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats a data-table RGB fill; retain one opaque solid fill"
+                            )));
+                        }
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|ancestor| ancestor == "dTable")
+                            && stack.iter().any(|ancestor| ancestor == "spPr") =>
+                    {
+                        let alpha = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "alpha",
+                        )?
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|alpha| *alpha <= 100_000 && alpha % 1000 == 0)
+                        .ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has data-table fill alpha not exactly representable by whole-percent transparency; use increments of 1%"
+                        )))?;
+                        let transparency = u8::try_from(100 - alpha / 1000).map_err(|error| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has invalid data-table fill alpha: {error}"
+                            ))
+                        })?;
+                        let table = data_table.as_mut().ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has data-table fill transparency without a dTable"
+                            ))
+                        })?;
+                        if table.fill_transparency.replace(transparency).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats data-table fill transparency; keep one alpha value"
                             )));
                         }
                     }
@@ -19315,6 +19362,7 @@ struct WorksheetChartDataTable {
     font_color: Option<String>,
     font_name: Option<String>,
     fill_color: Option<String>,
+    fill_transparency: Option<u8>,
 }
 
 #[derive(Clone)]

@@ -1117,8 +1117,10 @@
             "fontUnderline": { "type": "boolean" },
             "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
-            "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
+            "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "fillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 }
           },
+          "dependentRequired": { "fillTransparency": ["fillColor"] },
           "additionalProperties": false
         },
         "children": { "type": "array", "maxItems": 0 }

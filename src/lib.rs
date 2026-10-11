@@ -3731,6 +3731,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     "fontColor",
                     "fontName",
                     "fillColor",
+                    "fillTransparency",
                 ],
                 "ChartDataTable",
             )?;
@@ -3750,7 +3751,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     )));
                 }
             }
-            validate_chart_data_table_font(&child)?;
+            validate_chart_data_table_properties(&child)?;
             continue;
         }
         if child.r#type != "Series" {
@@ -3883,13 +3884,25 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
     Ok(())
 }
 
-fn validate_chart_data_table_font(data_table: &Node) -> Result<()> {
+fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
     if let Some(value) = data_table.props.get("fillColor")
         && !value.as_str().is_some_and(is_opaque_rgb_color)
     {
         return Err(Error::Compile(
             "ChartDataTable.fillColor must be an opaque RGB color like #336699".into(),
         ));
+    }
+    if let Some(value) = data_table.props.get("fillTransparency") {
+        if value.as_u64().is_none_or(|transparency| transparency > 100) {
+            return Err(Error::Compile(
+                "ChartDataTable.fillTransparency must be an integer from 0 through 100; use a whole percentage".into(),
+            ));
+        }
+        if !data_table.props.contains_key("fillColor") {
+            return Err(Error::Compile(
+                "ChartDataTable.fillTransparency requires fillColor; add fillColor or remove fill transparency".into(),
+            ));
+        }
     }
     if let Some(value) = data_table.props.get("fontSize") {
         let Some(size) = value.as_f64().filter(|size| size.is_finite()) else {

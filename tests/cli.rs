@@ -432,7 +432,8 @@ fn spec_exposes_chart_data_table_font_properties() {
         .stdout(predicate::str::contains("fontSize"))
         .stdout(predicate::str::contains("fontColor"))
         .stdout(predicate::str::contains("fontName"))
-        .stdout(predicate::str::contains("fillColor"));
+        .stdout(predicate::str::contains("fillColor"))
+        .stdout(predicate::str::contains("fillTransparency"));
 }
 
 #[test]
@@ -3424,7 +3425,13 @@ fn reverses_external_chart_data_table_without_a_manifest() {
                 .set_color("#336699")
                 .set_name("Arial"),
         )
-        .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color("#F0E0D0")));
+        .set_format(
+            ChartFormat::new().set_solid_fill(
+                ChartSolidFill::new()
+                    .set_color("#F0E0D0")
+                    .set_transparency(35),
+            ),
+        );
     chart.set_data_table(&data_table);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
@@ -3439,7 +3446,7 @@ fn reverses_external_chart_data_table_without_a_manifest() {
         .success();
     let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
     assert!(source.contains(
-        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} fontSize={11} fontBold={true} fontItalic={true} fontUnderline={true} fontColor=\"#336699\" fontName=\"Arial\" fillColor=\"#F0E0D0\" />"
+        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} fontSize={11} fontBold={true} fontItalic={true} fontUnderline={true} fontColor=\"#336699\" fontName=\"Arial\" fillColor=\"#F0E0D0\" fillTransparency={35} />"
     ));
 
     let rebuilt_path = directory.path().join("rebuilt-chart-data-table.xlsx");
@@ -3458,11 +3465,40 @@ fn reverses_external_chart_data_table_without_a_manifest() {
     assert!(!chart_xml.contains("<c:showOutline"));
     assert!(chart_xml.contains("<c:showKeys val=\"1\"/>"));
     assert!(
-        chart_xml
-            .contains("<c:spPr><a:solidFill><a:srgbClr val=\"F0E0D0\"/></a:solidFill></c:spPr>"),
+        chart_xml.contains("<c:spPr><a:solidFill><a:srgbClr val=\"F0E0D0\"><a:alpha val=\"65000\"/></a:srgbClr></a:solidFill></c:spPr>"),
         "{chart_xml}"
     );
     assert!(chart_xml.contains("<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"1100\" b=\"1\" i=\"1\" u=\"sng\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill><a:latin typeface=\"Arial\"/></a:defRPr></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p></c:txPr>"), "{chart_xml}");
+
+    let rebuilt_source_path = directory.path().join("rebuilt-chart-data-table.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(&rebuilt_source_path)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(&rebuilt_source_path).expect("rebuilt source exists"),
+        source
+    );
+
+    let inexact_alpha = directory.path().join("inexact-data-table-alpha.xlsx");
+    std::fs::copy(&workbook_path, &inexact_alpha).expect("external package is copied");
+    rewrite_part(&inexact_alpha, "xl/charts/chart1.xml", |xml| {
+        xml.replacen("<a:alpha val=\"65000\"/>", "<a:alpha val=\"65001\"/>", 1)
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&inexact_alpha)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "data-table fill alpha not exactly representable by whole-percent transparency",
+        ))
+        .stderr(predicate::str::contains("use increments of 1%"));
 }
 
 #[test]
@@ -3500,6 +3536,27 @@ fn rejects_invalid_chart_data_table_fill_color_with_guidance() {
         .stderr(predicate::str::contains(
             "ChartDataTable.fillColor must be an opaque RGB color like #336699",
         ));
+}
+
+#[test]
+fn rejects_chart_data_table_fill_transparency_without_color_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("missing-data-table-fill-color.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ChartDataTable } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /><ChartDataTable fillTransparency={35} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ChartDataTable.fillTransparency requires fillColor",
+        ))
+        .stderr(predicate::str::contains("add fillColor"));
 }
 
 #[test]
