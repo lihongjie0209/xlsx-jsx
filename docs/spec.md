@@ -250,11 +250,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   left/right value axes to Y. Only a single rich-text run is supported.
   Formula titles are rejected. `xAxisTitleFontSize`, `xAxisTitleFontBold`,
   `xAxisTitleFontItalic`, `xAxisTitleFontUnderline`, `xAxisTitleFontColor`,
-  and `xAxisTitleFontName` (with matching `yAxisTitleFont*` properties)
+  `xAxisTitleFontName`, `xAxisTitleFontPitchFamily`,
+  `xAxisTitleFontCharset`, and `xAxisTitleFontRotation` (with matching
+  `yAxisTitleFont*` properties)
   preserve explicit run properties. Sizes are points (1–4000), colors are
-  opaque `#RRGGBB`, and names are non-empty XML-safe Latin typefaces. Font
-  properties require their matching axis title; other run formatting remains
-  rejected.
+  opaque `#RRGGBB`, names are non-empty XML-safe Latin typefaces, pitch-family
+  metadata is 0–255, and charset is 0–127 because larger values are schema
+  invalid. Rotation is an integer from -90–90 or 270/271 for stacked/East Asian
+  vertical text. Font properties require their matching axis title; other run
+  formatting remains rejected.
 - `Chart.xAxisNumberFormat?: string` and `Chart.yAxisNumberFormat?: string`
   set Excel number-format codes on the corresponding category/date and value
   axes. Each is a non-empty, XML-safe format code of at most 255 characters;

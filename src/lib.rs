@@ -1900,12 +1900,18 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "xAxisTitleFontUnderline",
             "xAxisTitleFontColor",
             "xAxisTitleFontName",
+            "xAxisTitleFontPitchFamily",
+            "xAxisTitleFontCharset",
+            "xAxisTitleFontRotation",
             "yAxisTitleFontSize",
             "yAxisTitleFontBold",
             "yAxisTitleFontItalic",
             "yAxisTitleFontUnderline",
             "yAxisTitleFontColor",
             "yAxisTitleFontName",
+            "yAxisTitleFontPitchFamily",
+            "yAxisTitleFontCharset",
+            "yAxisTitleFontRotation",
             "xAxisNumberFormat",
             "yAxisNumberFormat",
             "xAxisMajorUnit",
@@ -2347,7 +2353,17 @@ fn validate_chart_axis_title_fonts(chart: &Node) -> Result<()> {
     for axis in ["x", "y"] {
         let title = format!("{axis}AxisTitle");
         let prefix = format!("{title}Font");
-        for suffix in ["Size", "Bold", "Italic", "Underline", "Color", "Name"] {
+        for suffix in [
+            "Size",
+            "Bold",
+            "Italic",
+            "Underline",
+            "Color",
+            "Name",
+            "PitchFamily",
+            "Charset",
+            "Rotation",
+        ] {
             let property = format!("{prefix}{suffix}");
             let Some(value) = chart.props.get(&property) else {
                 continue;
@@ -2401,6 +2417,25 @@ fn validate_chart_axis_title_fonts(chart: &Node) -> Result<()> {
                             "Chart.{property} must contain 1–255 valid XML characters"
                         )));
                     }
+                }
+                "PitchFamily" if value.as_u64().is_none_or(|number| number > 255) => {
+                    return Err(Error::Compile(format!(
+                        "Chart.{property} must be an integer from 0 to 255"
+                    )));
+                }
+                "Charset" if value.as_u64().is_none_or(|number| number > 127) => {
+                    return Err(Error::Compile(format!(
+                        "Chart.{property} must be an integer from 0 to 127 because larger charset values produce schema-invalid OOXML"
+                    )));
+                }
+                "Rotation"
+                    if value.as_i64().is_none_or(|rotation| {
+                        !(-90..=90).contains(&rotation) && !matches!(rotation, 270 | 271)
+                    }) =>
+                {
+                    return Err(Error::Compile(format!(
+                        "Chart.{property} must be an integer from -90 through 90, or 270/271 for vertical text"
+                    )));
                 }
                 _ => {}
             }

@@ -237,6 +237,9 @@ fn spec_exposes_chart_axis_title_font_properties() {
         .success()
         .stdout(predicate::str::contains("xAxisTitleFontSize"))
         .stdout(predicate::str::contains("xAxisTitleFontBold"))
+        .stdout(predicate::str::contains("xAxisTitleFontPitchFamily"))
+        .stdout(predicate::str::contains("xAxisTitleFontCharset"))
+        .stdout(predicate::str::contains("xAxisTitleFontRotation"))
         .stdout(predicate::str::contains("yAxisTitleFontColor"))
         .stdout(predicate::str::contains("yAxisTitleFontName"));
 }
@@ -4515,7 +4518,10 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
             .set_size(14.0)
             .set_bold()
             .set_color("#336699")
-            .set_name("Aptos"),
+            .set_name("Aptos")
+            .set_pitch_family(34)
+            .set_character_set(127)
+            .set_rotation(45),
     );
     chart.y_axis().set_name_font(
         ChartFont::new()
@@ -4545,6 +4551,12 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
         "{source}"
     );
     assert!(source.contains("xAxisTitleFontName=\"Aptos\""), "{source}");
+    assert!(
+        source.contains("xAxisTitleFontPitchFamily={34}"),
+        "{source}"
+    );
+    assert!(source.contains("xAxisTitleFontCharset={127}"), "{source}");
+    assert!(source.contains("xAxisTitleFontRotation={45}"), "{source}");
     assert!(source.contains("yAxisTitleFontItalic={true}"), "{source}");
     assert!(
         source.contains("yAxisTitleFontUnderline={true}"),
@@ -4571,6 +4583,8 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     assert!(xml.contains("val=\"993366\""), "{xml}");
     assert!(xml.contains("Aptos"), "{xml}");
     assert!(xml.contains("sz=\"1400\" b=\"1\""), "{xml}");
+    assert!(xml.contains("pitchFamily=\"34\" charset=\"127\""), "{xml}");
+    assert!(xml.contains("rot=\"2700000\""), "{xml}");
     assert!(xml.contains("sz=\"1200\" i=\"1\" u=\"sng\""), "{xml}");
 }
 
@@ -4591,6 +4605,46 @@ fn rejects_axis_title_font_without_matching_title_with_repair_guidance() {
         .failure()
         .stderr(predicate::str::contains(
             "Chart.xAxisTitleFontBold requires Chart.xAxisTitle",
+        ));
+}
+
+#[test]
+fn rejects_schema_invalid_axis_title_charset_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-title-font-charset.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisTitle="X" xAxisTitleFontCharset={128}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitleFontCharset must be an integer from 0 to 127",
+        ));
+}
+
+#[test]
+fn rejects_unsupported_axis_title_rotation_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-title-font-rotation.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisTitle="X" xAxisTitleFontRotation={91}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitleFontRotation must be an integer from -90 through 90, or 270/271",
         ));
 }
 

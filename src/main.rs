@@ -1184,17 +1184,48 @@ fn chart_axis_title_font(component: &Node, axis: &str) -> ChartFont {
     {
         font.set_name(name);
     }
+    if let Some(family) = component
+        .props
+        .get(&property("PitchFamily"))
+        .and_then(Value::as_u64)
+    {
+        font.set_pitch_family(u8::try_from(family).expect("validated axis title pitch family"));
+    }
+    if let Some(charset) = component
+        .props
+        .get(&property("Charset"))
+        .and_then(Value::as_u64)
+    {
+        font.set_character_set(u8::try_from(charset).expect("validated axis title charset"));
+    }
+    if let Some(rotation) = component
+        .props
+        .get(&property("Rotation"))
+        .and_then(Value::as_i64)
+    {
+        font.set_rotation(i16::try_from(rotation).expect("validated axis title rotation"));
+    }
     font
 }
 
 fn has_chart_axis_title_font(component: &Node, axis: &str) -> bool {
-    ["Size", "Bold", "Italic", "Underline", "Color", "Name"]
-        .iter()
-        .any(|suffix| {
-            component
-                .props
-                .contains_key(&format!("{axis}AxisTitleFont{suffix}"))
-        })
+    [
+        "Size",
+        "Bold",
+        "Italic",
+        "Underline",
+        "Color",
+        "Name",
+        "PitchFamily",
+        "Charset",
+        "Rotation",
+    ]
+    .iter()
+    .any(|suffix| {
+        component
+            .props
+            .contains_key(&format!("{axis}AxisTitleFont{suffix}"))
+    })
 }
 
 fn configure_chart_series_spacing(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
@@ -5655,7 +5686,7 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
 }
 
 fn append_chart_axis_title_font_properties(properties: &mut String, chart: &WorksheetChart) {
-    for (axis, size, bold, italic, underline, color, name) in [
+    for (axis, size, bold, italic, underline, color, name, family, charset, rotation) in [
         (
             "x",
             chart.x_axis_title_font_size,
@@ -5664,6 +5695,9 @@ fn append_chart_axis_title_font_properties(properties: &mut String, chart: &Work
             chart.x_axis_title_font_underline,
             chart.x_axis_title_font_color.as_deref(),
             chart.x_axis_title_font_name.as_deref(),
+            chart.x_axis_title_font_pitch_family,
+            chart.x_axis_title_font_charset,
+            chart.x_axis_title_font_rotation,
         ),
         (
             "y",
@@ -5673,6 +5707,9 @@ fn append_chart_axis_title_font_properties(properties: &mut String, chart: &Work
             chart.y_axis_title_font_underline,
             chart.y_axis_title_font_color.as_deref(),
             chart.y_axis_title_font_name.as_deref(),
+            chart.y_axis_title_font_pitch_family,
+            chart.y_axis_title_font_charset,
+            chart.y_axis_title_font_rotation,
         ),
     ] {
         let prefix = format!("{axis}AxisTitleFont");
@@ -5693,6 +5730,15 @@ fn append_chart_axis_title_font_properties(properties: &mut String, chart: &Work
         }
         if let Some(value) = name {
             let _ = write!(properties, " {prefix}Name={value:?}");
+        }
+        if let Some(value) = family {
+            let _ = write!(properties, " {prefix}PitchFamily={{{value}}}");
+        }
+        if let Some(value) = charset {
+            let _ = write!(properties, " {prefix}Charset={{{value}}}");
+        }
+        if let Some(value) = rotation {
+            let _ = write!(properties, " {prefix}Rotation={{{value}}}");
         }
     }
 }
@@ -8682,6 +8728,14 @@ fn parse_chart_xml(
     let mut y_axis_title_font_color: Option<String> = None;
     let mut x_axis_title_font_name: Option<String> = None;
     let mut y_axis_title_font_name: Option<String> = None;
+    let mut x_axis_title_font_pitch_family: Option<u8> = None;
+    let mut y_axis_title_font_pitch_family: Option<u8> = None;
+    let mut x_axis_title_font_charset: Option<u8> = None;
+    let mut y_axis_title_font_charset: Option<u8> = None;
+    let mut x_axis_title_font_rotation: Option<i16> = None;
+    let mut y_axis_title_font_rotation: Option<i16> = None;
+    let mut x_axis_title_font_latin_seen = false;
+    let mut y_axis_title_font_latin_seen = false;
     let mut x_axis_number_format: Option<String> = None;
     let mut y_axis_number_format: Option<String> = None;
     let mut x_axis_number_format_seen = false;
@@ -8844,44 +8898,39 @@ fn parse_chart_xml(
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
                 if tag == "bodyPr"
-                    && chart_title_target == Some("title")
+                    && chart_title_target.is_some()
                     && stack.iter().any(|ancestor| ancestor == "title")
                 {
                     let raw_rotation = chart_xml_attribute(&event, "rot", reader.decoder())?;
                     let vertical = chart_xml_attribute(&event, "vert", reader.decoder())?;
-                    let parsed_rotation = match (raw_rotation.as_deref(), vertical.as_deref()) {
-                        (None, None | Some("horz")) => None,
-                        (Some("0"), Some("wordArtVert")) => Some(270),
-                        (Some("0"), Some("eaVert")) => Some(271),
-                        (Some(rotation), None | Some("horz")) => {
-                            let rotation = rotation.parse::<i32>().map_err(|_| {
-                                Error::Reverse(format!(
-                                    "chart part `{part}` has invalid chart-title rotation `{rotation}`; use a whole degree from -90 to 90 or the writer's stacked vertical modes"
-                                ))
-                            })?;
-                            if rotation % 60_000 != 0
-                                || !(-5_400_000..=5_400_000).contains(&rotation)
-                            {
-                                return Err(Error::Reverse(format!(
-                                    "chart part `{part}` has chart-title rotation `{rotation}` that is not an exact writer-supported degree; use -90 through 90 degrees"
-                                )));
-                            }
-                            Some(rotation / 60_000)
-                        }
-                        _ => {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has an unsupported chart-title bodyPr rot/vert combination; use horizontal integer-degree rotation or a supported vertical mode"
-                            )));
-                        }
-                    }
-                    .map(|rotation| i16::try_from(rotation).expect("rotation range fits i16"));
+                    let description = match chart_title_target {
+                        Some("title") => "chart-title",
+                        Some("xAxisTitle") => "X-axis-title",
+                        Some("yAxisTitle") => "Y-axis-title",
+                        _ => unreachable!(),
+                    };
+                    let parsed_rotation = parse_chart_text_rotation(
+                        raw_rotation.as_deref(),
+                        vertical.as_deref(),
+                        part,
+                        description,
+                    )?;
                     if let Some(rotation) = parsed_rotation {
-                        if title_font_rotation.is_some_and(|previous| previous != rotation) {
+                        let target = match chart_title_target {
+                            Some("title") => &mut title_font_rotation,
+                            Some("xAxisTitle") => &mut x_axis_title_font_rotation,
+                            Some("yAxisTitle") if rotation != -90 => {
+                                &mut y_axis_title_font_rotation
+                            }
+                            Some("yAxisTitle") => continue,
+                            _ => unreachable!(),
+                        };
+                        if target.is_some_and(|previous| previous != rotation) {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has inconsistent chart-title rotations; make all title bodyPr values identical"
+                                "chart part `{part}` has inconsistent {description} rotations; make all title bodyPr values identical"
                             )));
                         }
-                        title_font_rotation = Some(rotation);
+                        *target = Some(rotation);
                     }
                 }
                 if tag == "bodyPr"
@@ -12487,13 +12536,29 @@ fn parse_chart_xml(
                             Some("yAxisTitle") => &mut y_axis_title_font_name,
                             _ => unreachable!(),
                         };
+                        let (target_family, target_charset, latin_seen) = match chart_title_target {
+                            Some("title") => (
+                                &mut title_font_pitch_family,
+                                &mut title_font_charset,
+                                &mut title_font_latin_seen,
+                            ),
+                            Some("xAxisTitle") => (
+                                &mut x_axis_title_font_pitch_family,
+                                &mut x_axis_title_font_charset,
+                                &mut x_axis_title_font_latin_seen,
+                            ),
+                            Some("yAxisTitle") => (
+                                &mut y_axis_title_font_pitch_family,
+                                &mut y_axis_title_font_charset,
+                                &mut y_axis_title_font_latin_seen,
+                            ),
+                            _ => unreachable!(),
+                        };
                         if target_name
                             .as_ref()
                             .is_some_and(|previous| Some(previous) != name.as_ref())
-                            || (chart_title_target == Some("title")
-                                && title_font_latin_seen
-                                && (title_font_pitch_family != pitch_family
-                                    || title_font_charset != charset))
+                            || (*latin_seen
+                                && (*target_family != pitch_family || *target_charset != charset))
                         {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has inconsistent default/run title typeface metadata; make them identical"
@@ -12502,15 +12567,9 @@ fn parse_chart_xml(
                         if let Some(name) = name {
                             *target_name = Some(name);
                         }
-                        if chart_title_target == Some("title") {
-                            title_font_pitch_family = pitch_family;
-                            title_font_charset = charset;
-                            title_font_latin_seen = true;
-                        } else if pitch_family.is_some() || charset.is_some() {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has unsupported axis-title pitch/charset metadata; remove it because the axis-title DSL models Latin typeface names only"
-                            )));
-                        }
+                        *target_family = pitch_family;
+                        *target_charset = charset;
+                        *latin_seen = true;
                     }
                     "latin"
                         if stack.iter().any(|ancestor| ancestor == "txPr")
@@ -13948,12 +14007,18 @@ fn parse_chart_xml(
         x_axis_title_font_underline,
         x_axis_title_font_color,
         x_axis_title_font_name,
+        x_axis_title_font_pitch_family,
+        x_axis_title_font_charset,
+        x_axis_title_font_rotation,
         y_axis_title_font_size,
         y_axis_title_font_bold,
         y_axis_title_font_italic,
         y_axis_title_font_underline,
         y_axis_title_font_color,
         y_axis_title_font_name,
+        y_axis_title_font_pitch_family,
+        y_axis_title_font_charset,
+        y_axis_title_font_rotation,
         title_overlay,
         chart_area_fill_color,
         plot_area_fill_color,
@@ -14673,6 +14738,18 @@ fn audit_chart_attributes(
                 ("vert", "horz" | "wordArtVert" | "eaVert") => true,
                 _ => false,
             };
+        let is_supported_chart_axis_title_body_attribute =
+            matches!(chart_title_target, Some("xAxisTitle" | "yAxisTitle"))
+                && tag == "bodyPr"
+                && stack.iter().any(|ancestor| ancestor == "title")
+                && match (key.as_str(), value.as_str()) {
+                    ("rot", value) => value.parse::<i32>().is_ok_and(|rotation| {
+                        (-5_400_000..=5_400_000).contains(&rotation)
+                            && (rotation == 0 || rotation % 60_000 == 0)
+                    }),
+                    ("vert", "horz" | "wordArtVert" | "eaVert") => true,
+                    _ => false,
+                };
         let is_series_data_label_font_context = stack.iter().any(|ancestor| ancestor == "ser")
             && stack.iter().any(|ancestor| ancestor == "dLbls")
             && stack.iter().any(|ancestor| ancestor == "txPr");
@@ -14727,7 +14804,11 @@ fn audit_chart_attributes(
                     _ => false,
                 }
             } else if tag == "latin" {
-                key == "typeface" && !value.is_empty() && value.chars().all(is_valid_xml_character)
+                match key.as_str() {
+                    "typeface" => !value.is_empty() && value.chars().all(is_valid_xml_character),
+                    "pitchFamily" | "charset" => value.parse::<u8>().is_ok(),
+                    _ => false,
+                }
             } else if tag == "endParaRPr" {
                 key == "lang" && value == "en-US"
             } else {
@@ -14770,7 +14851,11 @@ fn audit_chart_attributes(
                     _ => false,
                 }
             } else if tag == "latin" {
-                key == "typeface" && !value.is_empty() && value.chars().all(is_valid_xml_character)
+                match key.as_str() {
+                    "typeface" => !value.is_empty() && value.chars().all(is_valid_xml_character),
+                    "pitchFamily" | "charset" => value.parse::<u8>().is_ok(),
+                    _ => false,
+                }
             } else {
                 false
             };
@@ -14785,6 +14870,7 @@ fn audit_chart_attributes(
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
             && !is_supported_chart_title_body_attribute
+            && !is_supported_chart_axis_title_body_attribute
             && !is_supported_chart_label_font_attribute
             && !is_supported_chart_label_body_attribute
             && !is_supported_chart_label_end_para_attribute
@@ -17901,12 +17987,18 @@ struct WorksheetChart {
     x_axis_title_font_underline: Option<bool>,
     x_axis_title_font_color: Option<String>,
     x_axis_title_font_name: Option<String>,
+    x_axis_title_font_pitch_family: Option<u8>,
+    x_axis_title_font_charset: Option<u8>,
+    x_axis_title_font_rotation: Option<i16>,
     y_axis_title_font_size: Option<f64>,
     y_axis_title_font_bold: Option<bool>,
     y_axis_title_font_italic: Option<bool>,
     y_axis_title_font_underline: Option<bool>,
     y_axis_title_font_color: Option<String>,
     y_axis_title_font_name: Option<String>,
+    y_axis_title_font_pitch_family: Option<u8>,
+    y_axis_title_font_charset: Option<u8>,
+    y_axis_title_font_rotation: Option<i16>,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     plot_area_fill_color: Option<String>,
