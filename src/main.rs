@@ -692,6 +692,10 @@ fn compile_note(
     if let Some(value) = component.props.get("altText").and_then(Value::as_str) {
         compiled_note = compiled_note.set_alt_text(value);
     }
+    if component.props.get("movement").and_then(Value::as_str) == Some("moveAndSizeAfter") {
+        compiled_note =
+            compiled_note.set_object_movement(ObjectMovement::MoveAndSizeWithCellsAfter);
+    }
     worksheet
         .insert_note(row, column, &compiled_note)
         .map(|_| ())
@@ -4648,6 +4652,9 @@ fn render_notes(output: &mut String, notes: &[WorksheetNote]) {
         if note.font_name != "Tahoma" {
             let _ = write!(output, " fontName={{{:?}}}", note.font_name);
         }
+        if note.movement == Some("moveAndSizeAfter") {
+            output.push_str(" movement=\"moveAndSizeAfter\"");
+        }
         if (note.font_size - 8.0).abs() > f64::EPSILON {
             let _ = write!(output, " fontSize={{{}}}", note.font_size);
         }
@@ -6650,7 +6657,7 @@ fn audit_reverse_subset(
                 )));
             }
             if !metadata.notes.is_empty() {
-                validate_recompiled_note_geometry(&metadata, &name)?;
+                validate_recompiled_note_geometry(&mut metadata, &name)?;
             }
             let sheet_name = names_by_target.get(name.as_str()).ok_or_else(|| {
                 Error::Reverse(format!(
@@ -14034,6 +14041,7 @@ fn parse_comments_xml(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetNo
             font_size,
             font_family,
             alt_text: String::new(),
+            movement: None,
             vml_margin_left_points: None,
             vml_margin_top_points: None,
             vml_z_index: None,
@@ -14744,10 +14752,11 @@ fn match_comments_and_vml(
     }).collect()
 }
 
-fn validate_recompiled_note_geometry(
+fn generate_recompiled_note_shapes(
     metadata: &WorksheetMetadata,
     worksheet_part: &str,
-) -> xlsx_jsx::Result<()> {
+    movement_after_cells: &std::collections::HashSet<String>,
+) -> xlsx_jsx::Result<HashMap<String, ParsedVmlNote>> {
     let mut workbook = Workbook::new();
     let worksheet = workbook.add_worksheet();
     if let Some(height) = metadata.default_row_height_pixels {
@@ -14795,6 +14804,11 @@ fn validate_recompiled_note_geometry(
             .set_font_size(note.font_size)
             .set_font_family(note.font_family)
             .set_alt_text(note.alt_text.clone());
+        let writer_note = if movement_after_cells.contains(&note.cell) {
+            writer_note.set_object_movement(ObjectMovement::MoveAndSizeWithCellsAfter)
+        } else {
+            writer_note
+        };
         worksheet
             .insert_note(row, column, &writer_note)
             .map_err(|error| Error::Reverse(error.to_string()))?;
@@ -14807,30 +14821,57 @@ fn validate_recompiled_note_geometry(
     })?;
     let vml_xml = read_zip_part(&mut archive, "xl/drawings/vmlDrawing1.vml")?;
     let generated = parse_vml_notes(&vml_xml, "generated VML note drawing")?;
-    let mut generated_by_cell = generated
+    Ok(generated
         .into_iter()
         .map(|shape| (shape.cell.clone(), shape))
-        .collect::<HashMap<_, _>>();
-    for note in &metadata.notes {
-        let shape = generated_by_cell.remove(&note.cell).ok_or_else(|| {
-            Error::Reverse(format!(
-                "worksheet `{worksheet_part}` note `{}` could not be reproduced by rust_xlsxwriter; retain standard note geometry or add matching DSL support",
-                note.cell
-            ))
-        })?;
-        let left_matches = note
-            .vml_margin_left_points
-            .is_some_and(|expected| (expected - shape.margin_left_points).abs() < 1e-8);
-        let top_matches = note
+        .collect())
+}
+
+fn note_geometry_matches(note: &WorksheetNote, shape: &ParsedVmlNote) -> bool {
+    note.vml_margin_left_points
+        .is_some_and(|expected| (expected - shape.margin_left_points).abs() < 1e-8)
+        && note
             .vml_margin_top_points
-            .is_some_and(|expected| (expected - shape.margin_top_points).abs() < 1e-8);
-        if !left_matches
-            || !top_matches
-            || note.vml_z_index != Some(shape.z_index)
-            || note.vml_anchor.as_deref() != Some(shape.anchor.as_slice())
+            .is_some_and(|expected| (expected - shape.margin_top_points).abs() < 1e-8)
+        && note.vml_z_index == Some(shape.z_index)
+        && note.vml_anchor.as_deref() == Some(shape.anchor.as_slice())
+}
+
+fn validate_recompiled_note_geometry(
+    metadata: &mut WorksheetMetadata,
+    worksheet_part: &str,
+) -> xlsx_jsx::Result<()> {
+    let no_overrides = std::collections::HashSet::new();
+    let standard_shapes = generate_recompiled_note_shapes(metadata, worksheet_part, &no_overrides)?;
+    let needs_after = metadata
+        .notes
+        .iter()
+        .filter(|note| {
+            standard_shapes
+                .get(&note.cell)
+                .is_none_or(|shape| !note_geometry_matches(note, shape))
+        })
+        .map(|note| note.cell.clone())
+        .collect::<std::collections::HashSet<_>>();
+    let after_shapes = if needs_after.is_empty() {
+        HashMap::new()
+    } else {
+        generate_recompiled_note_shapes(metadata, worksheet_part, &needs_after)?
+    };
+    for note in &mut metadata.notes {
+        if let Some(shape) = standard_shapes.get(&note.cell)
+            && note_geometry_matches(note, shape)
         {
+            continue;
+        }
+        if after_shapes
+            .get(&note.cell)
+            .is_some_and(|shape| note_geometry_matches(note, shape))
+        {
+            note.movement = Some("moveAndSizeAfter");
+        } else {
             return Err(Error::Reverse(format!(
-                "worksheet `{worksheet_part}` note `{}` has VML positioning that the DSL cannot reproduce from its row/column layout; preserve the original row/column geometry or extend Note with matching positioning support",
+                "worksheet `{worksheet_part}` note `{}` has VML positioning that cannot be reproduced by the standard or moveAndSizeAfter note movement; preserve the original row/column geometry or use a supported note anchor",
                 note.cell
             )));
         }
@@ -15865,6 +15906,7 @@ struct WorksheetNote {
     font_size: f64,
     font_family: u8,
     alt_text: String,
+    movement: Option<&'static str>,
     vml_margin_left_points: Option<f64>,
     vml_margin_top_points: Option<f64>,
     vml_z_index: Option<u32>,

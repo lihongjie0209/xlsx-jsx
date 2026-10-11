@@ -37,6 +37,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("fontFamily"))
         .stdout(predicate::str::contains("altText"))
         .stdout(predicate::str::contains("\"const\": \"Note\""))
+        .stdout(predicate::str::contains("moveAndSizeAfter"))
         .stdout(predicate::str::contains("underline"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
@@ -8571,7 +8572,7 @@ fn external_note_with_unmodeled_rich_text_is_rejected_with_repair() {
 }
 
 #[test]
-fn external_note_with_unrepresentable_hidden_row_position_is_rejected() {
+fn external_note_after_movement_round_trips_hidden_row_position() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("moved-note.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
@@ -8582,15 +8583,65 @@ fn external_note_with_unrepresentable_hidden_row_position_is_rejected() {
     worksheet.insert_note(1, 1, &note).expect("note inserts");
     workbook.save(&input).expect("workbook writes");
 
-    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
-    command
+    let reversed = directory.path().join("moved-note.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
         .args(["reverse"])
         .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("VML positioning"))
-        .stderr(predicate::str::contains("row/column layout"))
-        .stderr(predicate::str::contains("suggestion:"));
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("movement=\"moveAndSizeAfter\""), "{source}");
+
+    let rebuilt = directory.path().join("moved-note-roundtrip.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second = directory.path().join("moved-note-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&second)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(second).expect("second reverse exists"),
+        source
+    );
+}
+
+#[test]
+fn external_note_after_movement_reverses_hidden_column_position() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("hidden-column-note.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.set_column_hidden(1).expect("column hides");
+    let note = rust_xlsxwriter::Note::new("Hidden-column note")
+        .set_object_movement(rust_xlsxwriter::ObjectMovement::MoveAndSizeWithCellsAfter);
+    worksheet.insert_note(0, 2, &note).expect("note inserts");
+    workbook.save(&input).expect("workbook writes");
+
+    let reversed = directory.path().join("hidden-column-note.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("movement=\"moveAndSizeAfter\""), "{source}");
 }
 
 #[test]

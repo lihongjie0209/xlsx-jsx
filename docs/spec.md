@@ -711,9 +711,14 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   text, and integer-pixel dimensions. It verifies the VML anchor and offsets by
   regenerating the note with the worksheet's recovered row/column layout;
   positioning that cannot be reproduced is rejected with repair guidance.
-  Rich-text note runs beyond the standard author-prefix form, non-note VML
-  shapes, and `Note::set_object_movement()` cases that change the serialized
-  position are not silently flattened.
+  `movement="moveAndSizeAfter"` maps to
+  `Note::set_object_movement(ObjectMovement::MoveAndSizeWithCellsAfter)`, which
+  includes hidden rows/columns when calculating the note anchor. Reverse emits
+  this property only when the VML anchor proves that behavior; otherwise it
+  uses the standard writer movement. The writer serializes the same VML
+  `MoveWithCells`/`SizeWithCells` markers for the other movement enum values,
+  so those values are not separate reversible DSL states. Rich-text note runs
+  beyond the standard author-prefix form and non-note VML shapes are rejected.
 - `autoFilterColumns?: { column: integer, values?: string[], includeBlanks?:
   boolean, customFilters?: { logic: "and" | "or", conditions: { operator?:
   string, value: string }[] } }[]` adds criteria to columns within that range.

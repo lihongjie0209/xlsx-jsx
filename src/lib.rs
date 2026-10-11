@@ -4511,6 +4511,7 @@ fn validate_note(
             "fontSize",
             "fontFamily",
             "altText",
+            "movement",
         ],
         "Note",
     )?;
@@ -4622,6 +4623,15 @@ fn validate_note(
     {
         return Err(Error::Compile(format!(
             "Note.altText for {canonical_cell} must be a string of at most 255 characters"
+        )));
+    }
+    if note
+        .props
+        .get("movement")
+        .is_some_and(|value| value.as_str() != Some("moveAndSizeAfter"))
+    {
+        return Err(Error::Compile(format!(
+            "Note.movement for {canonical_cell} supports only `moveAndSizeAfter`; this is the only Note movement variant that changes the pinned writer's serialized anchor calculation"
         )));
     }
     Ok(())
@@ -7986,7 +7996,7 @@ mod tests {
             vec![
                 serde_json::json!({
                     "type":"Note",
-                    "props":{"cell":"B3","text":"Review","author":"Ada","authorPrefix":false,"visible":true,"width":200,"height":100,"backgroundColor":"#AABBCC","fontName":"Arial","fontSize":9.5,"fontFamily":2,"altText":"Review note"},
+                    "props":{"cell":"B3","text":"Review","author":"Ada","authorPrefix":false,"visible":true,"width":200,"height":100,"backgroundColor":"#AABBCC","fontName":"Arial","fontSize":9.5,"fontFamily":2,"altText":"Review note","movement":"moveAndSizeAfter"},
                     "children":[]
                 }),
                 serde_json::json!({"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["value"]}]}),
@@ -8007,6 +8017,23 @@ mod tests {
         let error = input.validate().expect_err("zero dimensions are invalid");
         assert!(error.to_string().contains("Note.width"));
         assert!(error.to_string().contains("positive 32-bit integer"));
+    }
+
+    #[test]
+    fn rejects_note_movement_values_that_do_not_change_serialized_anchor_semantics() {
+        let input = workbook(vec![worksheet(
+            "Notes",
+            vec![serde_json::json!({
+                "type":"Note",
+                "props":{"cell":"A1","text":"Review","movement":"fixed"},
+                "children":[]
+            })],
+        )]);
+        let error = input
+            .validate()
+            .expect_err("unsupported writer movement variants are not reversible");
+        assert!(error.to_string().contains("Note.movement"));
+        assert!(error.to_string().contains("moveAndSizeAfter"));
     }
 
     #[test]
