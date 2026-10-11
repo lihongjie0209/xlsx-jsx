@@ -1945,6 +1945,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleOverlay",
             "chartAreaFillColor",
             "plotAreaFillColor",
+            "plotAreaLayout",
             "legendOverlay",
             "legendDeletedEntries",
             "legendPosition",
@@ -2050,6 +2051,26 @@ fn validate_chart_visual_properties(chart: &Node, chart_type: &str) -> Result<()
             return Err(Error::Compile(format!(
                 "Chart.{property} must match `#RRGGBB`; use exactly six hexadecimal digits after `#`"
             )));
+        }
+    }
+    if let Some(layout) = chart.props.get("plotAreaLayout") {
+        let Some(layout) = layout.as_object() else {
+            return Err(Error::Compile("Chart.plotAreaLayout must be an object with x, y, width, and height fractions; provide all four values".into()));
+        };
+        let expected = ["x", "y", "width", "height"];
+        if layout.len() != expected.len() || expected.iter().any(|key| !layout.contains_key(*key)) {
+            return Err(Error::Compile("Chart.plotAreaLayout requires exactly x, y, width, and height; provide all four fractions and remove extra keys".into()));
+        }
+        for key in expected {
+            if !layout
+                .get(key)
+                .and_then(Value::as_f64)
+                .is_some_and(|value| value.is_finite() && value > 0.0 && value <= 1.0)
+            {
+                return Err(Error::Compile(format!(
+                    "Chart.plotAreaLayout.{key} must be a finite fraction in (0, 1]; use a positive relative chart dimension, not pixels or a percentage"
+                )));
+            }
         }
     }
     validate_chart_crossings(chart, chart_type)
@@ -8014,7 +8035,8 @@ mod tests {
                     "type":"column",
                     "cell":"D2",
                     "chartAreaFillColor":"#F1F2F3",
-                    "plotAreaFillColor":"#A1B2C3"
+                    "plotAreaFillColor":"#A1B2C3",
+                    "plotAreaLayout":{"x":0.2,"y":0.3,"width":0.7,"height":0.5}
                 },
                 "children":[{
                     "type":"Series",

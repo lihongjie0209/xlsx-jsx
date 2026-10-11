@@ -106,6 +106,9 @@ export default <Workbook>
     <Chart type="column" cell="D218" width={480} height={288} yAxisLogBase={10} yAxisMin={1}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue (log scale)" />
     </Chart>
+    <Chart type="column" cell="K218" plotAreaLayout={{x: 0.2, y: 0.3, width: 0.7, height: 0.5}}>
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Manually positioned plot area" />
+    </Chart>
   </Worksheet>
   <Worksheet name="Timeline">
     <Chart type="line" cell="D2" title="Monthly revenue" categoryAxisType="date" categoryAxisMajorTimeUnit="months" categoryAxisMinorTimeUnit="days" categoryAxisMinDate="2026-01-01" categoryAxisMaxDate="2026-03-01">

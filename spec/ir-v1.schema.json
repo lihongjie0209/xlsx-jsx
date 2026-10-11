@@ -549,6 +549,17 @@
             "titleOverlay": { "type": "boolean" },
             "chartAreaFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "plotAreaFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "plotAreaLayout": {
+              "type": "object",
+              "required": ["x", "y", "width", "height"],
+              "properties": {
+                "x": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                "y": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                "width": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                "height": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+              },
+              "additionalProperties": false
+            },
             "legendOverlay": { "type": "boolean" },
             "legendDeletedEntries": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0, "maximum": 1048575 } },
             "legendPosition": { "enum": ["right", "left", "top", "bottom", "topRight"] },

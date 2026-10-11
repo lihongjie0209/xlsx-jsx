@@ -14,9 +14,9 @@ use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisDateUnitType, ChartAxisDisplayUnitType,
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartFormat, ChartLegendPosition, ChartLine,
-    ChartLineDashType, ChartMarker, ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline,
-    ChartTrendlineType, ChartType, Color, ConditionalFormat2ColorScale,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartFormat, ChartLayout, ChartLegendPosition,
+    ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartPoint, ChartSolidFill,
+    ChartTrendline, ChartTrendlineType, ChartType, Color, ConditionalFormat2ColorScale,
     ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
     ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
     ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
@@ -728,6 +728,14 @@ fn compile_chart(
         chart
             .chart_area()
             .set_format(ChartFormat::new().set_solid_fill(ChartSolidFill::new().set_color(color)));
+    }
+    if let Some(layout) = component.props.get("plotAreaLayout") {
+        let fraction = |key: &str| layout[key].as_f64().expect("validated plotAreaLayout");
+        chart.plot_area().set_layout(
+            &ChartLayout::new()
+                .set_offset(fraction("x"), fraction("y"))
+                .set_dimensions(fraction("width"), fraction("height")),
+        );
     }
     if let Some(color) = component
         .props
@@ -4702,7 +4710,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
         chart.cell,
         chart.width,
@@ -4750,7 +4758,13 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .plot_area_fill_color
             .as_ref()
             .map(|value| format!(" plotAreaFillColor={value:?}"))
-            .unwrap_or_default()
+            .unwrap_or_default(),
+        chart
+            .plot_area_layout
+            .map(|[x, y, width, height]| {
+                format!(" plotAreaLayout={{{{x: {x}, y: {y}, width: {width}, height: {height}}}}}")
+            })
+            .unwrap_or_default(),
     );
     for (series_index, series) in chart.series.iter().enumerate() {
         output.push_str("      <Series");
@@ -7906,6 +7920,16 @@ fn parse_chart_xml(
         "showOutline",
         "showKeys",
         "layout",
+        "manualLayout",
+        "layoutTarget",
+        "xMode",
+        "yMode",
+        "wMode",
+        "hMode",
+        "x",
+        "y",
+        "w",
+        "h",
         "areaChart",
         "barChart",
         "barDir",
@@ -8187,6 +8211,14 @@ fn parse_chart_xml(
     let mut chart_style_seen = false;
     let mut chart_area_fill_color: Option<String> = None;
     let mut plot_area_fill_color: Option<String> = None;
+    let mut plot_area_layout: Option<[f64; 4]> = None;
+    let mut manual_plot_layout_seen = false;
+    let mut plot_layout_target_inner = false;
+    let mut plot_layout_target_seen = false;
+    let mut plot_layout_horizontal_edge = false;
+    let mut plot_layout_vertical_edge = false;
+    let mut plot_layout_modes_seen = [false; 2];
+    let mut plot_layout_values = [None; 4];
     let mut chart_area_sppr_seen = false;
     let mut plot_area_sppr_seen = false;
     let mut chart_area_fill_seen = false;
@@ -8431,6 +8463,93 @@ fn parse_chart_xml(
                     )));
                 }
                 match tag.as_str() {
+                    "manualLayout"
+                        if stack.last().is_some_and(|parent| parent == "layout")
+                            && stack
+                                .iter()
+                                .rev()
+                                .nth(1)
+                                .is_some_and(|parent| parent == "plotArea") =>
+                    {
+                        if manual_plot_layout_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats the plot-area manual layout; retain one layout"
+                            )));
+                        }
+                        manual_plot_layout_seen = true;
+                    }
+                    "manualLayout" => {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a manual layout outside the directly supported plot area; remove custom title, legend, or axis positioning, or use Chart.plotAreaLayout"
+                        )));
+                    }
+                    "layoutTarget"
+                        if manual_plot_layout_seen
+                            && stack.iter().any(|ancestor| ancestor == "manualLayout") =>
+                    {
+                        if std::mem::replace(&mut plot_layout_target_seen, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats plot-area layoutTarget; retain exactly one inner target"
+                            )));
+                        }
+                        plot_layout_target_inner = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "layoutTarget",
+                        )? == "inner";
+                    }
+                    "xMode" | "yMode"
+                        if manual_plot_layout_seen
+                            && stack.iter().any(|ancestor| ancestor == "manualLayout") =>
+                    {
+                        let value =
+                            chart_element_val_attribute(&event, part, reader.decoder(), &tag)?;
+                        let index = usize::from(tag == "yMode");
+                        if std::mem::replace(&mut plot_layout_modes_seen[index], true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats plot-area {tag}; retain one edge mode"
+                            )));
+                        }
+                        if tag == "xMode" {
+                            plot_layout_horizontal_edge = value == "edge";
+                        } else {
+                            plot_layout_vertical_edge = value == "edge";
+                        }
+                    }
+                    "wMode" | "hMode"
+                        if manual_plot_layout_seen
+                            && stack.iter().any(|ancestor| ancestor == "manualLayout") =>
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` uses {tag} in plot-area layout; remove width/height mode overrides because only the writer's default fractional dimensions are represented"
+                        )));
+                    }
+                    "x" | "y" | "w" | "h"
+                        if manual_plot_layout_seen
+                            && stack.iter().any(|ancestor| ancestor == "manualLayout") =>
+                    {
+                        let index = match tag.as_str() {
+                            "x" => 0,
+                            "y" => 1,
+                            "w" => 2,
+                            _ => 3,
+                        };
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), &tag)?;
+                        let value = raw.parse::<f64>().ok().filter(|value| value.is_finite() && *value > 0.0 && *value <= 1.0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has invalid plot-area layout {tag} `{raw}`; use a finite relative fraction in (0, 1]")))?;
+                        if plot_layout_values[index].replace(value).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats plot-area layout {tag}; keep exactly one value"
+                            )));
+                        }
+                    }
+                    "layoutTarget" | "xMode" | "yMode" | "wMode" | "hMode" | "x" | "y" | "w"
+                    | "h" => {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has {tag} outside the supported plot-area manualLayout; repair the layout structure"
+                        )));
+                    }
                     "trendline" => {
                         if stack.last().is_none_or(|parent| parent != "ser") {
                             return Err(Error::Reverse(format!(
@@ -11478,6 +11597,22 @@ fn parse_chart_xml(
             }
             Ok(Event::End(event)) => {
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if tag == "manualLayout" && manual_plot_layout_seen {
+                    if !plot_layout_target_inner
+                        || !plot_layout_horizontal_edge
+                        || !plot_layout_vertical_edge
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a plot-area layout with unsupported target or position modes; use layoutTarget=inner and xMode/yMode=edge"
+                        )));
+                    }
+                    let [Some(x), Some(y), Some(width), Some(height)] = plot_layout_values else {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an incomplete plot-area layout; include x, y, w, and h values"
+                        )));
+                    };
+                    plot_area_layout = Some([x, y, width, height]);
+                }
                 if tag == "ext"
                     && c16r3_extension_seen
                     && stack.iter().any(|ancestor| ancestor == "chart")
@@ -12110,6 +12245,7 @@ fn parse_chart_xml(
         title_overlay,
         chart_area_fill_color,
         plot_area_fill_color,
+        plot_area_layout,
         category_axis_type,
         category_axis_major_time_unit,
         category_axis_minor_time_unit,
@@ -13053,6 +13189,11 @@ fn is_supported_chart_attribute(
         ("srgbClr", "val") => {
             value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
         }
+        ("layoutTarget", "val") => value == "inner",
+        ("xMode" | "yMode", "val") => value == "edge",
+        ("x" | "y" | "w" | "h", "val") => value
+            .parse::<f64>()
+            .is_ok_and(|number| number.is_finite() && number > 0.0 && number <= 1.0),
         ("alpha", "val") => value.parse::<u32>().is_ok_and(|alpha| alpha <= 100_000),
         ("prstDash", "val") => matches!(
             value,
@@ -15836,6 +15977,7 @@ struct WorksheetChart {
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     plot_area_fill_color: Option<String>,
+    plot_area_layout: Option<[f64; 4]>,
     category_axis_type: Option<&'static str>,
     category_axis_major_time_unit: Option<&'static str>,
     category_axis_minor_time_unit: Option<&'static str>,

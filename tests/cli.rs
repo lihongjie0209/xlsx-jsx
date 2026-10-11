@@ -756,6 +756,87 @@ fn reverses_external_chart_and_plot_area_rgb_fills_without_a_manifest() {
 }
 
 #[test]
+fn reverses_external_plot_area_manual_layout_and_rebuilds_it() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("plot-area-layout.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_string(0, 0, "Quarter").unwrap();
+    worksheet.write_string(1, 0, "Q1").unwrap();
+    worksheet.write_string(2, 0, "Q2").unwrap();
+    worksheet.write_number(1, 1, 10).unwrap();
+    worksheet.write_number(2, 1, 20).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3");
+    chart.plot_area().set_layout(
+        &rust_xlsxwriter::ChartLayout::new()
+            .set_offset(0.2, 0.3)
+            .set_dimensions(0.7, 0.5),
+    );
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    let reversed = directory.path().join("plot-area-layout.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(
+        source.contains("plotAreaLayout={{x: 0.2, y: 0.3, width: 0.7, height: 0.5}}"),
+        "{source}"
+    );
+
+    let rebuilt = directory.path().join("plot-area-layout-roundtrip.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second = directory.path().join("plot-area-layout-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(rebuilt)
+        .args(["-o"])
+        .arg(&second)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read_to_string(second).unwrap(), source);
+}
+
+#[test]
+fn validates_plot_area_layout_requires_complete_fractional_dimensions() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-plot-area-layout.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" plotAreaLayout={{x: 0.2, y: 0.3, width: 1.2}}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "plotAreaLayout requires exactly x, y, width, and height",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
 fn rejects_invalid_chart_area_fill_color_with_repair_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-chart-area-fill.tsx");

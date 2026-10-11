@@ -174,6 +174,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   chart-space and plot-area fills without a manifest. Pattern/gradient fills,
   transparency, theme/indexed colors, no-fill overrides, and area borders are
   not represented and are rejected rather than discarded.
+- `Chart.plotAreaLayout?: { x, y, width, height }` manually positions the plot
+  area using finite relative fractions in `(0, 1]` of the chart width/height.
+  All four values are required together; coordinates are fractions, not pixels
+  or percentages (for example `x: 0.2`). The writer emits an inner layout with
+  edge positioning. Reverse preserves only that exact OOXML layout form and
+  rejects factor modes, outer layouts, missing values, and extra layout data.
 - `Chart.autoTitleDeleted?: boolean` controls Excel's automatic chart title when
   a chart has a single named series. Omission/false allows Excel to show its
   default automatic title; true suppresses it via `ChartTitle::set_hidden()`.
