@@ -946,6 +946,24 @@ fn configure_chart_category_axis_settings(
     configure_chart_axis_tick_types(chart, component)?;
     configure_chart_axis_label_positions(chart, component)?;
     configure_chart_category_axis_label_alignment(chart, component)?;
+    if component
+        .props
+        .get("categoryAxisOnTickMarks")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        let category_axis = if component
+            .props
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|chart_type| chart_type.starts_with("bar"))
+        {
+            chart.y_axis()
+        } else {
+            chart.x_axis()
+        };
+        category_axis.set_position_between_ticks(false);
+    }
     configure_chart_axis_hidden(chart, component);
     Ok(())
 }
@@ -3876,6 +3894,9 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if let Some(value) = chart.category_axis_label_alignment {
         let _ = write!(properties, " categoryAxisLabelAlignment=\"{value}\"");
     }
+    if chart.category_axis_on_tick_marks == Some(true) {
+        properties.push_str(" categoryAxisOnTickMarks={true}");
+    }
     if chart.horizontal_axis_hidden == Some(true) {
         properties.push_str(" horizontalAxisHidden={true}");
     }
@@ -6796,6 +6817,8 @@ fn parse_chart_xml(
     let mut vertical_axis_label_position_seen = false;
     let mut category_axis_label_alignment: Option<&'static str> = None;
     let mut category_axis_label_alignment_seen = false;
+    let mut category_axis_on_tick_marks = false;
+    let mut category_axis_position_seen = false;
     let mut horizontal_axis_hidden = false;
     let mut vertical_axis_hidden = false;
     let mut horizontal_axis_hidden_seen = false;
@@ -7138,6 +7161,68 @@ fn parse_chart_xml(
                         category_axis_label_alignment_seen = true;
                         if alignment != "center" {
                             category_axis_label_alignment = Some(alignment);
+                        }
+                    }
+                    "crossBetween" => {
+                        let Some(chart_type) = chart_type else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has crossBetween before its chart type; retain a supported column, bar, or line chart"
+                            )));
+                        };
+                        if !stack.iter().any(|ancestor| ancestor == "valAx") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has crossBetween outside a value axis; repair the chart axis structure"
+                            )));
+                        }
+                        let configurable = matches!(
+                            chart_type,
+                            "column"
+                                | "columnStacked"
+                                | "columnPercentStacked"
+                                | "bar"
+                                | "barStacked"
+                                | "barPercentStacked"
+                                | "line"
+                                | "lineStacked"
+                                | "linePercentStacked"
+                        );
+                        if configurable && category_axis_position_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats crossBetween for its primary value axis; retain one axis position declaration"
+                            )));
+                        }
+                        category_axis_position_seen |= configurable;
+                        let raw_value = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            });
+                        let writer_default = if matches!(
+                            chart_type,
+                            "area" | "areaStacked" | "areaPercentStacked" | "scatter"
+                        ) {
+                            "midCat"
+                        } else {
+                            "between"
+                        };
+                        match raw_value.as_deref() {
+                            Some(value) if value == writer_default && !configurable => {}
+                            Some("between") if configurable => {}
+                            Some("midCat") if configurable => category_axis_on_tick_marks = true,
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported crossBetween; use between or midCat on the primary value axis"
+                                )));
+                            }
                         }
                     }
                     "legend" => {
@@ -8248,6 +8333,7 @@ fn parse_chart_xml(
         horizontal_axis_label_position,
         vertical_axis_label_position,
         category_axis_label_alignment,
+        category_axis_on_tick_marks: category_axis_on_tick_marks.then_some(true),
         horizontal_axis_hidden: horizontal_axis_hidden.then_some(true),
         vertical_axis_hidden: vertical_axis_hidden.then_some(true),
         y_axis_major_unit,
@@ -8877,10 +8963,7 @@ fn is_supported_chart_attribute(
         ("symbol", "val") => value == "none",
         ("lblAlgn", "val") => matches!(value, "ctr" | "l" | "r"),
         ("lblOffset", "val") => value == "100",
-        ("crossBetween", "val") => match chart_type {
-            Some("area" | "areaStacked" | "areaPercentStacked" | "scatter") => value == "midCat",
-            _ => value == "between",
-        },
+        ("crossBetween", "val") => matches!(value, "between" | "midCat"),
         ("numFmt", "formatCode") => {
             !value.is_empty()
                 && value.chars().count() <= 255
@@ -11414,6 +11497,7 @@ struct WorksheetChart {
     horizontal_axis_label_position: Option<&'static str>,
     vertical_axis_label_position: Option<&'static str>,
     category_axis_label_alignment: Option<&'static str>,
+    category_axis_on_tick_marks: Option<bool>,
     horizontal_axis_hidden: Option<bool>,
     vertical_axis_hidden: Option<bool>,
     show_legend: bool,

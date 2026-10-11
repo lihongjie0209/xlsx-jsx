@@ -182,6 +182,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `l` and `r`. This property applies to category-axis charts, including bars;
   scatter and pie/doughnut charts reject it because they have no category axis.
   Reverse rejects label alignment on unsupported axis structures.
+- `Chart.categoryAxisOnTickMarks?: boolean` sets a category axis to cross at
+  category tick marks when `true`; omission or `false` keeps the writer's
+  default “between tick marks” position. It applies only to column, bar, and
+  line charts. Reverse reads `crossBetween=midCat` from the primary value axis
+  and maps it back to the logical category axis (including the swapped axes in
+  bar charts); writer-default `crossBetween=between` is omitted. Other values
+  or ambiguous/secondary axis structures are rejected rather than discarded.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed

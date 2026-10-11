@@ -142,6 +142,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("horizontalAxisLabelPosition"))
         .stdout(predicate::str::contains("verticalAxisLabelPosition"))
         .stdout(predicate::str::contains("categoryAxisLabelAlignment"))
+        .stdout(predicate::str::contains("categoryAxisOnTickMarks"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1207,6 +1208,58 @@ fn reverses_external_category_axis_label_alignment_without_a_manifest() {
 }
 
 #[test]
+fn reverses_external_category_axis_tick_position_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-category-axis-position.xlsx");
+    let output_path = directory.path().join("external-category-axis-position.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+
+    let mut column = XlsxChart::new(ChartType::Column);
+    column
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    column.x_axis().set_position_between_ticks(false);
+    worksheet.insert_chart(0, 5, &column).unwrap();
+
+    let mut bar = XlsxChart::new(ChartType::Bar);
+    bar.add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    bar.y_axis().set_position_between_ticks(false);
+    worksheet.insert_chart(18, 5, &bar).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert_eq!(source.matches("categoryAxisOnTickMarks={true}").count(), 2);
+
+    let rebuilt_path = directory.path().join("rebuilt-category-axis-position.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let column_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    let bar_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    assert!(column_xml.contains("<c:crossBetween val=\"midCat\"/>"));
+    assert!(bar_xml.contains("<c:crossBetween val=\"midCat\"/>"));
+}
+
+#[test]
 fn reverses_external_hidden_chart_axes_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("external-hidden-chart-axes.xlsx");
@@ -1320,6 +1373,29 @@ fn rejects_invalid_category_axis_label_alignment_with_guidance() {
             "Chart.categoryAxisLabelAlignment must be center, left, or right",
         ))
         .stderr(predicate::str::contains("choose one of these alignments"));
+}
+
+#[test]
+fn rejects_category_axis_tick_position_on_value_axis_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scatter-category-axis-position.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" categoryAxisOnTickMarks={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "categoryAxisOnTickMarks is supported only for column, bar, and line charts",
+        ))
+        .stderr(predicate::str::contains(
+            "omit it or use one of those chart types",
+        ));
 }
 
 #[test]

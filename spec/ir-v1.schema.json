@@ -512,6 +512,7 @@
             "horizontalAxisLabelPosition": { "enum": ["nextTo", "high", "low", "none"] },
             "verticalAxisLabelPosition": { "enum": ["nextTo", "high", "low", "none"] },
             "categoryAxisLabelAlignment": { "enum": ["center", "left", "right"] },
+            "categoryAxisOnTickMarks": { "type": "boolean" },
             "horizontalAxisHidden": { "type": "boolean" },
             "verticalAxisHidden": { "type": "boolean" },
             "yAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
@@ -557,6 +558,7 @@
                     { "required": ["horizontalAxisLabelPosition"] },
                     { "required": ["verticalAxisLabelPosition"] },
                     { "required": ["categoryAxisLabelAlignment"] },
+                    { "required": ["categoryAxisOnTickMarks"] },
                     { "required": ["horizontalAxisHidden"] },
                     { "required": ["verticalAxisHidden"] },
                     { "required": ["yAxisMajorUnit"] },
@@ -575,7 +577,7 @@
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },
           "then": {
             "properties": {
-              "props": { "not": { "required": ["categoryAxisLabelAlignment"] } }
+              "props": { "not": { "anyOf": [{ "required": ["categoryAxisLabelAlignment"] }, { "required": ["categoryAxisOnTickMarks"] }] } }
             }
           }
         },

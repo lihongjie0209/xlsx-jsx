@@ -1911,6 +1911,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "horizontalAxisLabelPosition",
             "verticalAxisLabelPosition",
             "categoryAxisLabelAlignment",
+            "categoryAxisOnTickMarks",
             "horizontalAxisHidden",
             "verticalAxisHidden",
             "showLegend",
@@ -2014,6 +2015,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_tick_types(chart, chart_type)?;
     validate_chart_axis_label_positions(chart, chart_type)?;
     validate_chart_category_axis_label_alignment(chart, chart_type)?;
+    validate_chart_category_axis_tick_position(chart, chart_type)?;
     validate_chart_axis_hidden(chart, chart_type)?;
     validate_chart_axis_units(chart, chart_type)?;
     validate_chart_gridlines(chart, chart_type)?;
@@ -2229,6 +2231,34 @@ fn validate_chart_category_axis_label_alignment(chart: &Node, chart_type: &str) 
     {
         return Err(Error::Compile(
             "Chart.categoryAxisLabelAlignment must be center, left, or right; remove the property or choose one of these alignments".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_chart_category_axis_tick_position(chart: &Node, chart_type: &str) -> Result<()> {
+    let Some(value) = chart.props.get("categoryAxisOnTickMarks") else {
+        return Ok(());
+    };
+    if !matches!(
+        chart_type,
+        "column"
+            | "columnStacked"
+            | "columnPercentStacked"
+            | "bar"
+            | "barStacked"
+            | "barPercentStacked"
+            | "line"
+            | "lineStacked"
+            | "linePercentStacked"
+    ) {
+        return Err(Error::Compile(
+            "Chart.categoryAxisOnTickMarks is supported only for column, bar, and line charts; omit it or use one of those chart types".into(),
+        ));
+    }
+    if !value.is_boolean() {
+        return Err(Error::Compile(
+            "Chart.categoryAxisOnTickMarks must be a boolean; use true to position the category axis on tick marks".into(),
         ));
     }
     Ok(())
