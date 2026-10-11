@@ -240,6 +240,17 @@ fn spec_exposes_chart_data_label_font_properties() {
 }
 
 #[test]
+fn spec_exposes_trendline_equation_flags() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("displayEquation"))
+        .stdout(predicate::str::contains("displayRSquared"));
+}
+
+#[test]
 fn spec_exposes_chart_title_font_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -1409,7 +1420,6 @@ fn reverses_external_stock_chart_without_a_manifest() {
     chart.set_high_low_lines(true).set_drop_lines(true);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
-
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["reverse"])
@@ -3648,16 +3658,19 @@ fn reverses_external_chart_trendline_parameters_and_rebuilds_them() {
 }
 
 #[test]
-fn rejects_unsupported_trendline_equation_label_with_guidance() {
+fn reverses_external_trendline_equation_and_r_squared_flags() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("trendline-equation.xlsx");
+    let source_path = directory.path().join("trendline-equation.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-trendline-equation.xlsx");
     let mut workbook = XlsxWorkbook::new();
     let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
     let mut chart = XlsxChart::new(ChartType::Line);
     let mut trendline = ChartTrendline::new();
     trendline
         .set_type(ChartTrendlineType::Linear)
-        .display_equation(true);
+        .display_equation(true)
+        .display_r_squared(true);
     chart
         .add_series()
         .set_categories("Data!A2:A5")
@@ -3665,17 +3678,88 @@ fn rejects_unsupported_trendline_equation_label_with_guidance() {
         .set_trendline(&trendline);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
-
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["reverse"])
         .arg(workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(
+        source.contains(
+            "<Trendline type=\"linear\" displayEquation={true} displayRSquared={true} />"
+        ),
+        "{source}"
+    );
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:dispRSqr val=\"1\"/><c:dispEq val=\"1\"/>"));
+}
+
+#[test]
+fn rejects_non_boolean_trendline_equation_flags_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-trendline-equation-flag.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, Trendline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><Trendline type="linear" displayEquation="yes" /></Series></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "unsupported `<dispEq>` trendline formatting",
+            "Trendline.displayEquation must be a boolean",
         ))
-        .stderr(predicate::str::contains("numeric parameters"));
+        .stderr(predicate::str::contains("use true to display the label"));
+}
+
+#[test]
+fn rejects_custom_external_trendline_equation_number_formats() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("custom-trendline-label.tsx");
+    let workbook = directory.path().join("custom-trendline-label.xlsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, Trendline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><Trendline type="linear" displayEquation={true} /></Series></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
+        xml.replace("formatCode=\"General\"", "formatCode=\"0.00\"")
+    });
+    let reversed = directory.path().join("custom-trendline-label-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook)
+        .args(["-o"])
+        .arg(reversed)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "custom trendline equation number format",
+        ))
+        .stderr(predicate::str::contains("General format"));
 }
 
 #[test]

@@ -1059,7 +1059,9 @@
             "forward": { "type": "number", "minimum": 0 },
             "backward": { "type": "number", "minimum": 0 },
             "intercept": { "type": "number" },
-            "deleteFromLegend": { "type": "boolean" }
+            "deleteFromLegend": { "type": "boolean" },
+            "displayEquation": { "type": "boolean" },
+            "displayRSquared": { "type": "boolean" }
           },
           "additionalProperties": false
         },

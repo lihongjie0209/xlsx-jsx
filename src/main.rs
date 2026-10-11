@@ -1328,6 +1328,22 @@ fn configure_chart_series_trendline(
     {
         settings.delete_from_legend(true);
     }
+    if trendline
+        .props
+        .get("displayEquation")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        settings.display_equation(true);
+    }
+    if trendline
+        .props
+        .get("displayRSquared")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        settings.display_r_squared(true);
+    }
     chart_series.set_trendline(&settings);
 }
 
@@ -5093,6 +5109,12 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 }
                 if trendline.delete_from_legend {
                     output.push_str(" deleteFromLegend={true}");
+                }
+                if trendline.display_equation == Some(true) {
+                    output.push_str(" displayEquation={true}");
+                }
+                if trendline.display_r_squared == Some(true) {
+                    output.push_str(" displayRSquared={true}");
                 }
                 output.push_str(" />\n");
             }
@@ -8964,18 +8986,23 @@ fn parse_chart_xml(
                         "chart part `{part}` has unsupported `<{tag}>` point formatting; retain only opaque RGB solid fills"
                     )));
                 }
-                if stack.iter().any(|ancestor| ancestor == "trendline")
-                    && !matches!(
+                let supported_trendline_content =
+                    matches!(
                         tag.as_str(),
                         "trendlineType" | "order" | "period" | "forward" | "backward" | "intercept"
-                    )
+                    ) || (matches!(tag.as_str(), "dispEq" | "dispRSqr" | "trendlineLbl")
+                        && stack.last().is_some_and(|parent| parent == "trendline"))
+                        || (matches!(tag.as_str(), "layout" | "numFmt")
+                            && stack.last().is_some_and(|parent| parent == "trendlineLbl"));
+                if stack.iter().any(|ancestor| ancestor == "trendline")
+                    && !supported_trendline_content
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has unsupported `<{tag}>` trendline formatting; retain only the trendline model and numeric parameters"
                     )));
                 }
                 if matches!(tag.as_str(), "dispEq" | "dispRSqr" | "trendlineLbl")
-                    && !stack.iter().any(|ancestor| ancestor == "trendline")
+                    && stack.last().is_none_or(|parent| parent != "trendline")
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has {tag} outside a trendline; repair the trendline structure"
@@ -9171,6 +9198,58 @@ fn parse_chart_xml(
                         if trendline.trend_type.replace(trend_type).is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats trendlineType; retain one model per trendline"
+                            )));
+                        }
+                    }
+                    "dispEq" | "dispRSqr" => {
+                        if stack.last().is_none_or(|parent| parent != "trendline") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} outside a trendline; repair the trendline structure"
+                            )));
+                        }
+                        let value =
+                            chart_element_val_attribute(&event, part, reader.decoder(), &tag)?;
+                        let enabled = parse_xml_bool(&value, part, &tag)?;
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has {tag} without a series trendline; attach it to a supported Series"
+                            )))?;
+                        let target = if tag == "dispEq" {
+                            &mut trendline.display_equation
+                        } else {
+                            &mut trendline.display_r_squared
+                        };
+                        if target.replace(enabled).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats {tag}; retain one trendline display flag"
+                            )));
+                        }
+                    }
+                    "trendlineLbl" => {
+                        if stack.last().is_none_or(|parent| parent != "trendline") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a misplaced trendlineLbl; keep it directly inside trendline"
+                            )));
+                        }
+                        let trendline = series
+                            .last_mut()
+                            .and_then(|item| item.trendline.as_mut())
+                            .expect("trendline label has a series trendline");
+                        if trendline.trendline_label_seen
+                            || trendline.display_equation != Some(true)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a trendline label without one enabled dispEq flag; keep only the writer's equation label"
+                            )));
+                        }
+                        trendline.trendline_label_seen = true;
+                    }
+                    "layout" if stack.last().is_some_and(|parent| parent == "trendlineLbl") => {
+                        if !is_empty {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a custom trendline equation layout; remove manual placement to use the writer's default label position"
                             )));
                         }
                     }
@@ -10406,7 +10485,30 @@ fn parse_chart_xml(
                         }
                     }
                     "numFmt" => {
-                        if stack.last().is_some_and(|parent| parent == "dLbls")
+                        if stack.last().is_some_and(|parent| parent == "trendlineLbl") {
+                            let format_code =
+                                chart_xml_attribute(&event, "formatCode", reader.decoder())?;
+                            let source_linked =
+                                chart_xml_attribute(&event, "sourceLinked", reader.decoder())?;
+                            if !is_empty
+                                || format_code.as_deref() != Some("General")
+                                || source_linked.as_deref() != Some("0")
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a custom trendline equation number format; retain the writer's General format with sourceLinked=0"
+                                )));
+                            }
+                            let trendline = series
+                                .last_mut()
+                                .and_then(|item| item.trendline.as_mut())
+                                .expect("trendline number format has a series trendline");
+                            if trendline.trendline_label_num_format_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats the trendline equation number format; retain one General format"
+                                )));
+                            }
+                            trendline.trendline_label_num_format_seen = true;
+                        } else if stack.last().is_some_and(|parent| parent == "dLbls")
                             && stack.iter().any(|ancestor| ancestor == "ser")
                         {
                             let mut format_code = None;
@@ -12507,6 +12609,14 @@ fn parse_chart_xml(
                             "chart part `{part}` has a trendline without trendlineType; add one supported model"
                         )));
                     };
+                    if (trendline.display_equation == Some(true)) != trendline.trendline_label_seen
+                        || (trendline.trendline_label_seen
+                            && !trendline.trendline_label_num_format_seen)
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an equation display flag that does not match the default trendline label; retain dispEq with one General/sourceLinked=0 label format"
+                        )));
+                    }
                     if (trend_type == "polynomial"
                         && (trendline.order.is_none() || trendline.period.is_some()))
                         || (trend_type == "movingAverage"
@@ -14217,7 +14327,10 @@ fn is_supported_chart_attribute(
             matches!(value, "0" | "1" | "false" | "true")
         }
         ("dispBlanksAs", "val") => matches!(value, "gap" | "zero" | "span"),
-        ("dispEq" | "dispRSqr" | "auto" | "marker" | "varyColors", "val") => value == "1",
+        ("dispEq" | "dispRSqr", "val") => {
+            matches!(value, "0" | "1" | "false" | "true")
+        }
+        ("auto" | "marker" | "varyColors", "val") => value == "1",
         ("delete", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("numFmt", "sourceLinked") => {
             matches!(value, "0" | "1" | "false" | "true")
@@ -17092,6 +17205,10 @@ struct WorksheetChartTrendline {
     backward: Option<f64>,
     intercept: Option<f64>,
     delete_from_legend: bool,
+    display_equation: Option<bool>,
+    display_r_squared: Option<bool>,
+    trendline_label_seen: bool,
+    trendline_label_num_format_seen: bool,
 }
 
 #[derive(Clone, Default)]

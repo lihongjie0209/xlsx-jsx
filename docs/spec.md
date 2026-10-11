@@ -135,8 +135,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   entry; false is the writer default. Reverse preserves the deletion when its
   chart-level legend index can be mapped uniquely to this trendline. The writer
   indexes series entries first in Series child order, then trendline entries in
-  series order. Trendline names, line/label formatting, and equation/R-squared
-  labels are rejected with repair guidance.
+  series order. `displayEquation?: boolean` requests the regression equation
+  label, and `displayRSquared?: boolean` requests the coefficient-of-
+  determination label; both default to false. Reverse preserves these flags
+  only with the writer's default trendline-label layout, `General` number
+  format, and unformatted label shape. Custom label names, number formats,
+  placement, fonts, and shape formatting are rejected with repair guidance.
 - `Series.gap?: integer` (0–500) and `Series.overlap?: integer` (-100–100)
   control the group-level spacing of bar/column charts. Since OOXML stores
   these values on the chart group, declarations across all Series must agree;

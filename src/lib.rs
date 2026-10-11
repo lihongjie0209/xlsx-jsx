@@ -3571,6 +3571,8 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
                 "forward",
                 "backward",
                 "intercept",
+                "displayEquation",
+                "displayRSquared",
             ],
             "Trendline",
         )?;
@@ -3584,6 +3586,15 @@ fn validate_chart_series_trendline(chart: &Node, series: &Node, series_index: us
                 return Err(Error::Compile(
                     "Trendline.deleteFromLegend requires a visible chart legend; remove it or set showLegend={true}".into(),
                 ));
+            }
+        }
+        for property in ["displayEquation", "displayRSquared"] {
+            if let Some(value) = trendline.props.get(property)
+                && !value.is_boolean()
+            {
+                return Err(Error::Compile(format!(
+                    "Trendline.{property} must be a boolean; use true to display the label or false to omit it"
+                )));
             }
         }
         let chart_type = chart
