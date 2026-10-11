@@ -738,6 +738,14 @@ fn compile_chart(
     if let Some(title) = component.props.get("title").and_then(Value::as_str) {
         chart.title().set_name(title);
     }
+    if component
+        .props
+        .get("autoTitleDeleted")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        chart.title().set_hidden();
+    }
     if let Some(title) = component.props.get("xAxisTitle").and_then(Value::as_str) {
         chart.x_axis().set_name(title);
     }
@@ -4628,6 +4636,9 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if chart.legend_overlay == Some(true) {
         properties.push_str(" legendOverlay={true}");
     }
+    if chart.auto_title_deleted {
+        properties.push_str(" autoTitleDeleted={true}");
+    }
     if !chart.legend_deleted_entries.is_empty() {
         let entries = chart
             .legend_deleted_entries
@@ -7536,6 +7547,7 @@ fn parse_chart_xml(
         "legendPos",
         "legendEntry",
         "overlay",
+        "autoTitleDeleted",
         "delete",
         "printSettings",
         "headerFooter",
@@ -7680,6 +7692,8 @@ fn parse_chart_xml(
     let mut legend_deleted = false;
     let mut legend_delete_seen = false;
     let mut legend_position: Option<&'static str> = None;
+    let mut auto_title_deleted = false;
+    let mut auto_title_deleted_seen = false;
     let mut legend_overlay = false;
     let mut legend_overlay_seen = false;
     let mut legend_deleted_entries = Vec::<usize>::new();
@@ -8666,6 +8680,26 @@ fn parse_chart_xml(
                             )?,
                             part,
                             "overlay",
+                        )?;
+                    }
+                    "autoTitleDeleted" => {
+                        if stack.last().is_none_or(|parent| parent != "chart")
+                            || auto_title_deleted_seen
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a misplaced or repeated autoTitleDeleted; keep one chart-level flag"
+                            )));
+                        }
+                        auto_title_deleted_seen = true;
+                        auto_title_deleted = parse_xml_bool(
+                            &chart_element_val_attribute(
+                                &event,
+                                part,
+                                reader.decoder(),
+                                "autoTitleDeleted",
+                            )?,
+                            part,
+                            "autoTitleDeleted",
                         )?;
                     }
                     "idx" if stack.last().is_some_and(|parent| parent == "legendEntry") => {
@@ -10400,6 +10434,11 @@ fn parse_chart_xml(
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
+    if auto_title_deleted && chart_title.is_some() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has both a static title and autoTitleDeleted=true; remove the title or clear autoTitleDeleted"
+        )));
+    }
     let legend_deleted_entries =
         normalize_chart_legend_deletions(chart_type, &mut series, legend_deleted_entries);
     if drop_lines
@@ -10783,6 +10822,7 @@ fn parse_chart_xml(
         vertical_axis_minor_gridlines: vertical_minor_gridlines.then_some(true),
         gridline_styles,
         show_legend,
+        auto_title_deleted,
         legend_position: legend_position.filter(|position| *position != "right"),
         legend_overlay: legend_overlay.then_some(true),
         legend_deleted_entries,
@@ -11608,6 +11648,7 @@ fn is_supported_chart_attribute(
         ("showHorzBorder" | "showVertBorder" | "showOutline" | "showKeys" | "overlay", "val") => {
             matches!(value, "0" | "1" | "false" | "true")
         }
+        ("autoTitleDeleted", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("ext", "uri") => matches!(
             value,
             "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}" | "{56B9EC1D-385E-4148-901F-78D8002777C0}"
@@ -14314,6 +14355,7 @@ struct WorksheetChart {
     horizontal_axis_hidden: Option<bool>,
     vertical_axis_hidden: Option<bool>,
     show_legend: bool,
+    auto_title_deleted: bool,
     legend_position: Option<&'static str>,
     legend_overlay: Option<bool>,
     legend_deleted_entries: Vec<usize>,

@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.74
+Version: 1.75
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -162,6 +162,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.title?: string` is a static chart title (1–255 valid XML characters).
   External titles are reversible only when they are one unformatted rich-text
   run; formulas, multiple runs, and custom title formatting fail with guidance.
+- `Chart.autoTitleDeleted?: boolean` controls Excel's automatic chart title when
+  a chart has a single named series. Omission/false allows Excel to show its
+  default automatic title; true suppresses it via `ChartTitle::set_hidden()`.
+  It is mutually exclusive with an explicit `Chart.title`; reverse preserves
+  `<c:autoTitleDeleted val="1"/>` and folds false to omission.
 - `Chart.xAxisTitle?: string` and `Chart.yAxisTitle?: string` set static X- and
   Y-axis titles (1–255 valid XML characters) for non-pie charts. Reverse maps
   the OOXML category axis to X and value axis to Y; only a single unformatted

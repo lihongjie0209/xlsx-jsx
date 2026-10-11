@@ -1925,6 +1925,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "horizontalAxisHidden",
             "verticalAxisHidden",
             "showLegend",
+            "autoTitleDeleted",
             "legendOverlay",
             "legendDeletedEntries",
             "legendPosition",
@@ -2059,6 +2060,20 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 }
 
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
+    if let Some(value) = chart.props.get("autoTitleDeleted")
+        && !value.is_boolean()
+    {
+        return Err(Error::Compile(
+            "Chart.autoTitleDeleted must be a boolean; use true or false".into(),
+        ));
+    }
+    if chart.props.get("autoTitleDeleted").and_then(Value::as_bool) == Some(true)
+        && chart.props.contains_key("title")
+    {
+        return Err(Error::Compile(
+            "Chart.autoTitleDeleted cannot be combined with Chart.title; remove title or set autoTitleDeleted={false}".into(),
+        ));
+    }
     for property in ["name", "altText", "title", "xAxisTitle", "yAxisTitle"] {
         if let Some(value) = chart.props.get(property) {
             let Some(value) = value.as_str() else {

@@ -80,6 +80,7 @@ xlsx-jsx spec --format json
 | Chart error bars | yes | yes (supported subset) | `<ErrorBars axis="y" type="standardDeviation" value={2} direction="both" endCap={false} />` supports standard error, fixed value, percentage, and standard-deviation bars on X/Y axes; custom plus/minus ranges and line formatting remain rejected |
 | Chart data tables | yes | yes (supported subset) | `<ChartDataTable showHorizontalBorders={false} showLegendKeys={true} />` preserves the four data-table display flags; custom table fonts, shape formatting, and extensions remain rejected |
 | Chart data display | yes | yes (supported subset) | `showHiddenData`, `emptyCellsAs="gap|zero|span"`, and `showNaAsEmptyCell` round-trip hidden source data, empty-cell behavior, and the pinned c16r3 N/A-as-blank extension |
+| Automatic chart title | yes | yes | `autoTitleDeleted={true}` suppresses Excel's generated single-series title; it cannot be combined with an explicit `title` |
 | Chart legend overlay | yes | yes | `legendOverlay={true}` draws a visible legend over the plot area; it cannot be combined with `showLegend={false}` |
 | Chart legend entry visibility | yes | yes | `legendDeletedEntries={[1, 3]}` hides zero-based legend entries (pie/doughnut point indices); duplicate indices and hidden legends are rejected |
 | Chart series and trendline legend entries | yes | yes | `Series` / `Trendline deleteFromLegend={true}` hides the corresponding entry; chart-level indices reverse to these properties when unambiguous |
