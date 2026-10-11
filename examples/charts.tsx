@@ -32,7 +32,7 @@ export default <Workbook>
     <Chart type="area" cell="D38" width={480} height={288} dropLines={true} dropLinesHidden={true} dropLinesWidth={1.25}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue area" />
     </Chart>
-    <Chart type="areaStacked" cell="K38" width={480} height={288}>
+    <Chart type="areaStacked" cell="K38" width={480} height={288} legendLineColor="#123456" legendLineWidth={1.25} legendLineDash="dashDot" legendLineTransparency={25}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Stacked revenue" />
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Stacked expenses" />
     </Chart>

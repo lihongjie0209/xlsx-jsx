@@ -1900,6 +1900,11 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "titleLineTransparency",
             "legendFillColor",
             "legendFillTransparency",
+            "legendLineColor",
+            "legendLineWidth",
+            "legendLineDash",
+            "legendLineTransparency",
+            "legendLineHidden",
             "legendFontSize",
             "legendFontBold",
             "legendFontItalic",
@@ -3010,8 +3015,44 @@ fn validate_chart_title_shape_format(chart: &Node) -> Result<()> {
 }
 
 fn validate_chart_legend_shape_format(chart: &Node) -> Result<()> {
-    let transparency = chart.props.get("legendFillTransparency");
-    if let Some(value) = transparency {
+    validate_chart_legend_fill_style(chart)?;
+    validate_chart_legend_line_style(chart)?;
+    let line_properties = [
+        "legendLineColor",
+        "legendLineWidth",
+        "legendLineDash",
+        "legendLineTransparency",
+    ];
+    let has_line = line_properties
+        .iter()
+        .any(|property| chart.props.contains_key(*property))
+        || chart.props.get("legendLineHidden").and_then(Value::as_bool) == Some(true);
+    let has_shape = chart.props.contains_key("legendFillColor") || has_line;
+    if !has_shape {
+        return Ok(());
+    }
+    if chart.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
+        if chart.props.contains_key("legendFillColor") && !has_line {
+            return Err(Error::Compile(
+                "Chart.legendFillColor requires a visible legend; remove it or set showLegend={true}"
+                    .into(),
+            ));
+        }
+        return Err(Error::Compile("Legend shape formatting requires a visible legend; remove showLegend={false} or remove the legend fill/line properties".into()));
+    }
+    if chart.props.get("legendOverlay").and_then(Value::as_bool) == Some(true) {
+        if chart.props.contains_key("legendFillColor") && !has_line {
+            return Err(Error::Compile(
+                "Chart.legendFillColor cannot be combined with legendOverlay={true}; rust_xlsxwriter emits schema-invalid legend child order for this combination, so remove legendFillColor or set legendOverlay={false}".into(),
+            ));
+        }
+        return Err(Error::Compile("Legend shape formatting cannot be combined with legendOverlay={true}; rust_xlsxwriter emits schema-invalid legend child order, so remove the shape properties or set legendOverlay={false}".into()));
+    }
+    Ok(())
+}
+
+fn validate_chart_legend_fill_style(chart: &Node) -> Result<()> {
+    if let Some(value) = chart.props.get("legendFillTransparency") {
         if value.as_u64().is_none_or(|transparency| transparency > 100) {
             return Err(Error::Compile(
                 "Chart.legendFillTransparency must be an integer from 0 to 100".into(),
@@ -3023,23 +3064,90 @@ fn validate_chart_legend_shape_format(chart: &Node) -> Result<()> {
             ));
         }
     }
-    let Some(value) = chart.props.get("legendFillColor") else {
-        return Ok(());
-    };
-    if !value.as_str().is_some_and(is_opaque_rgb_color) {
+    if chart
+        .props
+        .get("legendFillColor")
+        .is_some_and(|value| !value.as_str().is_some_and(is_opaque_rgb_color))
+    {
         return Err(Error::Compile(
             "Chart.legendFillColor must be an opaque RGB color like #336699".into(),
         ));
     }
-    if chart.props.get("showLegend").and_then(Value::as_bool) == Some(false) {
+    Ok(())
+}
+
+fn validate_chart_legend_line_style(chart: &Node) -> Result<()> {
+    if chart
+        .props
+        .get("legendLineColor")
+        .is_some_and(|value| !value.as_str().is_some_and(is_opaque_rgb_color))
+    {
         return Err(Error::Compile(
-            "Chart.legendFillColor requires a visible legend; remove it or set showLegend={true}"
-                .into(),
+            "Chart.legendLineColor must be an opaque RGB color like #336699".into(),
         ));
     }
-    if chart.props.get("legendOverlay").and_then(Value::as_bool) == Some(true) {
+    if chart.props.contains_key("legendLineTransparency") {
+        if chart
+            .props
+            .get("legendLineTransparency")
+            .is_some_and(|value| value.as_u64().is_none_or(|transparency| transparency > 100))
+        {
+            return Err(Error::Compile(
+                "Chart.legendLineTransparency must be an integer from 0 to 100".into(),
+            ));
+        }
+        if !chart.props.contains_key("legendLineColor") {
+            return Err(Error::Compile(
+                "Chart.legendLineTransparency requires Chart.legendLineColor; add an RGB line color or remove transparency".into(),
+            ));
+        }
+    }
+    if chart.props.get("legendLineWidth").is_some_and(|value| {
+        !value
+            .as_f64()
+            .is_some_and(|width| (0.25..=1584.0).contains(&width) && (width * 4.0).fract() == 0.0)
+    }) {
         return Err(Error::Compile(
-            "Chart.legendFillColor cannot be combined with legendOverlay={true}; rust_xlsxwriter emits schema-invalid legend child order for this combination, so remove legendFillColor or set legendOverlay={false}".into(),
+            "Chart.legendLineWidth must be 0.25–1584 pt in quarter-point increments".into(),
+        ));
+    }
+    if let Some(dash) = chart.props.get("legendLineDash") {
+        let supported = [
+            "solid",
+            "roundDot",
+            "squareDot",
+            "dash",
+            "dashDot",
+            "longDash",
+            "longDashDot",
+            "longDashDotDot",
+        ];
+        if dash.as_str().is_none_or(|dash| !supported.contains(&dash)) {
+            return Err(Error::Compile(
+                "Chart.legendLineDash must be solid, roundDot, squareDot, dash, dashDot, longDash, longDashDot, or longDashDotDot".into(),
+            ));
+        }
+    }
+    if chart
+        .props
+        .get("legendLineHidden")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(Error::Compile(
+            "Chart.legendLineHidden must be a boolean".into(),
+        ));
+    }
+    if chart.props.get("legendLineHidden").and_then(Value::as_bool) == Some(true)
+        && (chart.props.contains_key("legendLineColor")
+            || chart.props.contains_key("legendLineTransparency")
+            || chart
+                .props
+                .get("legendLineDash")
+                .and_then(Value::as_str)
+                .is_some_and(|dash| dash != "solid"))
+    {
+        return Err(Error::Compile(
+            "Hidden legend lines cannot combine color, transparency, or non-solid dash; remove those properties because the writer drops them".into(),
         ));
     }
     Ok(())

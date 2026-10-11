@@ -251,6 +251,17 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.legendFillTransparency?: integer` sets whole-percent fill alpha from
   0 through 100 and requires `legendFillColor`; the legend must be visible and
   cannot use `legendOverlay={true}`.
+- `Chart.legendLineColor?: "#RRGGBB"`, `legendLineWidth?: number`,
+  `legendLineDash?: string`, `legendLineTransparency?: integer`, and
+  `legendLineHidden?: boolean` describe the visible legend outline using the
+  supported `ChartLine` subset. Width is 0.25–1584 points in quarter-point
+  increments; dash accepts `solid`, `roundDot`, `squareDot`, `dash`, `dashDot`,
+  `longDash`, `longDashDot`, or `longDashDotDot`; transparency is 0–100 and
+  requires an RGB color. Hidden lines cannot combine color, transparency, or a
+  non-solid dash. Any legend shape formatting requires a visible legend and
+  cannot combine with `legendOverlay={true}` because the pinned writer emits
+  schema-invalid child order for that combination. Reverse rejects fills other
+  than one RGB solid fill and outlines outside this subset.
 - `Chart.legendFontSize?: number`, `legendFontBold?: boolean`,
   `legendFontItalic?: boolean`, `legendFontUnderline?: boolean`,
   `legendFontColor?: "#RRGGBB"`, `legendFontName?: string`,

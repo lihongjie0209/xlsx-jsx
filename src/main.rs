@@ -1170,23 +1170,8 @@ fn compile_chart(
                 .set_dimensions(fraction("width"), fraction("height")),
         );
     }
-    if let Some(color) = component
-        .props
-        .get("legendFillColor")
-        .and_then(Value::as_str)
-    {
-        let mut fill = ChartSolidFill::new();
-        fill.set_color(color);
-        if let Some(transparency) = component
-            .props
-            .get("legendFillTransparency")
-            .and_then(Value::as_u64)
-        {
-            fill.set_transparency(u8::try_from(transparency).expect("validated transparency"));
-        }
-        chart
-            .legend()
-            .set_format(ChartFormat::new().set_solid_fill(&fill));
+    if let Some(mut format) = chart_shape_format(component, "legendFillColor", "legendLine") {
+        chart.legend().set_format(&mut format);
     }
     configure_chart_legend_font(&mut chart, component);
     if let Some(mut format) = chart_shape_format(component, "plotAreaFillColor", "plotAreaLine") {
@@ -3012,6 +2997,7 @@ fn chart_shape_format(
     let line_width = format!("{line_prefix}Width");
     let line_dash = format!("{line_prefix}Dash");
     let line_transparency = format!("{line_prefix}Transparency");
+    let line_hidden = format!("{line_prefix}Hidden");
     let mut line = ChartLine::new();
     let mut has_line = false;
     if let Some(color) = component.props.get(&line_color).and_then(Value::as_str) {
@@ -3033,6 +3019,10 @@ fn chart_shape_format(
         && let Ok(transparency) = u8::try_from(transparency)
     {
         line.set_transparency(transparency);
+        has_line = true;
+    }
+    if component.props.get(&line_hidden).and_then(Value::as_bool) == Some(true) {
+        line.set_hidden(true);
         has_line = true;
     }
     if has_line {
@@ -5951,10 +5941,7 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .as_ref()
             .map(|value| format!(" legendFillColor={value:?}"))
             .unwrap_or_default(),
-        chart
-            .legend_fill_transparency
-            .map(|value| format!(" legendFillTransparency={{{value}}}"))
-            .unwrap_or_default(),
+        render_chart_legend_shape_properties(chart),
         chart
             .title_layout
             .map(|[x, y]| format!(" titleLayout={{{{x: {x}, y: {y}}}}}"))
@@ -6257,6 +6244,31 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         output.push_str(" />\n");
     }
     output.push_str("    </Chart>\n");
+}
+
+fn render_chart_legend_shape_properties(chart: &WorksheetChart) -> String {
+    let mut output = String::new();
+    if let Some(transparency) = chart.legend_fill_transparency {
+        let _ = write!(output, " legendFillTransparency={{{transparency}}}");
+    }
+    if let Some(style) = &chart.legend_line_style {
+        if let Some(color) = &style.color {
+            let _ = write!(output, " legendLineColor={color:?}");
+        }
+        if let Some(width) = style.width {
+            let _ = write!(output, " legendLineWidth={{{width}}}");
+        }
+        if let Some(dash) = style.dash {
+            let _ = write!(output, " legendLineDash=\"{dash}\"");
+        }
+        if let Some(transparency) = style.transparency {
+            let _ = write!(output, " legendLineTransparency={{{transparency}}}");
+        }
+    }
+    if chart.legend_line_hidden == Some(true) {
+        output.push_str(" legendLineHidden={true}");
+    }
+    output
 }
 
 fn append_chart_series_label_font_properties(output: &mut String, series: &WorksheetChartSeries) {
@@ -9989,6 +10001,9 @@ fn parse_chart_xml(
     let mut legend_sppr_seen = false;
     let mut legend_fill_color: Option<String> = None;
     let mut legend_fill_transparency: Option<u8> = None;
+    let mut legend_line_style: Option<WorksheetChartGridlineStyle> = None;
+    let mut legend_line_hidden = false;
+    let mut legend_line_seen = false;
     let mut legend_deleted = false;
     let mut legend_delete_seen = false;
     let mut legend_position: Option<&'static str> = None;
@@ -10658,6 +10673,15 @@ fn parse_chart_xml(
                         )));
                     }
                 }
+                if tag == "ln"
+                    && stack.last().is_some_and(|ancestor| ancestor == "spPr")
+                    && stack.iter().any(|ancestor| ancestor == "legend")
+                    && std::mem::replace(&mut legend_line_seen, true)
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` repeats the legend outline; keep one a:ln line"
+                    )));
+                }
                 if stack.iter().any(|ancestor| ancestor == "legendEntry")
                     && !matches!(tag.as_str(), "idx" | "delete")
                 {
@@ -10762,6 +10786,17 @@ fn parse_chart_xml(
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has unsupported drop-line content `<{tag}>`; keep only RGB color, width, preset dash, transparency, or noFill"
+                    )));
+                }
+                if stack.iter().any(|ancestor| ancestor == "legend")
+                    && stack.iter().any(|ancestor| ancestor == "spPr")
+                    && !matches!(
+                        tag.as_str(),
+                        "spPr" | "ln" | "solidFill" | "srgbClr" | "alpha" | "prstDash" | "noFill"
+                    )
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported legend shape content `<{tag}>`; retain only an RGB solid fill and supported ChartLine outline"
                     )));
                 }
                 if !allowed_tags.contains(&tag.as_str()) {
@@ -14509,6 +14544,8 @@ fn parse_chart_xml(
                             );
                         let in_chart_area_shape = area_sppr_context.is_some()
                             && stack.last().is_some_and(|parent| parent == "spPr");
+                        let in_legend_shape = stack.iter().any(|item| item == "legend")
+                            && stack.iter().any(|item| item == "spPr");
                         if in_chart_area_shape {
                             let seen = if area_sppr_context == Some("chartArea") {
                                 &mut chart_area_line_seen
@@ -14538,6 +14575,7 @@ fn parse_chart_xml(
                         }
                         if stack.last().is_none_or(|ancestor| ancestor != "spPr")
                             || (!in_gridlines
+                                && !in_legend_shape
                                 && !in_error_bars
                                 && !in_trendline_line
                                 && !in_marker_line
@@ -14556,6 +14594,7 @@ fn parse_chart_xml(
                                 attribute.map_err(|error| Error::Reverse(error.to_string()))?;
                             if (in_title_shape
                                 || in_chart_area_shape
+                                || in_legend_shape
                                 || in_marker_line
                                 || in_drop_lines)
                                 && attribute.key.local_name().as_ref() != b"w"
@@ -14582,7 +14621,17 @@ fn parse_chart_xml(
                                 );
                             }
                         }
-                        if in_drop_lines {
+                        if in_legend_shape {
+                            let style = legend_line_style.get_or_insert_default();
+                            if let Some(width) = line_width {
+                                let emu = width.parse::<u32>().ok().filter(|v| *v > 0 && *v <= 20_116_800 && *v % 3175 == 0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a legend line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments")))?;
+                                if style.width.replace(f64::from(emu) / 12700.0).is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats legend line width; keep one supported width"
+                                    )));
+                                }
+                            }
+                        } else if in_drop_lines {
                             let style = drop_line_style.get_or_insert_default();
                             if let Some(width) = line_width {
                                 let emu = width.parse::<u32>().ok().filter(|v| *v > 0 && *v <= 20_116_800 && *v % 3175 == 0).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a drop-line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments")))?;
@@ -14920,7 +14969,18 @@ fn parse_chart_xml(
                                 "chart part `{part}` has non-RGB series line color; use an opaque six-digit RGB color"
                             )));
                         }
-                        if stack.iter().any(|item| item == "dropLines") {
+                        if stack.iter().any(|item| item == "legend") {
+                            if legend_line_style
+                                .get_or_insert_default()
+                                .color
+                                .replace(format!("#{color}").to_ascii_uppercase())
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats legend outline RGB color; keep one color"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "dropLines") {
                             if drop_line_style
                                 .get_or_insert_default()
                                 .color
@@ -15086,7 +15146,18 @@ fn parse_chart_xml(
                                 "chart part `{part}` has line alpha not exactly representable by integer transparency; use 1% increments"
                             )));
                         }
-                        if stack.iter().any(|item| item == "dropLines") {
+                        if stack.iter().any(|item| item == "legend") {
+                            if legend_line_style
+                                .get_or_insert_default()
+                                .transparency
+                                .replace(100 - alpha / 1000)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats legend outline transparency; keep one alpha"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "dropLines") {
                             if drop_line_style
                                 .get_or_insert_default()
                                 .transparency
@@ -15240,7 +15311,18 @@ fn parse_chart_xml(
                                 )));
                             }
                         };
-                        if stack.iter().any(|item| item == "dropLines") {
+                        if stack.iter().any(|item| item == "legend") {
+                            if legend_line_style
+                                .get_or_insert_default()
+                                .dash
+                                .replace(dash)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats legend outline dash; keep one preset dash"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "dropLines") {
                             if drop_line_style
                                 .get_or_insert_default()
                                 .dash
@@ -15316,6 +15398,16 @@ fn parse_chart_xml(
                             }
                         } else if let Some(current) = series.last_mut() {
                             current.line_dash = Some(dash);
+                        }
+                    }
+                    "noFill"
+                        if stack.last().is_some_and(|parent| parent == "ln")
+                            && stack.iter().any(|item| item == "legend") =>
+                    {
+                        if std::mem::replace(&mut legend_line_hidden, true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats hidden legend line fill; keep one noFill"
+                            )));
                         }
                     }
                     "noFill"
@@ -16525,19 +16617,48 @@ fn parse_chart_xml(
         }
     }
     let show_legend = legend_seen && !legend_deleted;
-    if legend_sppr_seen && legend_fill_color.is_none() {
+    let legend_line_is_empty = legend_line_style
+        .as_ref()
+        .is_none_or(WorksheetChartGridlineStyle::is_empty);
+    let legend_has_shape =
+        legend_fill_color.is_some() || !legend_line_is_empty || legend_line_hidden;
+    if legend_line_seen && !legend_line_hidden && legend_line_is_empty {
         return Err(Error::Reverse(format!(
-            "chart part `{part}` has legend shape properties without one opaque RGB solid fill; add the supported fill or remove the shape properties"
+            "chart part `{part}` has an empty legend outline that cannot be represented; remove the outline or specify a supported line property"
         )));
     }
-    if legend_fill_color.is_some() && !show_legend {
+    if legend_line_style
+        .as_ref()
+        .is_some_and(|style| style.transparency.is_some() && style.color.is_none())
+    {
         return Err(Error::Reverse(format!(
-            "chart part `{part}` formats a hidden legend; restore a visible legend or remove its shape fill"
+            "chart part `{part}` has legend line transparency without an RGB color; add a color or remove alpha"
         )));
     }
-    if legend_fill_color.is_some() && legend_overlay {
+    if legend_line_hidden
+        && legend_line_style.as_ref().is_some_and(|style| {
+            style.color.is_some()
+                || style.transparency.is_some()
+                || style.dash.is_some_and(|dash| dash != "solid")
+        })
+    {
         return Err(Error::Reverse(format!(
-            "chart part `{part}` combines legend shape fill with overlay, which the pinned writer serializes in schema-invalid child order; remove the fill or overlay before reversing"
+            "chart part `{part}` combines a hidden legend line with visible formatting; remove noFill or remove color, non-solid dash, and transparency"
+        )));
+    }
+    if legend_sppr_seen && !legend_has_shape {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has legend shape properties without a supported RGB fill or line; add a supported fill/outline or remove the shape properties"
+        )));
+    }
+    if legend_has_shape && !show_legend {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` formats a hidden legend; restore a visible legend or remove its shape formatting"
+        )));
+    }
+    if legend_has_shape && legend_overlay {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` combines legend shape formatting with overlay, which the pinned writer serializes in schema-invalid child order; remove the shape formatting or overlay before reversing"
         )));
     }
     if !legend_deleted_entries.is_empty() && !show_legend {
@@ -16673,6 +16794,8 @@ fn parse_chart_xml(
         legend_layout,
         legend_fill_color,
         legend_fill_transparency,
+        legend_line_style: legend_line_style.filter(|style| !style.is_empty()),
+        legend_line_hidden: legend_line_hidden.then_some(true),
         legend_font,
         title_layout,
         x_axis_title_layout,
@@ -21057,6 +21180,8 @@ struct WorksheetChart {
     legend_layout: Option<[f64; 4]>,
     legend_fill_color: Option<String>,
     legend_fill_transparency: Option<u8>,
+    legend_line_style: Option<WorksheetChartGridlineStyle>,
+    legend_line_hidden: Option<bool>,
     legend_font: WorksheetChartAxisFont,
     title_layout: Option<[f64; 2]>,
     x_axis_title_layout: Option<[f64; 2]>,

@@ -46,6 +46,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("markerFillColor"))
         .stdout(predicate::str::contains("markerFillTransparency"))
         .stdout(predicate::str::contains("markerLineColor"))
+        .stdout(predicate::str::contains("legendLineColor"))
+        .stdout(predicate::str::contains("legendLineHidden"))
         .stdout(predicate::str::contains("markerLineWidth"))
         .stdout(predicate::str::contains("pointColorTransparencies"))
         .stdout(predicate::str::contains("wrapText"))
@@ -1620,13 +1622,20 @@ fn reverses_external_chart_legend_shape_formatting_without_a_manifest() {
         .add_series()
         .set_categories("Data!A2:A3")
         .set_values("Data!B2:B3");
-    chart.legend().set_format(
-        ChartFormat::new().set_solid_fill(
-            ChartSolidFill::new()
-                .set_color("#F0E0D0")
-                .set_transparency(40),
-        ),
+    let mut legend_line = ChartLine::new();
+    legend_line
+        .set_color("#123456")
+        .set_width(1.25)
+        .set_dash_type(ChartLineDashType::DashDot)
+        .set_transparency(25);
+    let mut legend_format = ChartFormat::new();
+    legend_format.set_solid_fill(
+        ChartSolidFill::new()
+            .set_color("#F0E0D0")
+            .set_transparency(40),
     );
+    legend_format.set_border(&legend_line);
+    chart.legend().set_format(&mut legend_format);
     worksheet.insert_chart(0, 3, &chart).unwrap();
     workbook.save(&input).unwrap();
 
@@ -1641,6 +1650,10 @@ fn reverses_external_chart_legend_shape_formatting_without_a_manifest() {
     let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
     assert!(source.contains("legendFillColor=\"#F0E0D0\""), "{source}");
     assert!(source.contains("legendFillTransparency={40}"), "{source}");
+    assert!(source.contains("legendLineColor=\"#123456\""), "{source}");
+    assert!(source.contains("legendLineWidth={1.25}"), "{source}");
+    assert!(source.contains("legendLineDash=\"dashDot\""), "{source}");
+    assert!(source.contains("legendLineTransparency={25}"), "{source}");
 
     let rebuilt = directory
         .path()
@@ -1656,6 +1669,77 @@ fn reverses_external_chart_legend_shape_formatting_without_a_manifest() {
     let xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
     assert!(xml.contains("val=\"F0E0D0\""), "{xml}");
     assert!(xml.contains("alpha val=\"60000\""), "{xml}");
+    assert!(xml.contains("val=\"123456\""), "{xml}");
+    assert!(xml.contains("w=\"15875\""), "{xml}");
+    assert!(xml.contains("prstDash val=\"dashDot\""), "{xml}");
+    assert!(xml.contains("alpha val=\"75000\""), "{xml}");
+}
+
+#[test]
+fn validate_rejects_hidden_legend_outline_with_visible_style() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("hidden-legend-outline.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" legendLineHidden={true} legendLineColor="#123456"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Hidden legend lines cannot combine color",
+        ))
+        .stderr(predicate::str::contains("remove those properties"));
+}
+
+#[test]
+fn reverses_hidden_external_legend_outline_and_rebuilds_it() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("hidden-legend-line.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3");
+    let mut line = ChartLine::new();
+    line.set_hidden(true).set_width(1.25);
+    let mut format = ChartFormat::new();
+    format.set_border(&line);
+    chart.legend().set_format(&mut format);
+    worksheet.insert_chart(0, 3, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    let reversed = directory.path().join("hidden-legend-line.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("legendLineHidden={true}"), "{source}");
+    assert!(source.contains("legendLineWidth={1.25}"), "{source}");
+
+    let rebuilt = directory.path().join("hidden-legend-line-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
+    assert!(xml.contains("noFill"), "{xml}");
+    assert!(xml.contains("w=\"15875\""), "{xml}");
 }
 
 #[test]

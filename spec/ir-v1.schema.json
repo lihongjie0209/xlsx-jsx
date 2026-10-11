@@ -609,6 +609,11 @@
             "titleLineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "legendFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "legendFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "legendLineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "legendLineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
+            "legendLineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
+            "legendLineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "legendLineHidden": { "type": "boolean" },
             "legendFontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
             "legendFontBold": { "type": "boolean" },
             "legendFontItalic": { "type": "boolean" },
@@ -758,6 +763,7 @@
             "yAxisTitleFillTransparency": ["yAxisTitle", "yAxisTitleFillColor"],
             "titleFillTransparency": ["title", "titleFillColor"],
             "legendFillTransparency": ["legendFillColor"],
+            "legendLineTransparency": ["legendLineColor"],
             "yAxisTitleLineColor": ["yAxisTitle"],
             "yAxisTitleLineWidth": ["yAxisTitle"],
             "yAxisTitleLineDash": ["yAxisTitle"],
@@ -793,6 +799,72 @@
                   { "required": ["legendFontPitchFamily"] },
                   { "required": ["legendFontCharset"] },
                   { "required": ["legendFontRotation"] }
+                ]
+              }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "props": {
+                "properties": { "legendLineHidden": { "const": true } },
+                "required": ["legendLineHidden"]
+              }
+            },
+            "required": ["props"]
+          },
+          "then": {
+            "properties": {
+              "props": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["legendLineColor"] },
+                    { "required": ["legendLineTransparency"] }
+                  ]
+                },
+                "properties": {
+                  "legendLineDash": { "enum": ["solid"] },
+                  "showLegend": { "not": { "const": false } },
+                  "legendOverlay": { "not": { "const": true } }
+                }
+              }
+            }
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": {
+                  "legendOverlay": { "const": true }
+                },
+                "required": ["legendOverlay"],
+                "anyOf": [
+                  { "required": ["legendLineColor"] },
+                  { "required": ["legendLineWidth"] },
+                  { "required": ["legendLineDash"] },
+                  { "required": ["legendLineTransparency"] }
+                ]
+              }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "properties": {
+                  "showLegend": { "const": false }
+                },
+                "required": ["showLegend"],
+                "anyOf": [
+                  { "required": ["legendLineColor"] },
+                  { "required": ["legendLineWidth"] },
+                  { "required": ["legendLineDash"] },
+                  { "required": ["legendLineTransparency"] }
                 ]
               }
             },
