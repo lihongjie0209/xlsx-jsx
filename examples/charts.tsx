@@ -1,4 +1,4 @@
-import { Workbook, Worksheet, Row, Cell, Chart, Series, ErrorBars } from "xlsx-jsx";
+import { Workbook, Worksheet, Row, Cell, Chart, Series, ErrorBars, ChartDataTable } from "xlsx-jsx";
 
 export default <Workbook>
   <Worksheet name="Data">
@@ -13,6 +13,7 @@ export default <Workbook>
         <ErrorBars axis="y" type="standardError" />
       </Series>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" />
+      <ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={true} showLegendKeys={true} />
     </Chart>
     <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true} categoryAxisLabelInterval={2} categoryAxisTickInterval={2}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" showValue={true} showLegendKey={true} showLeaderLines={true} labelSeparator="semicolon" />

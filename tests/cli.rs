@@ -3,9 +3,9 @@ use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition,
-    ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartLine, ChartMarker, ChartType,
-    Workbook as XlsxWorkbook,
+    ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
+    ChartDataTable as XlsxChartDataTable, ChartErrorBars, ChartErrorBarsDirection,
+    ChartErrorBarsType, ChartLine, ChartMarker, ChartType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -158,6 +158,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("labelSeparator"))
         .stdout(predicate::str::contains("labelNumberFormat"))
         .stdout(predicate::str::contains("ErrorBars"))
+        .stdout(predicate::str::contains("ChartDataTable"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1736,6 +1737,108 @@ fn reverses_external_scatter_error_bars_without_a_manifest() {
     assert!(bar_xml.contains("<c:errBars>"));
     assert!(bar_xml.contains("<c:errValType val=\"fixedVal\"/>"));
     assert!(bar_xml.contains("<c:val val=\"0.5\"/>"));
+}
+
+#[test]
+fn reverses_external_chart_data_table_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-data-table.xlsx");
+    let output_path = directory.path().join("external-chart-data-table.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    let data_table = XlsxChartDataTable::new()
+        .show_horizontal_borders(false)
+        .show_vertical_borders(true)
+        .show_outline_borders(false)
+        .show_legend_keys(true);
+    chart.set_data_table(&data_table);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains(
+        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} />"
+    ));
+
+    let rebuilt_path = directory.path().join("rebuilt-chart-data-table.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<c:dTable>"));
+    assert!(!chart_xml.contains("<c:showHorzBorder"));
+    assert!(chart_xml.contains("<c:showVertBorder val=\"1\"/>"));
+    assert!(!chart_xml.contains("<c:showOutline"));
+    assert!(chart_xml.contains("<c:showKeys val=\"1\"/>"));
+}
+
+#[test]
+fn rejects_invalid_chart_data_table_properties_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-data-table.tsx");
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series, ChartDataTable } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /><ChartDataTable showHorizontalBorders="yes" /></Chart></Worksheet></Workbook>;"#).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ChartDataTable.showHorizontalBorders must be a boolean",
+        ))
+        .stderr(predicate::str::contains("use true/false"));
+}
+
+#[test]
+fn reverse_rejects_custom_chart_data_table_formatting_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("formatted-chart-data-table.xlsx");
+    let output_path = directory.path().join("formatted-chart-data-table.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    let mut data_table = XlsxChartDataTable::new();
+    let mut line = ChartLine::new();
+    data_table = data_table.set_format(&mut line);
+    chart.set_data_table(&data_table);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(workbook_path)
+        .args(["-o"])
+        .arg(output_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "unsupported `<spPr>` data-table formatting",
+        ))
+        .stderr(predicate::str::contains(
+            "remove custom fonts, shape formatting, and extensions",
+        ));
 }
 
 #[test]

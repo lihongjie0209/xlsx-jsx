@@ -12,20 +12,21 @@ use quick_xml::{
 };
 use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
-    ChartDataLabel, ChartDataLabelPosition, ChartErrorBars, ChartErrorBarsDirection,
-    ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color,
-    ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
-    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
-    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
-    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
-    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
-    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
-    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
-    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
-    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
-    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
-    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
-    TableColumn, TableStyle, Url, Workbook,
+    ChartDataLabel, ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartErrorBars,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartMarker,
+    ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
+    ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
+    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
+    ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
+    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
+    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
+    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
+    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
+    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
+    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
+    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
+    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
+    Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -694,6 +695,10 @@ fn compile_note(
         .map_err(|error| Error::Compile(format!("cannot add Note to {cell}: {error}")))
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Chart compilation applies the validated chart properties and child components in one writer pass."
+)]
 fn compile_chart(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     component: &Node,
@@ -710,7 +715,13 @@ fn compile_chart(
     let mut chart = Chart::new(chart_type);
     if component.props.get("type").and_then(Value::as_str) == Some("stock") {
         chart.set_high_low_lines(true);
-        if component.children.len() == 4 {
+        if component
+            .children
+            .iter()
+            .filter(|value| value.get("type").and_then(Value::as_str) == Some("Series"))
+            .count()
+            == 4
+        {
             chart.set_up_down_bars(true);
         }
     }
@@ -763,8 +774,43 @@ fn compile_chart(
         chart.set_height(u32::try_from(height).expect("validated Chart.height"));
     }
     for child in &component.children {
+        let child: Node = serde_json::from_value(child.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if child.r#type == "ChartDataTable" {
+            let mut data_table = XlsxChartDataTable::new();
+            if let Some(value) = child
+                .props
+                .get("showHorizontalBorders")
+                .and_then(Value::as_bool)
+            {
+                data_table = data_table.show_horizontal_borders(value);
+            }
+            if let Some(value) = child
+                .props
+                .get("showVerticalBorders")
+                .and_then(Value::as_bool)
+            {
+                data_table = data_table.show_vertical_borders(value);
+            }
+            if let Some(value) = child
+                .props
+                .get("showOutlineBorders")
+                .and_then(Value::as_bool)
+            {
+                data_table = data_table.show_outline_borders(value);
+            }
+            if let Some(value) = child.props.get("showLegendKeys").and_then(Value::as_bool) {
+                data_table = data_table.show_legend_keys(value);
+            }
+            chart.set_data_table(&data_table);
+        }
+    }
+    for child in &component.children {
         let series: Node = serde_json::from_value(child.clone())
             .map_err(|error| Error::Compile(error.to_string()))?;
+        if series.r#type == "ChartDataTable" {
+            continue;
+        }
         let chart_series = chart.add_series();
         chart_series.set_values(
             series.props["values"]
@@ -3502,7 +3548,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         open_workbook_auto(path).map_err(|error| Error::Reverse(error.to_string()))?;
     let sheet_names = workbook.sheet_names().clone();
     let mut output = String::from(
-        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Image, Chart, Series, ErrorBars, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
+        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Image, Chart, Series, ErrorBars, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
     for (name, value) in [
         ("title", workbook_properties.title.as_deref()),
@@ -3996,6 +4042,10 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "The JSX chart renderer emits chart and series properties in deterministic order."
+)]
 fn render_chart(output: &mut String, chart: &WorksheetChart) {
     let _ = writeln!(
         output,
@@ -4093,6 +4143,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             }
             output.push_str("      </Series>\n");
         }
+    }
+    if let Some(table) = &chart.data_table {
+        let _ = writeln!(
+            output,
+            "      <ChartDataTable showHorizontalBorders={{{}}} showVerticalBorders={{{}}} showOutlineBorders={{{}}} showLegendKeys={{{}}} />",
+            table.show_horizontal_borders,
+            table.show_vertical_borders,
+            table.show_outline_borders,
+            table.show_legend_keys
+        );
     }
     output.push_str("    </Chart>\n");
 }
@@ -6897,6 +6957,11 @@ fn parse_chart_xml(
         "t",
         "endParaRPr",
         "plotArea",
+        "dTable",
+        "showHorzBorder",
+        "showVertBorder",
+        "showOutline",
+        "showKeys",
         "layout",
         "areaChart",
         "barChart",
@@ -7006,6 +7071,9 @@ fn parse_chart_xml(
     let mut stock_high_low_lines = false;
     let mut stock_up_down_bars = false;
     let mut series = Vec::<WorksheetChartSeries>::new();
+    let mut data_table: Option<WorksheetChartDataTable> = None;
+    let mut data_table_flags_seen = [false; 4];
+    let mut data_table_last_flag = None;
     let mut current_error_bar: Option<usize> = None;
     let mut formula_target: Option<&'static str> = None;
     let mut title_source_open = false;
@@ -7178,7 +7246,63 @@ fn parse_chart_xml(
                     )));
                 }
                 audit_chart_attributes(&event, &tag, part, reader.decoder(), chart_type)?;
+                if stack.iter().any(|ancestor| ancestor == "dTable")
+                    && !matches!(
+                        tag.as_str(),
+                        "showHorzBorder" | "showVertBorder" | "showOutline" | "showKeys"
+                    )
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported `<{tag}>` data-table formatting; only the four display flags are represented, so remove custom fonts, shape formatting, and extensions"
+                    )));
+                }
                 match tag.as_str() {
+                    "dTable" => {
+                        if stack.last().is_none_or(|parent| parent != "plotArea")
+                            || data_table.is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a duplicate or misplaced dTable; keep at most one data table directly inside plotArea"
+                            )));
+                        }
+                        data_table = Some(WorksheetChartDataTable::default());
+                    }
+                    "showHorzBorder" | "showVertBorder" | "showOutline" | "showKeys" => {
+                        if stack.last().is_none_or(|parent| parent != "dTable") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {tag} outside dTable; repair the data-table structure"
+                            )));
+                        }
+                        let index = match tag.as_str() {
+                            "showHorzBorder" => 0,
+                            "showVertBorder" => 1,
+                            "showOutline" => 2,
+                            _ => 3,
+                        };
+                        if data_table_flags_seen[index]
+                            || data_table_last_flag.is_some_and(|last| index <= last)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has duplicate or out-of-order {tag}; use OOXML order: horizontal, vertical, outline, legend keys"
+                            )));
+                        }
+                        data_table_flags_seen[index] = true;
+                        data_table_last_flag = Some(index);
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), &tag).ok();
+                        let enabled = raw
+                            .as_deref()
+                            .map(|value| parse_xml_bool(value, part, &format!("{tag}@val")))
+                            .transpose()?
+                            .unwrap_or(true);
+                        let table = data_table.as_mut().expect("dTable was validated");
+                        match index {
+                            0 => table.show_horizontal_borders = enabled,
+                            1 => table.show_vertical_borders = enabled,
+                            2 => table.show_outline_borders = enabled,
+                            _ => table.show_legend_keys = enabled,
+                        }
+                    }
                     "catAx" | "dateAx" | "valAx" => {
                         if pending_axis_hidden.is_some() {
                             return Err(Error::Reverse(format!(
@@ -9158,6 +9282,7 @@ fn parse_chart_xml(
         first_slice_angle: first_slice_angle.filter(|angle| *angle != 0),
         style: chart_style,
         alt_text: anchor.alt_text,
+        data_table,
         series,
     })
 }
@@ -9905,6 +10030,9 @@ fn is_supported_chart_attribute(
             matches!(value, "0" | "1" | "false" | "true")
         }
         ("showLegendKey" | "showLeaderLines", "val") => {
+            matches!(value, "0" | "1" | "false" | "true")
+        }
+        ("showHorzBorder" | "showVertBorder" | "showOutline" | "showKeys", "val") => {
             matches!(value, "0" | "1" | "false" | "true")
         }
         ("ext", "uri") => value == "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}",
@@ -12523,7 +12651,20 @@ struct WorksheetChart {
     first_slice_angle: Option<u16>,
     style: Option<u8>,
     alt_text: Option<String>,
+    data_table: Option<WorksheetChartDataTable>,
     series: Vec<WorksheetChartSeries>,
+}
+
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "The four independent OOXML data-table display flags are genuine booleans."
+)]
+#[derive(Clone, Default)]
+struct WorksheetChartDataTable {
+    show_horizontal_borders: bool,
+    show_vertical_borders: bool,
+    show_outline_borders: bool,
+    show_legend_keys: bool,
 }
 
 #[derive(Clone)]

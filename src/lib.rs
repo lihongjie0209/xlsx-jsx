@@ -1877,6 +1877,10 @@ fn is_supported_chart_type(chart_type: &str) -> bool {
     )
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Chart validation keeps the chart-level constraints together with its ordered children."
+)]
 fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     reject_unknown_props(
         chart,
@@ -1972,7 +1976,14 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     if chart_type == "stock" {
         validate_stock_chart(chart)?;
     }
-    if matches!(chart_type, "pie" | "doughnut") && chart.children.len() != 1 {
+    if matches!(chart_type, "pie" | "doughnut")
+        && chart
+            .children
+            .iter()
+            .filter(|value| value.get("type").and_then(Value::as_str) == Some("Series"))
+            .count()
+            != 1
+    {
         return Err(Error::Compile(
             "pie and doughnut Charts accept exactly one Series; split the data into separate charts or choose area, column, bar, or line".into(),
         ));
@@ -2419,8 +2430,11 @@ fn validate_scatter_chart(chart: &Node, chart_type: &str) -> Result<()> {
         return Ok(());
     }
     for (series_index, value) in chart.children.iter().enumerate() {
-        let series: Node = serde_json::from_value(value.clone())
+        let series: Node = serde_json::from_value((*value).clone())
             .map_err(|error| Error::Compile(error.to_string()))?;
+        if series.r#type == "ChartDataTable" {
+            continue;
+        }
         if !series.props.contains_key("categories") {
             return Err(Error::Compile(format!(
                 "scatter Chart Series {} requires categories as its X-value range; add a sheet-qualified range such as categories=\"Data!$A$2:$A$5\"",
@@ -2500,8 +2514,65 @@ fn validate_chart_legend(chart: &Node) -> Result<()> {
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Series and optional data-table child validation share chart-specific invariants and diagnostics."
+)]
 fn validate_chart_series(chart: &Node) -> Result<()> {
-    if chart.children.is_empty() {
+    let mut series_count = 0;
+    let mut data_table_seen = false;
+    for (child_index, value) in chart.children.iter().enumerate() {
+        let child: Node = serde_json::from_value(value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if child.r#type == "ChartDataTable" {
+            if data_table_seen {
+                return Err(Error::Compile(
+                    "Chart accepts at most one ChartDataTable; remove the duplicate".into(),
+                ));
+            }
+            data_table_seen = true;
+            if !child.children.is_empty() {
+                return Err(Error::Compile(
+                    "ChartDataTable cannot contain children; remove nested content".into(),
+                ));
+            }
+            reject_unknown_props(
+                &child,
+                &[
+                    "showHorizontalBorders",
+                    "showVerticalBorders",
+                    "showOutlineBorders",
+                    "showLegendKeys",
+                ],
+                "ChartDataTable",
+            )?;
+            for property in [
+                "showHorizontalBorders",
+                "showVerticalBorders",
+                "showOutlineBorders",
+                "showLegendKeys",
+            ] {
+                if child
+                    .props
+                    .get(property)
+                    .is_some_and(|value| !value.is_boolean())
+                {
+                    return Err(Error::Compile(format!(
+                        "ChartDataTable.{property} must be a boolean; use true/false or omit it"
+                    )));
+                }
+            }
+            continue;
+        }
+        if child.r#type != "Series" {
+            return Err(Error::Compile(format!(
+                "Chart child {} must be a Series or ChartDataTable component",
+                child_index + 1
+            )));
+        }
+        series_count += 1;
+    }
+    if series_count == 0 {
         return Err(Error::Compile(
             "Chart requires at least one Series child".into(),
         ));
@@ -2509,11 +2580,8 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
     for (series_index, value) in chart.children.iter().enumerate() {
         let series: Node = serde_json::from_value(value.clone())
             .map_err(|error| Error::Compile(error.to_string()))?;
-        if series.r#type != "Series" {
-            return Err(Error::Compile(format!(
-                "Chart child {} must be a Series component",
-                series_index + 1
-            )));
+        if series.r#type == "ChartDataTable" {
+            continue;
         }
         reject_unknown_props(
             &series,
@@ -2898,14 +2966,19 @@ pub fn chart_data_label_separator_name(separator: char) -> Option<&'static str> 
 }
 
 fn validate_stock_chart(chart: &Node) -> Result<()> {
-    if !matches!(chart.children.len(), 3 | 4) {
+    let chart_series: Vec<&Value> = chart
+        .children
+        .iter()
+        .filter(|value| value.get("type").and_then(Value::as_str) == Some("Series"))
+        .collect();
+    if !matches!(chart_series.len(), 3 | 4) {
         return Err(Error::Compile(
             "stock Charts require exactly 3 Series (High, Low, Close) or 4 Series (Open, High, Low, Close); add/remove Series and preserve that order".into(),
         ));
     }
     let mut categories: Option<String> = None;
-    for (series_index, value) in chart.children.iter().enumerate() {
-        let series: Node = serde_json::from_value(value.clone())
+    for (series_index, value) in chart_series.iter().enumerate() {
+        let series: Node = serde_json::from_value((*value).clone())
             .map_err(|error| Error::Compile(error.to_string()))?;
         let current = series
             .props
@@ -3031,6 +3104,9 @@ fn validate_chart_sheet_references(
             for series_value in &chart.children {
                 let series: Node = serde_json::from_value(series_value.clone())
                     .map_err(|error| Error::Compile(error.to_string()))?;
+                if series.r#type == "ChartDataTable" {
+                    continue;
+                }
                 for property in ["values", "categories", "name"] {
                     let Some(formula) = series.props.get(property).and_then(Value::as_str) else {
                         continue;

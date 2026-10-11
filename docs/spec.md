@@ -97,6 +97,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   OOXML default of 10 explicitly. `Chart.firstSliceAngle?: number` is valid
   only for pie and doughnut charts, accepts integer degrees from 0 through 360,
   and defaults to 0; reverse preserves non-default angles.
+- `ChartDataTable` is an optional child of `Chart`, at most one per chart.
+  `showHorizontalBorders`, `showVerticalBorders`, `showOutlineBorders`, and
+  `showLegendKeys` are booleans. Omission uses the pinned writer defaults
+  (horizontal/vertical/outline on, legend keys off). Reverse preserves the
+  four OOXML display flags, treating an omitted flag element as false. Custom
+  data-table shape formatting, fonts, and extensions are rejected with repair
+  guidance rather than dropped.
 - `cell` is an A1 cell anchor. `width` and `height` are positive integer pixels
   (1–1790); omission uses the writer defaults of 480×288 pixels. `Series` has
   required `values` and optional `categories` and `name` sheet-qualified A1
