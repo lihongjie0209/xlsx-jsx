@@ -547,6 +547,7 @@
             "showLegend": { "type": "boolean" },
             "autoTitleDeleted": { "type": "boolean" },
             "titleOverlay": { "type": "boolean" },
+            "titleFontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
             "titleLayout": {
               "type": "object",
               "required": ["x", "y"],
@@ -591,7 +592,7 @@
             "width": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "height": { "type": "integer", "minimum": 1, "maximum": 1790 }
           },
-          "dependentRequired": { "titleLayout": ["title"] },
+          "dependentRequired": { "titleLayout": ["title"], "titleFontSize": ["title"] },
           "additionalProperties": false
         },
         "children": {

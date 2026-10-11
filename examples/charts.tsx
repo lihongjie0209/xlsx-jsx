@@ -106,7 +106,7 @@ export default <Workbook>
     <Chart type="column" cell="D218" width={480} height={288} yAxisLogBase={10} yAxisMin={1}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue (log scale)" />
     </Chart>
-    <Chart type="column" cell="K218" title="Manually positioned chart title" titleLayout={{x: 0, y: 0.15}} plotAreaLayout={{x: 0, y: 0.3, width: 0.7, height: 0.5}} legendLayout={{x: 0.1, y: 0, width: 0.3, height: 0.4}}>
+    <Chart type="column" cell="K218" title="Manually positioned chart title" titleFontSize={16} titleLayout={{x: 0, y: 0.15}} plotAreaLayout={{x: 0, y: 0.3, width: 0.7, height: 0.5}} legendLayout={{x: 0.1, y: 0, width: 0.3, height: 0.4}}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Manually positioned plot area" />
     </Chart>
   </Worksheet>

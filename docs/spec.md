@@ -161,7 +161,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   titles separately from cell-reference names.
 - `Chart.title?: string` is a static chart title (1–255 valid XML characters).
   External titles are reversible only when they are one unformatted rich-text
-  run; formulas, multiple runs, and custom title formatting fail with guidance.
+  run; formulas and multiple runs fail with guidance. `titleFontSize?: number`
+  sets that run's font size in points (1–4000) and reverses the explicit
+  DrawingML hundredths-of-a-point size. Other custom title formatting remains
+  rejected unless it has an explicit DSL property.
 - `Chart.titleLayout?: { x, y }` manually positions a static chart title using
   finite relative fractions in `[0, 1]` of the chart width and height. The
   writer uses outer/default layout target and edge positioning. It requires

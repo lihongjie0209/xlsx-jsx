@@ -1944,6 +1944,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "autoTitleDeleted",
             "titleOverlay",
             "titleLayout",
+            "titleFontSize",
             "chartAreaFillColor",
             "plotAreaFillColor",
             "plotAreaLayout",
@@ -2161,6 +2162,24 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 }
 
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
+    if let Some(value) = chart.props.get("titleFontSize") {
+        let Some(size) = value.as_f64() else {
+            return Err(Error::Compile(
+                "Chart.titleFontSize must be a number in points; use a numeric value from 1 to 4000".into(),
+            ));
+        };
+        if !size.is_finite() || !(1.0..=4000.0).contains(&size) {
+            return Err(Error::Compile(
+                "Chart.titleFontSize must be between 1 and 4000 points; choose a value in that range".into(),
+            ));
+        }
+    }
+    if chart.props.contains_key("titleFontSize") && !chart.props.contains_key("title") {
+        return Err(Error::Compile(
+            "Chart.titleFontSize requires Chart.title; add a static title or remove titleFontSize"
+                .into(),
+        ));
+    }
     if chart.props.contains_key("titleLayout") && !chart.props.contains_key("title") {
         return Err(Error::Compile(
             "Chart.titleLayout requires Chart.title; add a static title or remove titleLayout"

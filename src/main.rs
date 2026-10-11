@@ -777,6 +777,11 @@ fn compile_chart(
     if let Some(title) = component.props.get("title").and_then(Value::as_str) {
         chart.title().set_name(title);
     }
+    if let Some(size) = component.props.get("titleFontSize").and_then(Value::as_f64) {
+        let mut font = rust_xlsxwriter::ChartFont::new();
+        font.set_size(size);
+        chart.title().set_font(&font);
+    }
     if let Some(layout) = component.props.get("titleLayout") {
         chart.title().set_layout(&ChartLayout::new().set_offset(
             layout["x"].as_f64().expect("validated titleLayout.x"),
@@ -5028,6 +5033,9 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     if chart.auto_title_deleted {
         properties.push_str(" autoTitleDeleted={true}");
     }
+    if let Some(size) = chart.title_font_size {
+        let _ = write!(properties, " titleFontSize={{{size}}}");
+    }
     if !chart.legend_deleted_entries.is_empty() {
         let entries = chart
             .legend_deleted_entries
@@ -8107,6 +8115,8 @@ fn parse_chart_xml(
     let mut chart_title_target: Option<&'static str> = None;
     let mut series_literal_title_open = false;
     let mut chart_title: Option<String> = None;
+    let mut title_font_size: Option<f64> = None;
+    let mut title_font_size_seen = false;
     let mut title_overlay = false;
     let mut title_overlay_seen = false;
     let mut x_axis_title: Option<String> = None;
@@ -8272,6 +8282,49 @@ fn parse_chart_xml(
                     unreachable!()
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if matches!(tag.as_str(), "rPr" | "defRPr")
+                    && stack.iter().any(|ancestor| ancestor == "title")
+                {
+                    let size = event
+                        .attributes()
+                        .with_checks(false)
+                        .filter_map(Result::ok)
+                        .find(|attribute| attribute.key.local_name().as_ref() == b"sz")
+                        .map(|attribute| {
+                            attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    reader.decoder(),
+                                )
+                                .map_err(|error| Error::Reverse(error.to_string()))
+                        })
+                        .transpose()?;
+                    if let Some(size) = size {
+                        if chart_title_target != Some("title") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported `{tag}@sz={size}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
+                            )));
+                        }
+                        let hundredths = size.parse::<u32>().map_err(|_| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has an invalid chart-title font size `{size}`; use an explicit size from 100 to 400000 hundredths of a point"
+                            ))
+                        })?;
+                        if !(100..=400_000).contains(&hundredths) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has chart-title font size `{hundredths}` outside 100–400000 hundredths of a point; correct the DrawingML size"
+                            )));
+                        }
+                        let points = f64::from(hundredths) / 100.0;
+                        if title_font_size_seen && title_font_size != Some(points) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent default/run chart-title font sizes; make them identical or remove the custom formatting"
+                            )));
+                        }
+                        title_font_size = Some(points);
+                        title_font_size_seen = true;
+                    }
+                }
                 let area_sppr_context = chart_area_sppr_context(&stack);
                 if area_sppr_context.is_some() && !matches!(tag.as_str(), "solidFill" | "srgbClr") {
                     return Err(Error::Reverse(format!(
@@ -12350,6 +12403,7 @@ fn parse_chart_xml(
         height,
         name: anchor.name,
         title: chart_title,
+        title_font_size,
         title_overlay,
         chart_area_fill_color,
         plot_area_fill_color,
@@ -13282,6 +13336,9 @@ fn is_supported_chart_attribute(
 ) -> bool {
     match (tag, key) {
         ("lang", "val") | ("endParaRPr" | "rPr", "lang") => value == "en-US",
+        ("rPr" | "defRPr", "sz") => value
+            .parse::<u32>()
+            .is_ok_and(|size| (100..=400_000).contains(&size)),
         ("barDir", "val") => matches!(value, "col" | "bar"),
         ("radarStyle", "val") => {
             chart_type == Some("radar") && matches!(value, "standard" | "marker" | "filled")
@@ -16084,6 +16141,7 @@ struct WorksheetChart {
     height: u32,
     name: String,
     title: Option<String>,
+    title_font_size: Option<f64>,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     plot_area_fill_color: Option<String>,
