@@ -1911,6 +1911,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "horizontalAxisLabelPosition",
             "verticalAxisLabelPosition",
             "categoryAxisLabelAlignment",
+            "horizontalAxisHidden",
+            "verticalAxisHidden",
             "showLegend",
             "legendPosition",
             "holeSize",
@@ -2012,6 +2014,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_axis_tick_types(chart, chart_type)?;
     validate_chart_axis_label_positions(chart, chart_type)?;
     validate_chart_category_axis_label_alignment(chart, chart_type)?;
+    validate_chart_axis_hidden(chart, chart_type)?;
     validate_chart_axis_units(chart, chart_type)?;
     validate_chart_gridlines(chart, chart_type)?;
     validate_chart_legend(chart)
@@ -2227,6 +2230,25 @@ fn validate_chart_category_axis_label_alignment(chart: &Node, chart_type: &str) 
         return Err(Error::Compile(
             "Chart.categoryAxisLabelAlignment must be center, left, or right; remove the property or choose one of these alignments".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_chart_axis_hidden(chart: &Node, chart_type: &str) -> Result<()> {
+    for property in ["horizontalAxisHidden", "verticalAxisHidden"] {
+        let Some(value) = chart.props.get(property) else {
+            continue;
+        };
+        if matches!(chart_type, "pie" | "doughnut") {
+            return Err(Error::Compile(format!(
+                "Chart.{property} is not supported for pie or doughnut charts because they have no axes; omit it or use a chart with axes"
+            )));
+        }
+        if !value.is_boolean() {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be a boolean; use true to hide the axis or false to keep it visible"
+            )));
+        }
     }
     Ok(())
 }

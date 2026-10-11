@@ -142,6 +142,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("horizontalAxisLabelPosition"))
         .stdout(predicate::str::contains("verticalAxisLabelPosition"))
         .stdout(predicate::str::contains("categoryAxisLabelAlignment"))
+        .stdout(predicate::str::contains("horizontalAxisHidden"))
+        .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
         .stdout(predicate::str::contains("yAxisMinorUnit"))
         .stdout(predicate::str::contains("horizontalAxisMajorGridlines"))
@@ -1202,6 +1204,99 @@ fn reverses_external_category_axis_label_alignment_without_a_manifest() {
     assert!(first_chart_xml.contains("<c:lblAlgn val=\"l\"/>"));
     assert!(second_chart_xml.contains("<c:lblAlgn val=\"r\"/>"));
     assert!(third_chart_xml.contains("<c:lblAlgn val=\"ctr\"/>"));
+}
+
+#[test]
+fn reverses_external_hidden_chart_axes_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-hidden-chart-axes.xlsx");
+    let output_path = directory.path().join("external-hidden-chart-axes.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+
+    let mut column = XlsxChart::new(ChartType::Column);
+    column
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    column.x_axis().set_hidden(true);
+    worksheet.insert_chart(0, 5, &column).unwrap();
+
+    let mut bar = XlsxChart::new(ChartType::Bar);
+    bar.add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    bar.y_axis().set_hidden(true);
+    worksheet.insert_chart(18, 5, &bar).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("horizontalAxisHidden={true}"));
+    assert!(source.contains("verticalAxisHidden={true}"));
+
+    let rebuilt_path = directory.path().join("rebuilt-hidden-chart-axes.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let first_chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    let second_chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    assert!(first_chart_xml.contains("<c:delete val=\"1\"/>"));
+    assert!(second_chart_xml.contains("<c:delete val=\"1\"/>"));
+}
+
+#[test]
+fn rejects_non_boolean_chart_axis_visibility_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-axis-hidden.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" horizontalAxisHidden="yes"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.horizontalAxisHidden must be a boolean",
+        ))
+        .stderr(predicate::str::contains("use true to hide the axis"));
+}
+
+#[test]
+fn rejects_axis_visibility_for_pie_charts_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("pie-chart-axis-hidden.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="pie" cell="D2" verticalAxisHidden={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "verticalAxisHidden is not supported for pie or doughnut charts",
+        ))
+        .stderr(predicate::str::contains("use a chart with axes"));
 }
 
 #[test]

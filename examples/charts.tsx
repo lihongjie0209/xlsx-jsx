@@ -8,14 +8,14 @@ export default <Workbook>
     <Row><Cell>Mar</Cell><Cell value={15} /><Cell value={6} /></Row>
   </Worksheet>
   <Worksheet name="Sales">
-    <Chart type="column" cell="D2" width={480} height={288} name="Revenue and expenses" title="Monthly revenue &amp; expenses — 2026" xAxisTitle="Month" yAxisTitle="Revenue ($)" yAxisNumberFormat="$#,##0.00" yAxisMin={0} yAxisMax={20} yAxisMajorUnit={5} yAxisMinorUnit={1} categoryAxisLabelAlignment="left" horizontalAxisMinorGridlines={true} verticalAxisMajorGridlines={false} horizontalAxisMajorTickType="none" verticalAxisMajorTickType="outside" horizontalAxisLabelPosition="high" verticalAxisLabelPosition="low" legendPosition="bottom" altText="Monthly revenue compared with expenses">
+    <Chart type="column" cell="D2" width={480} height={288} name="Revenue and expenses" title="Monthly revenue &amp; expenses — 2026" xAxisTitle="Month" yAxisTitle="Revenue ($)" yAxisNumberFormat="$#,##0.00" yAxisMin={0} yAxisMax={20} yAxisMajorUnit={5} yAxisMinorUnit={1} categoryAxisLabelAlignment="left" horizontalAxisHidden={true} horizontalAxisMinorGridlines={true} verticalAxisMajorGridlines={false} horizontalAxisMajorTickType="none" verticalAxisMajorTickType="outside" horizontalAxisLabelPosition="high" verticalAxisLabelPosition="low" legendPosition="bottom" altText="Monthly revenue compared with expenses">
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" />
     </Chart>
     <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true} categoryAxisLabelInterval={2} categoryAxisTickInterval={2}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
     </Chart>
-    <Chart type="bar" cell="D20" width={480} height={288}>
+    <Chart type="bar" cell="D20" width={480} height={288} verticalAxisHidden={true}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
     </Chart>
     <Chart type="pie" cell="K20" width={480} height={288} firstSliceAngle={210}>

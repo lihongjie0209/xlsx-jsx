@@ -182,6 +182,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `l` and `r`. This property applies to category-axis charts, including bars;
   scatter and pie/doughnut charts reject it because they have no category axis.
   Reverse rejects label alignment on unsupported axis structures.
+- `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
+  hide the primary axis by physical orientation. For bar charts the horizontal
+  axis is the value axis and the vertical axis is the category axis; reversed
+  axes retain their orientation-based names. Omission/`false` is the default;
+  reverse preserves `delete=true` as `true`. Pie/doughnut reject these fields,
+  and reverse rejects hidden declarations that cannot be mapped to one primary
+  horizontal or vertical axis.
 - `Chart.horizontalAxisMajorGridlines?: boolean`,
   `Chart.horizontalAxisMinorGridlines?: boolean`,
   `Chart.verticalAxisMajorGridlines?: boolean`, and

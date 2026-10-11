@@ -945,7 +945,26 @@ fn configure_chart_category_axis_settings(
     configure_chart_category_axis_intervals(chart, component);
     configure_chart_axis_tick_types(chart, component)?;
     configure_chart_axis_label_positions(chart, component)?;
-    configure_chart_category_axis_label_alignment(chart, component)
+    configure_chart_category_axis_label_alignment(chart, component)?;
+    configure_chart_axis_hidden(chart, component);
+    Ok(())
+}
+
+fn configure_chart_axis_hidden(chart: &mut Chart, component: &Node) {
+    for (property, horizontal) in [
+        ("horizontalAxisHidden", true),
+        ("verticalAxisHidden", false),
+    ] {
+        let Some(hidden) = component.props.get(property).and_then(Value::as_bool) else {
+            continue;
+        };
+        let axis = if horizontal {
+            chart.x_axis()
+        } else {
+            chart.y_axis()
+        };
+        axis.set_hidden(hidden);
+    }
 }
 
 fn configure_chart_category_axis_label_alignment(
@@ -3856,6 +3875,12 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     append_chart_axis_label_properties(&mut properties, chart);
     if let Some(value) = chart.category_axis_label_alignment {
         let _ = write!(properties, " categoryAxisLabelAlignment=\"{value}\"");
+    }
+    if chart.horizontal_axis_hidden == Some(true) {
+        properties.push_str(" horizontalAxisHidden={true}");
+    }
+    if chart.vertical_axis_hidden == Some(true) {
+        properties.push_str(" verticalAxisHidden={true}");
     }
     properties
 }
@@ -6771,8 +6796,15 @@ fn parse_chart_xml(
     let mut vertical_axis_label_position_seen = false;
     let mut category_axis_label_alignment: Option<&'static str> = None;
     let mut category_axis_label_alignment_seen = false;
+    let mut horizontal_axis_hidden = false;
+    let mut vertical_axis_hidden = false;
+    let mut horizontal_axis_hidden_seen = false;
+    let mut vertical_axis_hidden_seen = false;
+    let mut current_axis_hidden_declared = false;
+    let mut pending_axis_hidden: Option<bool> = None;
     let mut legend_seen = false;
     let mut legend_deleted = false;
+    let mut legend_delete_seen = false;
     let mut legend_position: Option<&'static str> = None;
     let mut hole_size = None;
     let mut hole_size_seen = false;
@@ -6831,6 +6863,11 @@ fn parse_chart_xml(
                 audit_chart_attributes(&event, &tag, part, reader.decoder(), chart_type)?;
                 match tag.as_str() {
                     "catAx" | "dateAx" | "valAx" => {
+                        if pending_axis_hidden.is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` hides an axis without a supported axPos; repair the axis position"
+                            )));
+                        }
                         chart_axis_count += 1;
                         if chart_axis_count > 2 {
                             return Err(Error::Reverse(format!(
@@ -6838,6 +6875,7 @@ fn parse_chart_xml(
                             )));
                         }
                         current_axis_position = None;
+                        current_axis_hidden_declared = false;
                     }
                     "axPos" => {
                         current_axis_position = event
@@ -6866,6 +6904,29 @@ fn parse_chart_xml(
                                         _ => "unsupported",
                                     })
                             });
+                        if let Some(hidden) = pending_axis_hidden.take() {
+                            let Some(position @ ("b" | "t" | "l" | "r")) = current_axis_position
+                            else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` hides an axis without a supported axPos; repair the axis position"
+                                )));
+                            };
+                            let (seen, target) = if matches!(position, "b" | "t") {
+                                (
+                                    &mut horizontal_axis_hidden_seen,
+                                    &mut horizontal_axis_hidden,
+                                )
+                            } else {
+                                (&mut vertical_axis_hidden_seen, &mut vertical_axis_hidden)
+                            };
+                            if *seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats axis deletion at the same orientation; retain one primary axis per orientation"
+                                )));
+                            }
+                            *seen = true;
+                            *target = hidden;
+                        }
                     }
                     "majorGridlines" | "minorGridlines" => {
                         if !stack.iter().any(|ancestor| {
@@ -7117,14 +7178,52 @@ fn parse_chart_xml(
                         }
                     }
                     "delete" => {
-                        if stack.last().is_none_or(|ancestor| ancestor != "legend")
-                            || legend_deleted
-                        {
+                        let raw_hidden = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                            .and_then(|attribute| {
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .ok()
+                                    .map(std::borrow::Cow::into_owned)
+                            });
+                        let Some(hidden) = raw_hidden.and_then(|value| match value.as_str() {
+                            "1" | "true" => Some(true),
+                            "0" | "false" => Some(false),
+                            _ => None,
+                        }) else {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a delete element outside legend or repeats it; remove it or extend chart deletion support"
+                                "chart part `{part}` has an invalid delete flag; use the OOXML boolean 0/1 or true/false"
+                            )));
+                        };
+                        if stack.last().is_some_and(|ancestor| {
+                            matches!(ancestor.as_str(), "catAx" | "dateAx" | "valAx")
+                        }) {
+                            if current_axis_hidden_declared {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats axis deletion; keep at most one delete declaration per primary axis"
+                                )));
+                            }
+                            current_axis_hidden_declared = true;
+                            pending_axis_hidden = Some(hidden);
+                        } else if stack.last().is_some_and(|ancestor| ancestor == "legend") {
+                            if !legend_seen || legend_delete_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a legend delete outside its legend or repeats it; keep one delete declaration inside legend"
+                                )));
+                            }
+                            legend_delete_seen = true;
+                            legend_deleted = hidden;
+                        } else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a delete element outside a primary axis or legend; remove it or add matching deletion support"
                             )));
                         }
-                        legend_deleted = true;
                     }
                     _ => {}
                 }
@@ -7982,6 +8081,11 @@ fn parse_chart_xml(
             }
         }
     }
+    if pending_axis_hidden.is_some() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` hides an axis without a supported axPos; repair the axis position"
+        )));
+    }
     let chart_type = chart_type.ok_or_else(|| {
         Error::Reverse(format!(
             "chart part `{part}` has no supported chart type; use an area, column, bar, line, pie, or doughnut chart"
@@ -8144,6 +8248,8 @@ fn parse_chart_xml(
         horizontal_axis_label_position,
         vertical_axis_label_position,
         category_axis_label_alignment,
+        horizontal_axis_hidden: horizontal_axis_hidden.then_some(true),
+        vertical_axis_hidden: vertical_axis_hidden.then_some(true),
         y_axis_major_unit,
         y_axis_minor_unit,
         horizontal_axis_major_gridlines: (horizontal_major_gridlines
@@ -8763,6 +8869,7 @@ fn is_supported_chart_attribute(
         }
         ("crosses", "val") => value == "autoZero",
         ("auto" | "plotVisOnly" | "marker" | "varyColors", "val") => value == "1",
+        ("delete", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("numFmt", "sourceLinked") => {
             matches!(value, "0" | "1" | "false" | "true")
         }
@@ -11307,6 +11414,8 @@ struct WorksheetChart {
     horizontal_axis_label_position: Option<&'static str>,
     vertical_axis_label_position: Option<&'static str>,
     category_axis_label_alignment: Option<&'static str>,
+    horizontal_axis_hidden: Option<bool>,
+    vertical_axis_hidden: Option<bool>,
     show_legend: bool,
     legend_position: Option<&'static str>,
     hole_size: Option<u8>,
