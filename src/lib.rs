@@ -1912,6 +1912,24 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisTitleFontPitchFamily",
             "yAxisTitleFontCharset",
             "yAxisTitleFontRotation",
+            "xAxisLabelFontSize",
+            "xAxisLabelFontBold",
+            "xAxisLabelFontItalic",
+            "xAxisLabelFontUnderline",
+            "xAxisLabelFontColor",
+            "xAxisLabelFontName",
+            "xAxisLabelFontPitchFamily",
+            "xAxisLabelFontCharset",
+            "xAxisLabelFontRotation",
+            "yAxisLabelFontSize",
+            "yAxisLabelFontBold",
+            "yAxisLabelFontItalic",
+            "yAxisLabelFontUnderline",
+            "yAxisLabelFontColor",
+            "yAxisLabelFontName",
+            "yAxisLabelFontPitchFamily",
+            "yAxisLabelFontCharset",
+            "yAxisLabelFontRotation",
             "xAxisNumberFormat",
             "yAxisNumberFormat",
             "xAxisMajorUnit",
@@ -2190,6 +2208,7 @@ fn validate_chart_crossings(chart: &Node, chart_type: &str) -> Result<()> {
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_title_font_properties(chart)?;
     validate_chart_axis_title_fonts(chart)?;
+    validate_chart_axis_label_fonts(chart)?;
     if chart.props.contains_key("titleLayout") && !chart.props.contains_key("title") {
         return Err(Error::Compile(
             "Chart.titleLayout requires Chart.title; add a static title or remove titleLayout"
@@ -2350,9 +2369,21 @@ fn validate_chart_title_font_properties(chart: &Node) -> Result<()> {
 }
 
 fn validate_chart_axis_title_fonts(chart: &Node) -> Result<()> {
+    validate_chart_axis_font_properties(chart, "Title", true)
+}
+
+fn validate_chart_axis_label_fonts(chart: &Node) -> Result<()> {
+    validate_chart_axis_font_properties(chart, "Label", false)
+}
+
+fn validate_chart_axis_font_properties(
+    chart: &Node,
+    kind: &str,
+    require_title: bool,
+) -> Result<()> {
     for axis in ["x", "y"] {
         let title = format!("{axis}AxisTitle");
-        let prefix = format!("{title}Font");
+        let prefix = format!("{axis}Axis{kind}Font");
         for suffix in [
             "Size",
             "Bold",
@@ -2368,7 +2399,7 @@ fn validate_chart_axis_title_fonts(chart: &Node) -> Result<()> {
             let Some(value) = chart.props.get(&property) else {
                 continue;
             };
-            if !chart.props.contains_key(&title) {
+            if require_title && !chart.props.contains_key(&title) {
                 return Err(Error::Compile(format!(
                     "Chart.{property} requires Chart.{title}; add the matching axis title or remove {property}"
                 )));
@@ -2487,14 +2518,39 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
 }
 
 fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
-    if matches!(chart_type, "pie" | "doughnut")
-        && ["xAxisTitle", "yAxisTitle"]
+    if matches!(chart_type, "pie" | "doughnut") {
+        let axis_titles = ["xAxisTitle", "yAxisTitle"];
+        if axis_titles
             .iter()
             .any(|property| chart.props.contains_key(*property))
-    {
-        return Err(Error::Compile(
-            "pie and doughnut Charts have no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
-        ));
+        {
+            return Err(Error::Compile(
+                "pie and doughnut Charts have no X/Y axes; remove xAxisTitle and yAxisTitle or use a column, bar, or line chart".into(),
+            ));
+        }
+        if ["x", "y"].iter().any(|axis| {
+            [
+                "Size",
+                "Bold",
+                "Italic",
+                "Underline",
+                "Color",
+                "Name",
+                "PitchFamily",
+                "Charset",
+                "Rotation",
+            ]
+            .iter()
+            .any(|suffix| {
+                chart
+                    .props
+                    .contains_key(&format!("{axis}AxisLabelFont{suffix}"))
+            })
+        }) {
+            return Err(Error::Compile(
+                "pie and doughnut Charts have no X/Y axis labels; remove xAxisLabelFont* and yAxisLabelFont* or use a chart type with axes".into(),
+            ));
+        }
     }
     Ok(())
 }

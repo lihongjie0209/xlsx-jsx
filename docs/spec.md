@@ -259,6 +259,17 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   invalid. Rotation is an integer from -90–90 or 270/271 for stacked/East Asian
   vertical text. Font properties require their matching axis title; other run
   formatting remains rejected.
+- `Chart.xAxisLabelFont*` and `Chart.yAxisLabelFont*` style axis tick labels,
+  separately from axis titles. X means the category/date axis on category
+  charts and the top/bottom value axis on scatter charts; Y means the value
+  axis and the left/right scatter value axis. Supported suffixes are `Size`
+  (points, 1–4000), `Bold`, `Italic`, `Underline` (boolean, with false folded
+  to the writer default), `Color` (opaque `#RRGGBB`), `Name` (non-empty
+  XML-safe Latin typeface), `PitchFamily` (0–255), `Charset` (0–127; larger
+  values produce schema-invalid OOXML), and `Rotation` (integer -90–90 or
+  270/271 for vertical text). Pie/doughnut charts have no axis tick labels.
+  External `<c:txPr>` default/run styles must agree; unsupported paragraph,
+  font, color, and extension metadata is rejected rather than dropped.
 - `Chart.xAxisNumberFormat?: string` and `Chart.yAxisNumberFormat?: string`
   set Excel number-format codes on the corresponding category/date and value
   axes. Each is a non-empty, XML-safe format code of at most 255 characters;

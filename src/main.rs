@@ -876,13 +876,21 @@ fn compile_chart(
     if let Some(title) = component.props.get("yAxisTitle").and_then(Value::as_str) {
         chart.y_axis().set_name(title);
     }
-    let x_axis_title_font = chart_axis_title_font(component, "x");
-    if has_chart_axis_title_font(component, "x") {
+    let x_axis_title_font = chart_axis_font(component, "xAxisTitleFont");
+    if has_chart_axis_font(component, "xAxisTitleFont") {
         chart.x_axis().set_name_font(&x_axis_title_font);
     }
-    let y_axis_title_font = chart_axis_title_font(component, "y");
-    if has_chart_axis_title_font(component, "y") {
+    let y_axis_title_font = chart_axis_font(component, "yAxisTitleFont");
+    if has_chart_axis_font(component, "yAxisTitleFont") {
         chart.y_axis().set_name_font(&y_axis_title_font);
+    }
+    let x_axis_label_font = chart_axis_font(component, "xAxisLabelFont");
+    if has_chart_axis_font(component, "xAxisLabelFont") {
+        chart.x_axis().set_font(&x_axis_label_font);
+    }
+    let y_axis_label_font = chart_axis_font(component, "yAxisLabelFont");
+    if has_chart_axis_font(component, "yAxisLabelFont") {
+        chart.y_axis().set_font(&y_axis_label_font);
     }
     configure_chart_axis_number_formats(&mut chart, component);
     configure_chart_axis_bounds(&mut chart, component);
@@ -1129,8 +1137,8 @@ fn compile_chart(
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
 }
 
-fn chart_axis_title_font(component: &Node, axis: &str) -> ChartFont {
-    let property = |suffix: &str| format!("{axis}AxisTitleFont{suffix}");
+fn chart_axis_font(component: &Node, prefix: &str) -> ChartFont {
+    let property = |suffix: &str| format!("{prefix}{suffix}");
     let mut font = ChartFont::new();
     if let Some(size) = component
         .props
@@ -1189,26 +1197,26 @@ fn chart_axis_title_font(component: &Node, axis: &str) -> ChartFont {
         .get(&property("PitchFamily"))
         .and_then(Value::as_u64)
     {
-        font.set_pitch_family(u8::try_from(family).expect("validated axis title pitch family"));
+        font.set_pitch_family(u8::try_from(family).expect("validated axis font pitch family"));
     }
     if let Some(charset) = component
         .props
         .get(&property("Charset"))
         .and_then(Value::as_u64)
     {
-        font.set_character_set(u8::try_from(charset).expect("validated axis title charset"));
+        font.set_character_set(u8::try_from(charset).expect("validated axis font charset"));
     }
     if let Some(rotation) = component
         .props
         .get(&property("Rotation"))
         .and_then(Value::as_i64)
     {
-        font.set_rotation(i16::try_from(rotation).expect("validated axis title rotation"));
+        font.set_rotation(i16::try_from(rotation).expect("validated axis font rotation"));
     }
     font
 }
 
-fn has_chart_axis_title_font(component: &Node, axis: &str) -> bool {
+fn has_chart_axis_font(component: &Node, prefix: &str) -> bool {
     [
         "Size",
         "Bold",
@@ -1221,11 +1229,7 @@ fn has_chart_axis_title_font(component: &Node, axis: &str) -> bool {
         "Rotation",
     ]
     .iter()
-    .any(|suffix| {
-        component
-            .props
-            .contains_key(&format!("{axis}AxisTitleFont{suffix}"))
-    })
+    .any(|suffix| component.props.contains_key(&format!("{prefix}{suffix}")))
 }
 
 fn configure_chart_series_spacing(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
@@ -5590,6 +5594,7 @@ fn append_chart_title_font_properties(properties: &mut String, chart: &Worksheet
 
 fn append_chart_axis_value_properties(properties: &mut String, chart: &WorksheetChart) {
     append_chart_axis_title_font_properties(properties, chart);
+    append_chart_axis_label_font_properties(properties, chart);
     for (name, value) in [
         (
             "xAxisTitle",
@@ -5738,6 +5743,42 @@ fn append_chart_axis_title_font_properties(properties: &mut String, chart: &Work
             let _ = write!(properties, " {prefix}Charset={{{value}}}");
         }
         if let Some(value) = rotation {
+            let _ = write!(properties, " {prefix}Rotation={{{value}}}");
+        }
+    }
+}
+
+fn append_chart_axis_label_font_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (axis, font) in [
+        ("x", &chart.x_axis_label_font),
+        ("y", &chart.y_axis_label_font),
+    ] {
+        let prefix = format!("{axis}AxisLabelFont");
+        if let Some(value) = font.size {
+            let _ = write!(properties, " {prefix}Size={{{value}}}");
+        }
+        if let Some(value) = font.bold {
+            let _ = write!(properties, " {prefix}Bold={{{value}}}");
+        }
+        if let Some(value) = font.italic {
+            let _ = write!(properties, " {prefix}Italic={{{value}}}");
+        }
+        if let Some(value) = font.underline {
+            let _ = write!(properties, " {prefix}Underline={{{value}}}");
+        }
+        if let Some(value) = &font.color {
+            let _ = write!(properties, " {prefix}Color={value:?}");
+        }
+        if let Some(value) = &font.name {
+            let _ = write!(properties, " {prefix}Name={value:?}");
+        }
+        if let Some(value) = font.pitch_family {
+            let _ = write!(properties, " {prefix}PitchFamily={{{value}}}");
+        }
+        if let Some(value) = font.charset {
+            let _ = write!(properties, " {prefix}Charset={{{value}}}");
+        }
+        if let Some(value) = font.rotation {
             let _ = write!(properties, " {prefix}Rotation={{{value}}}");
         }
     }
@@ -8736,6 +8777,10 @@ fn parse_chart_xml(
     let mut y_axis_title_font_rotation: Option<i16> = None;
     let mut x_axis_title_font_latin_seen = false;
     let mut y_axis_title_font_latin_seen = false;
+    let mut x_axis_label_font = WorksheetChartAxisFont::default();
+    let mut y_axis_label_font = WorksheetChartAxisFont::default();
+    let mut x_axis_label_txpr_seen = false;
+    let mut y_axis_label_txpr_seen = false;
     let mut x_axis_number_format: Option<String> = None;
     let mut y_axis_number_format: Option<String> = None;
     let mut x_axis_number_format_seen = false;
@@ -8897,6 +8942,22 @@ fn parse_chart_xml(
                     unreachable!()
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if tag == "txPr"
+                    && let Some(axis) =
+                        chart_axis_label_font_target(chart_type, &stack, current_axis_position)
+                {
+                    let seen = match axis {
+                        "x" => &mut x_axis_label_txpr_seen,
+                        "y" => &mut y_axis_label_txpr_seen,
+                        _ => unreachable!(),
+                    };
+                    if *seen || is_empty {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a repeated or empty {axis}-axis txPr; keep one complete axis-label text-property block"
+                        )));
+                    }
+                    *seen = true;
+                }
                 if tag == "bodyPr"
                     && chart_title_target.is_some()
                     && stack.iter().any(|ancestor| ancestor == "title")
@@ -8931,6 +8992,33 @@ fn parse_chart_xml(
                             )));
                         }
                         *target = Some(rotation);
+                    }
+                }
+                if tag == "bodyPr"
+                    && stack.iter().any(|ancestor| ancestor == "txPr")
+                    && let Some(axis) =
+                        chart_axis_label_font_target(chart_type, &stack, current_axis_position)
+                {
+                    let raw_rotation = chart_xml_attribute(&event, "rot", reader.decoder())?;
+                    let vertical = chart_xml_attribute(&event, "vert", reader.decoder())?;
+                    let rotation = parse_chart_text_rotation(
+                        raw_rotation.as_deref(),
+                        vertical.as_deref(),
+                        part,
+                        "axis label",
+                    )?;
+                    if let Some(rotation) = rotation {
+                        let font = match axis {
+                            "x" => &mut x_axis_label_font,
+                            "y" => &mut y_axis_label_font,
+                            _ => unreachable!(),
+                        };
+                        if font.rotation.is_some_and(|previous| previous != rotation) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent {axis}-axis label rotations; make all txPr bodyPr values identical"
+                            )));
+                        }
+                        font.rotation = Some(rotation);
                     }
                 }
                 if tag == "bodyPr"
@@ -8975,6 +9063,84 @@ fn parse_chart_xml(
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` has a custom trendline equation-label text rotation; only the writer-default horizontal orientation is supported"
                         )));
+                    }
+                }
+                if matches!(tag.as_str(), "rPr" | "defRPr")
+                    && stack.iter().any(|ancestor| ancestor == "txPr")
+                    && let Some(axis) =
+                        chart_axis_label_font_target(chart_type, &stack, current_axis_position)
+                {
+                    let font = match axis {
+                        "x" => &mut x_axis_label_font,
+                        "y" => &mut y_axis_label_font,
+                        _ => unreachable!(),
+                    };
+                    for key in ["b", "i"] {
+                        if let Some(value) = chart_xml_attribute(&event, key, reader.decoder())? {
+                            let parsed = parse_xml_bool(&value, part, &format!("{tag}@{key}"))?;
+                            let target = if key == "b" {
+                                &mut font.bold
+                            } else {
+                                &mut font.italic
+                            };
+                            if target.is_some_and(|previous| previous != parsed) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has inconsistent {axis}-axis label `{key}` values; make all txPr default/run values identical"
+                                )));
+                            }
+                            *target = Some(parsed);
+                        }
+                    }
+                    if let Some(value) = chart_xml_attribute(&event, "u", reader.decoder())? {
+                        let parsed = match value.as_str() {
+                            "sng" => true,
+                            "none" => false,
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported {axis}-axis label underline `{value}`; use single/none or remove the formatting"
+                                )));
+                            }
+                        };
+                        if font.underline.is_some_and(|previous| previous != parsed) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent {axis}-axis label underlining; make all txPr values identical"
+                            )));
+                        }
+                        font.underline = Some(parsed);
+                    }
+                    let size = event
+                        .attributes()
+                        .with_checks(false)
+                        .filter_map(Result::ok)
+                        .find(|attribute| attribute.key.local_name().as_ref() == b"sz")
+                        .map(|attribute| {
+                            attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    reader.decoder(),
+                                )
+                                .map_err(|error| Error::Reverse(error.to_string()))
+                        })
+                        .transpose()?;
+                    if let Some(size) = size {
+                        let hundredths = size.parse::<u32>().map_err(|_| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has invalid {axis}-axis label font size `{size}`; use 100–400000 hundredths of a point"
+                            ))
+                        })?;
+                        if !(100..=400_000).contains(&hundredths) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {axis}-axis label font size outside 100–400000 hundredths of a point"
+                            )));
+                        }
+                        let points = f64::from(hundredths) / 100.0;
+                        if font.size_seen && font.size != Some(points) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent {axis}-axis label font sizes; make all txPr default/run values identical"
+                            )));
+                        }
+                        font.size = Some(points);
+                        font.size_seen = true;
                     }
                 }
                 if matches!(tag.as_str(), "rPr" | "defRPr")
@@ -9496,7 +9662,7 @@ fn parse_chart_xml(
                     };
                     if !supported_parent {
                         return Err(Error::Reverse(format!(
-                            "chart part `{part}` has unsupported `<{tag}>` structure in series data-label text properties; keep the writer's txPr paragraph/run form"
+                            "chart part `{part}` has unsupported `<{tag}>` structure in chart text properties; keep the writer's txPr paragraph/run form"
                         )));
                     }
                 }
@@ -12358,6 +12524,43 @@ fn parse_chart_xml(
                     "srgbClr"
                         if stack.last().is_some_and(|parent| parent == "solidFill")
                             && stack.iter().any(|ancestor| ancestor == "txPr")
+                            && chart_axis_label_font_target(
+                                chart_type,
+                                &stack,
+                                current_axis_position,
+                            )
+                            .is_some() =>
+                    {
+                        let axis =
+                            chart_axis_label_font_target(chart_type, &stack, current_axis_position)
+                                .expect("axis label font context was checked");
+                        let color =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "srgbClr")?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has non-RGB {axis}-axis label font color; use one opaque six-digit RGB value"
+                            )));
+                        }
+                        let color = format!("#{color}").to_ascii_uppercase();
+                        let font = match axis {
+                            "x" => &mut x_axis_label_font,
+                            "y" => &mut y_axis_label_font,
+                            _ => unreachable!(),
+                        };
+                        if font
+                            .color
+                            .as_ref()
+                            .is_some_and(|previous| previous != &color)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent {axis}-axis label font colors; make txPr values identical"
+                            )));
+                        }
+                        font.color = Some(color);
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|ancestor| ancestor == "txPr")
                             && stack.iter().any(|ancestor| ancestor == "dLbls") =>
                     {
                         let color =
@@ -12570,6 +12773,79 @@ fn parse_chart_xml(
                         *target_family = pitch_family;
                         *target_charset = charset;
                         *latin_seen = true;
+                    }
+                    "latin"
+                        if stack.iter().any(|ancestor| ancestor == "txPr")
+                            && chart_axis_label_font_target(
+                                chart_type,
+                                &stack,
+                                current_axis_position,
+                            )
+                            .is_some() =>
+                    {
+                        let axis =
+                            chart_axis_label_font_target(chart_type, &stack, current_axis_position)
+                                .expect("axis label font context was checked");
+                        let name = chart_xml_attribute(&event, "typeface", reader.decoder())?;
+                        if name.as_ref().is_some_and(|name| {
+                            name.is_empty()
+                                || name.chars().count() > 255
+                                || !name.chars().all(is_valid_xml_character)
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an invalid {axis}-axis label Latin typeface; use a non-empty XML-safe font name"
+                            )));
+                        }
+                        let pitch_family = chart_xml_attribute(
+                            &event,
+                            "pitchFamily",
+                            reader.decoder(),
+                        )?
+                        .map(|value| value.parse::<u8>())
+                        .transpose()
+                        .map_err(|_| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has an invalid {axis}-axis label pitchFamily; use 0–255"
+                            ))
+                        })?
+                        .filter(|value| *value != 0);
+                        let raw_charset = chart_xml_attribute(&event, "charset", reader.decoder())?
+                            .map(|value| value.parse::<u8>())
+                            .transpose()
+                            .map_err(|_| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has an invalid {axis}-axis label charset; use 0–127"
+                                ))
+                            })?;
+                        if raw_charset.is_some_and(|value| value > 127) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {axis}-axis label charset above 127, which produces schema-invalid OOXML; correct the charset"
+                            )));
+                        }
+                        let charset = match (raw_charset, pitch_family) {
+                            (Some(0) | None, Some(_)) => Some(0),
+                            (Some(0) | None, None) => None,
+                            (value, _) => value,
+                        };
+                        let font = match axis {
+                            "x" => &mut x_axis_label_font,
+                            "y" => &mut y_axis_label_font,
+                            _ => unreachable!(),
+                        };
+                        if (font.name.is_some() && font.name != name)
+                            || (font.latin_seen
+                                && (font.pitch_family != pitch_family || font.charset != charset))
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent {axis}-axis label typeface metadata; make txPr Latin values identical"
+                            )));
+                        }
+                        if name.is_some() {
+                            font.name = name;
+                        }
+                        font.pitch_family = pitch_family;
+                        font.charset = charset;
+                        font.latin_seen = true;
                     }
                     "latin"
                         if stack.iter().any(|ancestor| ancestor == "txPr")
@@ -14019,6 +14295,8 @@ fn parse_chart_xml(
         y_axis_title_font_pitch_family,
         y_axis_title_font_charset,
         y_axis_title_font_rotation,
+        x_axis_label_font,
+        y_axis_label_font,
         title_overlay,
         chart_area_fill_color,
         plot_area_fill_color,
@@ -14690,6 +14968,32 @@ fn parse_chart_text_rotation(
         .transpose()
 }
 
+fn chart_axis_label_font_target(
+    chart_type: Option<&'static str>,
+    stack: &[String],
+    axis_position: Option<&'static str>,
+) -> Option<&'static str> {
+    if chart_type.is_some_and(|chart_type| chart_type.starts_with("scatter"))
+        && stack.iter().any(|ancestor| ancestor == "valAx")
+    {
+        return match axis_position {
+            Some("b" | "t") => Some("x"),
+            Some("l" | "r") => Some("y"),
+            _ => None,
+        };
+    }
+    if stack
+        .iter()
+        .any(|ancestor| matches!(ancestor.as_str(), "catAx" | "dateAx"))
+    {
+        Some("x")
+    } else if stack.iter().any(|ancestor| ancestor == "valAx") {
+        Some("y")
+    } else {
+        None
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "Attribute acceptance depends on the chart XML stack and active title target."
@@ -14859,6 +15163,38 @@ fn audit_chart_attributes(
             } else {
                 false
             };
+        let is_supported_chart_axis_label_font_attribute = stack
+            .iter()
+            .any(|ancestor| ancestor == "txPr")
+            && chart_axis_label_font_target(chart_type, stack, current_axis_position).is_some()
+            && if matches!(tag, "rPr" | "defRPr") {
+                match (key.as_str(), value.as_str()) {
+                    ("sz", value) => value
+                        .parse::<u32>()
+                        .is_ok_and(|size| (100..=400_000).contains(&size)),
+                    ("b" | "i", "0" | "1" | "true" | "false")
+                    | ("u", "sng" | "none")
+                    | ("baseline", "0") => true,
+                    _ => false,
+                }
+            } else if tag == "latin" {
+                match key.as_str() {
+                    "typeface" => !value.is_empty() && value.chars().all(is_valid_xml_character),
+                    "pitchFamily" | "charset" => value.parse::<u8>().is_ok(),
+                    _ => false,
+                }
+            } else if tag == "bodyPr" {
+                match (key.as_str(), value.as_str()) {
+                    ("rot", value) => value.parse::<i32>().is_ok_and(|rotation| {
+                        (-5_400_000..=5_400_000).contains(&rotation)
+                            && (rotation == 0 || rotation % 60_000 == 0)
+                    }),
+                    ("vert", "horz" | "wordArtVert" | "eaVert") => true,
+                    _ => false,
+                }
+            } else {
+                false
+            };
         if is_chart_data_table_font_context
             && !is_supported_data_table_font_attribute
             && !is_supported_chart_attribute(tag, &key, &value, chart_type)
@@ -14877,6 +15213,7 @@ fn audit_chart_attributes(
             && !is_supported_trendline_label_font_attribute
             && !is_supported_data_table_font_attribute
             && !is_supported_chart_title_font_attribute
+            && !is_supported_chart_axis_label_font_attribute
         {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` has unsupported `{tag}@{key}={value}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
@@ -17964,6 +18301,21 @@ enum WorksheetDrawingOrder {
     Image(usize),
 }
 
+#[derive(Clone, Default)]
+struct WorksheetChartAxisFont {
+    size: Option<f64>,
+    size_seen: bool,
+    bold: Option<bool>,
+    italic: Option<bool>,
+    underline: Option<bool>,
+    color: Option<String>,
+    name: Option<String>,
+    pitch_family: Option<u8>,
+    charset: Option<u8>,
+    latin_seen: bool,
+    rotation: Option<i16>,
+}
+
 #[derive(Clone)]
 struct WorksheetChart {
     chart_type: &'static str,
@@ -17999,6 +18351,8 @@ struct WorksheetChart {
     y_axis_title_font_pitch_family: Option<u8>,
     y_axis_title_font_charset: Option<u8>,
     y_axis_title_font_rotation: Option<i16>,
+    x_axis_label_font: WorksheetChartAxisFont,
+    y_axis_label_font: WorksheetChartAxisFont,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     plot_area_fill_color: Option<String>,

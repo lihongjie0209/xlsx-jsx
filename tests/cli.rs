@@ -245,6 +245,20 @@ fn spec_exposes_chart_axis_title_font_properties() {
 }
 
 #[test]
+fn spec_exposes_chart_axis_label_font_properties() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("xAxisLabelFontSize"))
+        .stdout(predicate::str::contains("xAxisLabelFontPitchFamily"))
+        .stdout(predicate::str::contains("xAxisLabelFontCharset"))
+        .stdout(predicate::str::contains("xAxisLabelFontRotation"))
+        .stdout(predicate::str::contains("yAxisLabelFontColor"));
+}
+
+#[test]
 fn spec_exposes_chart_data_label_font_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -4586,6 +4600,180 @@ fn reverses_and_rebuilds_external_scatter_axis_titles_without_a_manifest() {
     assert!(xml.contains("pitchFamily=\"34\" charset=\"127\""), "{xml}");
     assert!(xml.contains("rot=\"2700000\""), "{xml}");
     assert!(xml.contains("sz=\"1200\" i=\"1\" u=\"sng\""), "{xml}");
+}
+
+#[test]
+fn reverses_and_rebuilds_external_scatter_axis_label_fonts_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-axis-fonts.xlsx");
+    let output_path = directory.path().join("external-scatter-axis-fonts.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.x_axis().set_crossing(ChartAxisCrossing::Max);
+    chart.y_axis().set_crossing(ChartAxisCrossing::Max);
+    chart.x_axis().set_font(
+        ChartFont::new()
+            .set_size(10.0)
+            .set_bold()
+            .set_color("#336699")
+            .set_name("Aptos")
+            .set_pitch_family(34)
+            .set_character_set(127)
+            .set_rotation(45),
+    );
+    chart.y_axis().set_font(
+        ChartFont::new()
+            .set_size(9.0)
+            .set_italic()
+            .set_underline()
+            .set_color("#993366"),
+    );
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("xAxisLabelFontSize={10}"), "{source}");
+    assert!(source.contains("xAxisLabelFontBold={true}"), "{source}");
+    assert!(
+        source.contains("xAxisLabelFontColor=\"#336699\""),
+        "{source}"
+    );
+    assert!(source.contains("xAxisLabelFontName=\"Aptos\""), "{source}");
+    assert!(
+        source.contains("xAxisLabelFontPitchFamily={34}"),
+        "{source}"
+    );
+    assert!(source.contains("xAxisLabelFontCharset={127}"), "{source}");
+    assert!(source.contains("xAxisLabelFontRotation={45}"), "{source}");
+    assert!(source.contains("yAxisLabelFontItalic={true}"), "{source}");
+    assert!(
+        source.contains("yAxisLabelFontUnderline={true}"),
+        "{source}"
+    );
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-axis-fonts.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("pitchFamily=\"34\" charset=\"127\""), "{xml}");
+    assert!(xml.contains("rot=\"2700000\""), "{xml}");
+    assert!(xml.contains("val=\"336699\""), "{xml}");
+    assert!(xml.contains("val=\"993366\""), "{xml}");
+}
+
+#[test]
+fn reverses_external_category_and_value_axis_label_fonts_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-category-axis-fonts.xlsx");
+    let output_path = directory.path().join("external-category-axis-fonts.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .x_axis()
+        .set_font(ChartFont::new().set_size(11.0).set_bold());
+    chart
+        .y_axis()
+        .set_font(ChartFont::new().set_size(9.0).set_italic());
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("xAxisLabelFontSize={11}"), "{source}");
+    assert!(source.contains("xAxisLabelFontBold={true}"), "{source}");
+    assert!(source.contains("yAxisLabelFontSize={9}"), "{source}");
+    assert!(source.contains("yAxisLabelFontItalic={true}"), "{source}");
+}
+
+#[test]
+fn rejects_schema_invalid_axis_label_charset_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-label-font-charset.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisLabelFontCharset={128}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisLabelFontCharset must be an integer from 0 to 127",
+        ));
+}
+
+#[test]
+fn rejects_axis_label_rotation_outside_writer_range_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-label-font-rotation.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" yAxisLabelFontRotation={91}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.yAxisLabelFontRotation must be an integer from -90 through 90, or 270/271",
+        ));
+}
+
+#[test]
+fn rejects_axis_label_fonts_on_pie_charts_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("pie-axis-label-font.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="pie" cell="D2" xAxisLabelFontBold={true}><Series values="Data!A1:A2" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "pie and doughnut Charts have no X/Y axis labels",
+        ));
 }
 
 #[test]

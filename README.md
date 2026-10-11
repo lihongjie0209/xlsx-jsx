@@ -93,6 +93,7 @@ xlsx-jsx spec --format json
 | Scatter logarithmic axes | yes | yes | `xAxisLogBase` / `yAxisLogBase` independently apply valid base-2–1000 logarithmic scales to scatter X/Y axes |
 | Scatter axis crossing | yes | yes | `xAxisCrossing` / `yAxisCrossing` preserve min/max/automatic crossing positions; reverse resolves top/bottom and left/right axes by orientation |
 | Chart axis title fonts | yes | yes (supported subset) | `xAxisTitleFontSize`, `xAxisTitleFontBold`, `xAxisTitleFontItalic`, `xAxisTitleFontUnderline`, `xAxisTitleFontColor`, `xAxisTitleFontName`, `xAxisTitleFontPitchFamily`, `xAxisTitleFontCharset`, and `xAxisTitleFontRotation` (and matching `yAxisTitleFont*`) preserve supported static axis-title run styling; each requires its matching title |
+| Chart axis label fonts | yes | yes (supported subset) | `xAxisLabelFont*` and `yAxisLabelFont*` preserve tick-label size, emphasis, underline, opaque RGB, Latin typeface metadata, and rotation independently from axis-title styling; X/Y axes are resolved by category/value type or scatter axis position |
 | Scatter axis titles | yes | yes | `xAxisTitle` / `yAxisTitle` preserve static axis titles, including when crossings move the axes to the top/right |
 | Scatter axis direction | yes | yes | `xAxisReversed={true}` / `yAxisReversed={true}` reverse the horizontal and vertical value scales independently |
 | Scatter axis display units | yes | yes | `xAxisDisplayUnit` / `yAxisDisplayUnit` independently scale each value axis; corresponding `*Label={false}` hides that unit label |
