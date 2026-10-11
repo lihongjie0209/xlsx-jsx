@@ -141,6 +141,8 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("yAxisMax"))
         .stdout(predicate::str::contains("xAxisMin"))
         .stdout(predicate::str::contains("xAxisMax"))
+        .stdout(predicate::str::contains("xAxisMajorUnit"))
+        .stdout(predicate::str::contains("xAxisMinorUnit"))
         .stdout(predicate::str::contains("yAxisLogBase"))
         .stdout(predicate::str::contains("valueAxisDisplayUnit"))
         .stdout(predicate::str::contains("valueAxisDisplayUnitLabel"))
@@ -1810,6 +1812,53 @@ fn reverses_and_rebuilds_external_scatter_axis_bounds_without_a_manifest() {
     assert_eq!(xml.matches("<c:max val=\"5\"/>").count(), 1, "{xml}");
     assert_eq!(xml.matches("<c:min val=\"-20\"/>").count(), 1, "{xml}");
     assert_eq!(xml.matches("<c:max val=\"20\"/>").count(), 1, "{xml}");
+}
+
+#[test]
+fn reverses_and_rebuilds_external_scatter_axis_intervals_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-axis-units.xlsx");
+    let output_path = directory.path().join("external-scatter-axis-units.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.x_axis().set_major_unit(2.5).set_minor_unit(0.5);
+    chart.y_axis().set_major_unit(10.0).set_minor_unit(2.5);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("xAxisMajorUnit={2.5}"), "{source}");
+    assert!(source.contains("xAxisMinorUnit={0.5}"), "{source}");
+    assert!(source.contains("yAxisMajorUnit={10}"), "{source}");
+    assert!(source.contains("yAxisMinorUnit={2.5}"), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-axis-units.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:majorUnit val=\"2.5\"/>"), "{xml}");
+    assert!(xml.contains("<c:minorUnit val=\"0.5\"/>"), "{xml}");
+    assert!(xml.contains("<c:majorUnit val=\"10\"/>"), "{xml}");
+    assert!(xml.contains("<c:minorUnit val=\"2.5\"/>"), "{xml}");
 }
 
 #[test]
@@ -4351,7 +4400,7 @@ fn rejects_non_positive_chart_axis_units_with_repair_guidance() {
 }
 
 #[test]
-fn rejects_chart_axis_units_for_scatter_with_repair_guidance() {
+fn validates_scatter_y_axis_units() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("scatter-axis-unit.tsx");
     std::fs::write(
@@ -4364,9 +4413,7 @@ fn rejects_chart_axis_units_for_scatter_with_repair_guidance() {
         .args(["validate"])
         .arg(input)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("not supported for scatter"))
-        .stderr(predicate::str::contains("omit the units"));
+        .success();
 }
 
 #[test]
@@ -4447,6 +4494,27 @@ fn rejects_scatter_x_axis_bounds_on_category_charts_with_repair_guidance() {
             "xAxisMin/xAxisMax are supported only for scatter charts",
         ))
         .stderr(predicate::str::contains("use yAxisMin/yAxisMax"));
+}
+
+#[test]
+fn rejects_scatter_x_axis_units_on_category_charts_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("category-chart-x-axis-unit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" xAxisMajorUnit={2}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "xAxisMajorUnit/xAxisMinorUnit are supported only for scatter charts",
+        ))
+        .stderr(predicate::str::contains("use a scatter chart"));
 }
 
 #[test]

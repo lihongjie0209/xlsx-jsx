@@ -1896,6 +1896,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisTitle",
             "xAxisNumberFormat",
             "yAxisNumberFormat",
+            "xAxisMajorUnit",
+            "xAxisMinorUnit",
             "xAxisMin",
             "xAxisMax",
             "yAxisMin",
@@ -2641,16 +2643,30 @@ fn parse_chart_axis_bound(chart: &Node, property: &str) -> Result<Option<f64>> {
 }
 
 fn validate_chart_axis_units(chart: &Node, chart_type: &str) -> Result<()> {
-    let properties = ["yAxisMajorUnit", "yAxisMinorUnit"];
+    let properties = [
+        "xAxisMajorUnit",
+        "xAxisMinorUnit",
+        "yAxisMajorUnit",
+        "yAxisMinorUnit",
+    ];
     if !properties
         .iter()
         .any(|property| chart.props.contains_key(*property))
     {
         return Ok(());
     }
-    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+    let scatter_chart = chart_type.starts_with("scatter");
+    if !scatter_chart
+        && (chart.props.contains_key("xAxisMajorUnit")
+            || chart.props.contains_key("xAxisMinorUnit"))
+    {
         return Err(Error::Compile(
-            "Chart y-axis units are not supported for scatter, pie, or doughnut charts; use an area, bar, column, line, radar, or stock chart, or omit the units".into(),
+            "Chart.xAxisMajorUnit/xAxisMinorUnit are supported only for scatter charts; omit them or use a scatter chart with two numeric axes".into(),
+        ));
+    }
+    if matches!(chart_type, "pie" | "doughnut") {
+        return Err(Error::Compile(
+            "Chart axis units are not supported for pie or doughnut charts because they have no axes; omit the intervals or use a chart with numeric axes".into(),
         ));
     }
     for property in properties {

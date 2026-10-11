@@ -1667,6 +1667,20 @@ fn configure_chart_axis_label_positions(
 }
 
 fn configure_chart_axis_units(chart: &mut Chart, component: &Node) {
+    if let Some(unit) = component
+        .props
+        .get("xAxisMajorUnit")
+        .and_then(Value::as_f64)
+    {
+        chart.x_axis().set_major_unit(unit);
+    }
+    if let Some(unit) = component
+        .props
+        .get("xAxisMinorUnit")
+        .and_then(Value::as_f64)
+    {
+        chart.x_axis().set_minor_unit(unit);
+    }
     let value_axis = if component
         .props
         .get("type")
@@ -4854,6 +4868,14 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
             "yAxisMinorUnit",
             chart.y_axis_minor_unit.map(|value| format!("{{{value}}}")),
         ),
+        (
+            "xAxisMajorUnit",
+            chart.x_axis_major_unit.map(|value| format!("{{{value}}}")),
+        ),
+        (
+            "xAxisMinorUnit",
+            chart.x_axis_minor_unit.map(|value| format!("{{{value}}}")),
+        ),
     ] {
         if let Some(value) = value {
             let _ = write!(properties, " {name}={value}");
@@ -7806,8 +7828,12 @@ fn parse_chart_xml(
     let mut current_value_axis_index = None;
     let mut y_axis_major_unit = None;
     let mut y_axis_minor_unit = None;
+    let mut x_axis_major_unit = None;
+    let mut x_axis_minor_unit = None;
     let mut y_axis_major_unit_seen = false;
     let mut y_axis_minor_unit_seen = false;
+    let mut x_axis_major_unit_seen = false;
+    let mut x_axis_minor_unit_seen = false;
     let mut value_axis_display_unit: Option<&'static str> = None;
     let mut value_axis_display_unit_seen = false;
     let mut value_axis_display_unit_label_seen = false;
@@ -9642,11 +9668,9 @@ fn parse_chart_xml(
                                 "chart part `{part}` has {tag} outside a primary value axis; repair the axis structure"
                             )));
                         }
-                        if chart_type.is_some_and(|value| {
-                            value.starts_with("scatter") || matches!(value, "pie" | "doughnut")
-                        }) {
+                        if chart_type.is_some_and(|value| matches!(value, "pie" | "doughnut")) {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has value-axis intervals for a chart without one unambiguous value axis; remove the intervals or use a supported category/value chart"
+                                "chart part `{part}` has value-axis intervals for a chart without axes; remove the intervals or use a chart with numeric axes"
                             )));
                         }
                         let mut unit = None;
@@ -9671,10 +9695,32 @@ fn parse_chart_xml(
                                 "chart part `{part}` has a non-positive, non-finite, or missing {tag}; provide a finite positive interval"
                             )));
                         };
-                        let (seen, target) = if tag == "majorUnit" {
-                            (&mut y_axis_major_unit_seen, &mut y_axis_major_unit)
+                        let horizontal_scatter_axis = if chart_type
+                            .is_some_and(|value| value.starts_with("scatter"))
+                        {
+                            match current_axis_position {
+                                Some("b") => true,
+                                Some("l") => false,
+                                _ => {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has a scatter-axis interval without a bottom horizontal or left vertical position; restore the primary axis positions"
+                                    )));
+                                }
+                            }
                         } else {
-                            (&mut y_axis_minor_unit_seen, &mut y_axis_minor_unit)
+                            false
+                        };
+                        let (seen, target) = match (tag.as_str(), horizontal_scatter_axis) {
+                            ("majorUnit", true) => {
+                                (&mut x_axis_major_unit_seen, &mut x_axis_major_unit)
+                            }
+                            ("minorUnit", true) => {
+                                (&mut x_axis_minor_unit_seen, &mut x_axis_minor_unit)
+                            }
+                            ("majorUnit", false) => {
+                                (&mut y_axis_major_unit_seen, &mut y_axis_major_unit)
+                            }
+                            _ => (&mut y_axis_minor_unit_seen, &mut y_axis_minor_unit),
                         };
                         if *seen {
                             return Err(Error::Reverse(format!(
@@ -11146,6 +11192,8 @@ fn parse_chart_xml(
         vertical_axis_hidden: vertical_axis_hidden.then_some(true),
         y_axis_major_unit,
         y_axis_minor_unit,
+        x_axis_major_unit,
+        x_axis_minor_unit,
         value_axis_display_unit,
         value_axis_display_unit_label: value_axis_display_unit
             .map(|_| value_axis_display_unit_label)
@@ -14684,6 +14732,8 @@ struct WorksheetChart {
     category_axis_tick_interval: Option<u16>,
     y_axis_major_unit: Option<f64>,
     y_axis_minor_unit: Option<f64>,
+    x_axis_major_unit: Option<f64>,
+    x_axis_minor_unit: Option<f64>,
     value_axis_display_unit: Option<&'static str>,
     value_axis_display_unit_label: Option<bool>,
     drop_lines: Option<bool>,

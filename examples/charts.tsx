@@ -77,7 +77,7 @@ export default <Workbook>
     <Chart type="radarFilled" cell="D146" width={480} height={288}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" title="Revenue radar filled" />
     </Chart>
-    <Chart type="scatterWithLines" cell="K146" width={480} height={288} xAxisMin={10} xAxisMax={20} yAxisMin={5} yAxisMax={10}>
+    <Chart type="scatterWithLines" cell="K146" width={480} height={288} xAxisMin={10} xAxisMax={20} yAxisMin={5} yAxisMax={10} xAxisMajorUnit={2} xAxisMinorUnit={1} yAxisMajorUnit={2} yAxisMinorUnit={1}>
       <Series values="Data!$C$2:$C$4" categories="Data!$B$2:$B$4" title="Revenue scatter line" />
     </Chart>
     <Chart type="scatterWithLinesAndMarkers" cell="D164" width={480} height={288}>

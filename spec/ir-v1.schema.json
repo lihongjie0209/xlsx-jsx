@@ -499,6 +499,8 @@
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
             "yAxisNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "xAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
+            "xAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMin": { "type": "number" },
             "yAxisMax": { "type": "number" },
             "xAxisMin": { "type": "number" },
@@ -584,8 +586,12 @@
                     { "required": ["yAxisNumberFormat"] },
                     { "required": ["xAxisMin"] },
                     { "required": ["xAxisMax"] },
+                    { "required": ["xAxisMajorUnit"] },
+                    { "required": ["xAxisMinorUnit"] },
                     { "required": ["yAxisMin"] },
                     { "required": ["yAxisMax"] },
+                    { "required": ["yAxisMajorUnit"] },
+                    { "required": ["yAxisMinorUnit"] },
                     { "required": ["yAxisLogBase"] },
                     { "required": ["valueAxisReversed"] },
                     { "required": ["categoryAxisLabelInterval"] },
@@ -607,8 +613,6 @@
                     { "required": ["yAxisCrossing"] },
                     { "required": ["horizontalAxisHidden"] },
                     { "required": ["verticalAxisHidden"] },
-                    { "required": ["yAxisMajorUnit"] },
-                    { "required": ["yAxisMinorUnit"] },
                     { "required": ["valueAxisDisplayUnit"] },
                     { "required": ["valueAxisDisplayUnitLabel"] },
                     { "required": ["horizontalAxisMajorGridlines"] },
@@ -642,8 +646,6 @@
                     { "required": ["yAxisNumberFormat"] },
                     { "required": ["yAxisLogBase"] },
                     { "required": ["valueAxisReversed"] },
-                    { "required": ["yAxisMajorUnit"] },
-                    { "required": ["yAxisMinorUnit"] },
                     { "required": ["valueAxisDisplayUnit"] },
                     { "required": ["valueAxisDisplayUnitLabel"] },
                     { "required": ["categoryAxisLabelInterval"] },
@@ -656,7 +658,7 @@
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }] } } } }
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }] } } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["pie", "doughnut"] } } }, "required": ["type"] } }, "required": ["props"] },

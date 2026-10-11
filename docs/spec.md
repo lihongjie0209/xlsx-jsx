@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.79
+Version: 1.80
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -203,9 +203,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.yAxisMajorUnit?: number` and `Chart.yAxisMinorUnit?: number` set the
   major and minor tick intervals on the numeric value axis. Each provided
   interval must be finite and greater than zero; omission leaves Excel's
-  automatic interval. These properties are not valid for scatter, pie, or
-  doughnut charts. Reverse preserves `<valAx><majorUnit>/<minorUnit>` values and
+  automatic interval. On scatter charts they address the vertical Y-value
+  axis; pie and doughnut charts do not have value axes. Reverse preserves
+  `<valAx><majorUnit>/<minorUnit>` values by bottom/left axis position and
   rejects intervals on category/date axes instead of dropping them.
+- `Chart.xAxisMajorUnit?: number` and `Chart.xAxisMinorUnit?: number` set major
+  and minor intervals on the horizontal X-value axis of scatter charts. They
+  must be finite and greater than zero and are valid only for scatter chart
+  types. Reverse preserves them independently from Y intervals using the OOXML
+  bottom axis position; omission leaves Excel's automatic intervals.
 - `Chart.valueAxisDisplayUnit?: "hundreds" | "thousands" | "tenThousands" |
   "hundredThousands" | "millions" | "tenMillions" | "hundredMillions" |
   "billions" | "trillions"` scales the primary value-axis labels using the
