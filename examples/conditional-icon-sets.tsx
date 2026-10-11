@@ -9,11 +9,20 @@ export default <Workbook>
       reverse={false}
       showIconsOnly={false}
     />
-    <ConditionalFormat range="B2:B5" type="iconSet" iconType="threeStars" />
+    <ConditionalFormat
+      range="B2:B5"
+      type="iconSet"
+      iconType="threeStars"
+      reverse={true}
+      showIconsOnly={true}
+      stopIfTrue={true}
+    />
     <ConditionalFormat
       range="C2:C5"
       type="iconSet"
       iconType="threeArrows"
+      showIconsOnly={true}
+      stopIfTrue={true}
       icons={[
         { type: "percent", value: 0 },
         { type: "percentile", value: 50, greaterThan: true, iconType: "fourHistograms", iconIndex: 2 },

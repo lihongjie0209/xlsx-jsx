@@ -513,16 +513,24 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         path: path.to_path_buf(),
         source: std::io::Error::other(error.to_string()),
     })?;
-    let x14_icon_gte = collect_x14_icon_gte_targets(ir)?;
-    if !x14_icon_gte.is_empty() {
-        normalize_x14_icon_gte(path, &x14_icon_gte)?;
+    let x14_icon_normalization = collect_x14_icon_normalization_targets(ir)?;
+    if !x14_icon_normalization.is_empty() {
+        normalize_x14_icon_rules(path, &x14_icon_normalization)?;
     }
     Ok(())
 }
 
-fn collect_x14_icon_gte_targets(
+#[derive(Default)]
+struct X14IconRuleNormalization {
+    greater_than_thresholds: Vec<usize>,
+    reverse: bool,
+    show_icons_only: bool,
+    stop_if_true: bool,
+}
+
+fn collect_x14_icon_normalization_targets(
     ir: &IrEnvelope,
-) -> xlsx_jsx::Result<HashMap<String, HashMap<u32, Vec<usize>>>> {
+) -> xlsx_jsx::Result<HashMap<String, HashMap<u32, X14IconRuleNormalization>>> {
     let mut targets = HashMap::new();
     let mut worksheet_part = 0_u32;
     for value in &ir.workbook.children {
@@ -536,51 +544,35 @@ fn collect_x14_icon_gte_targets(
         for child_value in &sheet.children {
             let child: Node = serde_json::from_value(child_value.clone())
                 .map_err(|error| Error::Compile(error.to_string()))?;
-            if child.r#type != "ConditionalFormat" {
+            if child.r#type != "ConditionalFormat"
+                || child.props.get("type").and_then(Value::as_str) != Some("iconSet")
+            {
                 continue;
             }
-            if child.props.get("type").and_then(Value::as_str) != Some("iconSet") {
-                continue;
-            }
-            let Some(icons) = child.props.get("icons").and_then(Value::as_array) else {
-                continue;
-            };
+            let icons = child.props.get("icons").and_then(Value::as_array);
             let icon_type = child
                 .props
                 .get("iconType")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let classic_icon_types = [
-                "threeArrows",
-                "threeArrowsGray",
-                "threeFlags",
-                "threeTrafficLights1",
-                "threeTrafficLights2",
-                "threeSigns",
-                "threeSymbols",
-                "threeSymbols2",
-                "fourArrows",
-                "fourArrowsGray",
-                "fourRedToBlack",
-                "fourRating",
-                "fourTrafficLights",
-                "fiveArrows",
-                "fiveArrowsGray",
-                "fiveRating",
-            ];
-            let has_custom_icons = icons.iter().any(|icon| {
-                icon.as_object().is_some_and(|icon| {
-                    ["iconType", "iconIndex", "noIcon"]
-                        .iter()
-                        .any(|key| icon.contains_key(*key))
+            let x14_only_icon_types = ["threeStars", "threeTriangles", "fiveBoxes"];
+            let has_custom_icons = icons.is_some_and(|icons| {
+                icons.iter().any(|icon| {
+                    icon.as_object().is_some_and(|icon| {
+                        ["iconType", "iconIndex", "noIcon"]
+                            .iter()
+                            .any(|key| icon.contains_key(*key))
+                    })
                 })
             });
-            if !has_custom_icons && classic_icon_types.contains(&icon_type) {
+            let is_x14_only = x14_only_icon_types.contains(&icon_type) || has_custom_icons;
+            if !is_x14_only {
                 continue;
             }
             priority += 1;
             let greater_than_indices = icons
-                .iter()
+                .into_iter()
+                .flat_map(|icons| icons.iter())
                 .enumerate()
                 .filter_map(|(index, icon)| {
                     icon.as_object()
@@ -590,20 +582,31 @@ fn collect_x14_icon_gte_targets(
                         .map(|_| index)
                 })
                 .collect::<Vec<_>>();
-            if !greater_than_indices.is_empty() {
+            let normalization = X14IconRuleNormalization {
+                greater_than_thresholds: greater_than_indices,
+                reverse: child.props.get("reverse").and_then(Value::as_bool) == Some(true),
+                show_icons_only: child.props.get("showIconsOnly").and_then(Value::as_bool)
+                    == Some(true),
+                stop_if_true: child.props.get("stopIfTrue").and_then(Value::as_bool) == Some(true),
+            };
+            if !normalization.greater_than_thresholds.is_empty()
+                || normalization.reverse
+                || normalization.show_icons_only
+                || normalization.stop_if_true
+            {
                 targets
                     .entry(format!("xl/worksheets/sheet{worksheet_part}.xml"))
                     .or_insert_with(HashMap::new)
-                    .insert(priority, greater_than_indices);
+                    .insert(priority, normalization);
             }
         }
     }
     Ok(targets)
 }
 
-fn normalize_x14_icon_gte(
+fn normalize_x14_icon_rules(
     path: &std::path::Path,
-    targets_by_part: &HashMap<String, HashMap<u32, Vec<usize>>>,
+    targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -626,7 +629,7 @@ fn normalize_x14_icon_gte(
         })
         .ok_or_else(|| Error::Compile("cannot create a temporary XLSX normalization file beside the output; close conflicting processes or remove stale `.xlsx-jsx-*.tmp` files".into()))?;
 
-    let rewrite_result = rewrite_xlsx_with_x14_gte(path, temporary_file, targets_by_part);
+    let rewrite_result = rewrite_xlsx_with_x14_icon_rules(path, temporary_file, targets_by_part);
     if let Err(error) = rewrite_result {
         let _ = std::fs::remove_file(&temporary_path);
         return Err(error);
@@ -647,10 +650,10 @@ fn normalize_x14_icon_gte(
     Ok(())
 }
 
-fn rewrite_xlsx_with_x14_gte(
+fn rewrite_xlsx_with_x14_icon_rules(
     path: &std::path::Path,
     temporary_file: std::fs::File,
-    targets_by_part: &HashMap<String, HashMap<u32, Vec<usize>>>,
+    targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -682,7 +685,7 @@ fn rewrite_xlsx_with_x14_gte(
                     "generated worksheet `{name}` is not UTF-8 XML: {error}"
                 ))
             })?;
-            bytes = patch_x14_icon_gte(&xml, targets, &name)?.into_bytes();
+            bytes = patch_x14_icon_rules(&xml, targets, &name)?.into_bytes();
             patched_parts.insert(name.clone());
         }
         writer
@@ -728,9 +731,9 @@ fn rewrite_xlsx_with_x14_gte(
 
 // This event loop preserves XML token order while tracking rule-local threshold indices.
 #[allow(clippy::too_many_lines)]
-fn patch_x14_icon_gte(
+fn patch_x14_icon_rules(
     xml: &str,
-    targets_by_priority: &HashMap<u32, Vec<usize>>,
+    targets_by_priority: &HashMap<u32, X14IconRuleNormalization>,
     part: &str,
 ) -> xlsx_jsx::Result<String> {
     let mut reader = XmlReader::from_str(xml);
@@ -738,6 +741,7 @@ fn patch_x14_icon_gte(
     let mut priority = None;
     let mut threshold_index = 0_usize;
     let mut patched = std::collections::HashSet::new();
+    let mut patched_rules = std::collections::HashSet::new();
     loop {
         let event = reader
             .read_event()
@@ -767,9 +771,74 @@ fn patch_x14_icon_gte(
                     Error::Compile(format!("generated x14 icon rule in `{part}` has invalid priority `{raw_priority}`: {error}"))
                 })?);
                 threshold_index = 0;
+                if let Some(rule_priority) = priority
+                    && targets_by_priority
+                        .get(&rule_priority)
+                        .is_some_and(|target| target.stop_if_true)
+                {
+                    let has_stop_if_true = start.attributes().with_checks(false).any(|attribute| {
+                        attribute.is_ok_and(|attribute| {
+                            attribute.key.local_name().as_ref() == b"stopIfTrue"
+                        })
+                    });
+                    if !has_stop_if_true {
+                        let mut normalized = start.to_owned();
+                        normalized.push_attribute(("stopIfTrue", "1"));
+                        writer
+                            .write_event(Event::Start(normalized))
+                            .map_err(|error| {
+                                Error::Compile(format!(
+                                    "cannot normalize worksheet `{part}`: {error}"
+                                ))
+                            })?;
+                        patched_rules.insert((rule_priority, "stopIfTrue"));
+                        continue;
+                    }
+                    patched_rules.insert((rule_priority, "stopIfTrue"));
+                }
                 writer.write_event(event).map_err(|error| {
                     Error::Compile(format!("cannot normalize worksheet `{part}`: {error}"))
                 })?;
+                continue;
+            }
+            Event::Start(ref start) if start.name().as_ref() == b"x14:iconSet" => {
+                let Some(rule_priority) = priority else {
+                    return Err(Error::Compile(format!(
+                        "generated x14 iconSet in `{part}` is outside an x14 cfRule"
+                    )));
+                };
+                let Some(target) = targets_by_priority.get(&rule_priority) else {
+                    writer.write_event(event).map_err(|error| {
+                        Error::Compile(format!("cannot normalize worksheet `{part}`: {error}"))
+                    })?;
+                    continue;
+                };
+                let has_reverse = start.attributes().with_checks(false).any(|attribute| {
+                    attribute
+                        .is_ok_and(|attribute| attribute.key.local_name().as_ref() == b"reverse")
+                });
+                let has_show_value = start.attributes().with_checks(false).any(|attribute| {
+                    attribute
+                        .is_ok_and(|attribute| attribute.key.local_name().as_ref() == b"showValue")
+                });
+                let mut normalized = start.to_owned();
+                if target.reverse {
+                    if !has_reverse {
+                        normalized.push_attribute(("reverse", "1"));
+                    }
+                    patched_rules.insert((rule_priority, "reverse"));
+                }
+                if target.show_icons_only {
+                    if !has_show_value {
+                        normalized.push_attribute(("showValue", "0"));
+                    }
+                    patched_rules.insert((rule_priority, "showValue"));
+                }
+                writer
+                    .write_event(Event::Start(normalized))
+                    .map_err(|error| {
+                        Error::Compile(format!("cannot normalize worksheet `{part}`: {error}"))
+                    })?;
                 continue;
             }
             Event::Start(ref start) if start.name().as_ref() == b"x14:cfvo" => {
@@ -782,7 +851,7 @@ fn patch_x14_icon_gte(
                 threshold_index += 1;
                 if targets_by_priority
                     .get(&rule_priority)
-                    .is_some_and(|indices| indices.contains(&current_index))
+                    .is_some_and(|target| target.greater_than_thresholds.contains(&current_index))
                 {
                     let has_gte = start.attributes().with_checks(false).any(|attribute| {
                         attribute
@@ -814,7 +883,7 @@ fn patch_x14_icon_gte(
                 threshold_index += 1;
                 if targets_by_priority
                     .get(&rule_priority)
-                    .is_some_and(|indices| indices.contains(&current_index))
+                    .is_some_and(|target| target.greater_than_thresholds.contains(&current_index))
                 {
                     let has_gte = start.attributes().with_checks(false).any(|attribute| {
                         attribute
@@ -848,11 +917,22 @@ fn patch_x14_icon_gte(
             Error::Compile(format!("cannot normalize worksheet `{part}`: {error}"))
         })?;
     }
-    for (rule_priority, indices) in targets_by_priority {
-        for index in indices {
+    for (rule_priority, target) in targets_by_priority {
+        for index in &target.greater_than_thresholds {
             if !patched.contains(&(*rule_priority, *index)) {
                 return Err(Error::Compile(format!(
                     "pinned writer did not emit x14 icon threshold {index} for conditional-format priority {rule_priority} in `{part}`; retain the threshold order and repair the icon-set definition"
+                )));
+            }
+        }
+        for (enabled, attribute) in [
+            (target.stop_if_true, "stopIfTrue"),
+            (target.reverse, "reverse"),
+            (target.show_icons_only, "showValue"),
+        ] {
+            if enabled && !patched_rules.contains(&(*rule_priority, attribute)) {
+                return Err(Error::Compile(format!(
+                    "pinned writer did not emit x14 icon attribute `{attribute}` for conditional-format priority {rule_priority} in `{part}`; repair the icon-set definition"
                 )));
             }
         }
@@ -22712,11 +22792,14 @@ fn merge_x14_data_bars(
                     b"x14:cfRule" => {
                         let attributes = conditional_attributes(
                             &event,
-                            &["type", "id", "priority"],
+                            &["type", "id", "priority", "stopIfTrue"],
                             part,
                             reader.decoder(),
                         )?;
                         if attributes.get("type").map(String::as_str) == Some("iconSet") {
+                            if let Some(value) = attributes.get("stopIfTrue") {
+                                parse_xml_bool(value, part, "x14:cfRule.stopIfTrue")?;
+                            }
                             current = None;
                             continue;
                         }
@@ -22724,6 +22807,12 @@ fn merge_x14_data_bars(
                             return Err(Error::Reverse(format!(
                                 "worksheet `{part}` x14 conditional rule is not a dataBar; add matching JSX and reader support"
                             )));
+                        }
+                        if attributes.contains_key("stopIfTrue") {
+                            return Err(Error::Reverse(
+                                "worksheet x14 dataBar stopIfTrue is outside the lossless DSL subset; remove it or add data-bar stopIfTrue support"
+                                    .into(),
+                            ));
                         }
                         let id = attributes
                             .get("id")
@@ -23044,6 +23133,9 @@ struct X14IconSetRule {
     id: String,
     priority: u32,
     range: String,
+    stop_if_true: Option<bool>,
+    reverse: Option<bool>,
+    show_icons_only: Option<bool>,
     icon_type: String,
     custom: bool,
     thresholds: Vec<IconThresholdProperties>,
@@ -23115,7 +23207,7 @@ fn merge_x14_icon_sets(
                 b"x14:cfRule" if in_supported_extension => {
                     let attributes = conditional_attributes(
                         &event,
-                        &["type", "priority", "id"],
+                        &["type", "priority", "id", "stopIfTrue"],
                         part,
                         reader.decoder(),
                     )?;
@@ -23136,6 +23228,12 @@ fn merge_x14_icon_sets(
                             current = Some(X14IconSetRule {
                                 id,
                                 priority,
+                                stop_if_true: attributes
+                                    .get("stopIfTrue")
+                                    .map(|value| {
+                                        parse_xml_bool(value, part, "x14:cfRule.stopIfTrue")
+                                    })
+                                    .transpose()?,
                                 ..Default::default()
                             });
                         }
@@ -23154,7 +23252,7 @@ fn merge_x14_icon_sets(
                 b"x14:iconSet" if in_supported_extension && current.is_some() => {
                     let attributes = conditional_attributes(
                         &event,
-                        &["iconSet", "custom"],
+                        &["iconSet", "custom", "showValue", "reverse"],
                         part,
                         reader.decoder(),
                     )?;
@@ -23166,9 +23264,22 @@ fn merge_x14_icon_sets(
                         .map(|value| parse_xml_bool(value, part, "x14:iconSet.custom"))
                         .transpose()?
                         .unwrap_or(false);
+                    let show_icons_only = attributes
+                        .get("showValue")
+                        .map(|value| {
+                            parse_xml_bool(value, part, "x14:iconSet.showValue")
+                                .map(|show_value| !show_value)
+                        })
+                        .transpose()?;
+                    let reverse = attributes
+                        .get("reverse")
+                        .map(|value| parse_xml_bool(value, part, "x14:iconSet.reverse"))
+                        .transpose()?;
                     if let Some(rule) = current.as_mut() {
                         rule.icon_type = conditional_icon_type_from_xml(icon_type, part)?;
                         rule.custom = custom;
+                        rule.show_icons_only = show_icons_only;
+                        rule.reverse = reverse;
                     }
                 }
                 b"x14:cfvo" if in_supported_extension && current.is_some() => {
@@ -23348,6 +23459,12 @@ fn merge_x14_icon_sets(
                 extension.id
             )));
         }
+        if extension.custom && extension.reverse == Some(true) {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` x14 iconSet `{}` has reverse=true with custom icons, which OOXML requires readers to ignore; remove reverse or use built-in icons",
+                extension.id
+            )));
+        }
         let matching = rules.iter().position(|rule| {
             rule.priority == Some(extension.priority) && rule.range == extension.range
         });
@@ -23357,6 +23474,7 @@ fn merge_x14_icon_sets(
                 range: extension.range,
                 scale_type: "iconSet".to_owned(),
                 priority: Some(extension.priority),
+                stop_if_true: extension.stop_if_true.unwrap_or(false),
                 guid: Some(extension.id),
                 icon_set: Some(icon_set),
                 ..Default::default()
@@ -23381,6 +23499,27 @@ fn merge_x14_icon_sets(
         {
             return Err(Error::Reverse(format!(
                 "worksheet `{part}` classic and x14 iconSet `{}` types or thresholds disagree; restore matching rules",
+                extension.id
+            )));
+        }
+        if extension
+            .stop_if_true
+            .is_some_and(|stop_if_true| stop_if_true != classic.stop_if_true)
+        {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` classic and x14 iconSet `{}` stopIfTrue flags disagree; make both rule representations use the same value",
+                extension.id
+            )));
+        }
+        if extension
+            .reverse
+            .is_some_and(|reverse| reverse != classic_icons.reverse)
+            || extension
+                .show_icons_only
+                .is_some_and(|show| show != classic_icons.show_icons_only)
+        {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` classic and x14 iconSet `{}` flags disagree; make both rule representations use the same reverse/showValue values",
                 extension.id
             )));
         }
@@ -23427,8 +23566,9 @@ fn build_x14_icon_set(extension: &X14IconSetRule) -> IconSetProperties {
     }
     IconSetProperties {
         icon_type: extension.icon_type.clone(),
+        reverse: extension.reverse.unwrap_or(false),
+        show_icons_only: extension.show_icons_only.unwrap_or(false),
         icons,
-        ..Default::default()
     }
 }
 

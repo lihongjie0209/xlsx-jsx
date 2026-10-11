@@ -14617,6 +14617,22 @@ fn external_x14_icon_sets_round_trip_without_manifest() {
             "<x14:cfvo type=\"percentile\"><xm:f>50</xm:f></x14:cfvo>",
             "<x14:cfvo type=\"percentile\" gte=\"0\"><xm:f>50</xm:f></x14:cfvo>",
         )
+        .replace(
+            "<x14:cfRule type=\"iconSet\" priority=\"1\" id=\"{DA7ABA51-AAAA-BBBB-0001-000000000001}\">",
+            "<x14:cfRule type=\"iconSet\" priority=\"1\" stopIfTrue=\"1\" id=\"{DA7ABA51-AAAA-BBBB-0001-000000000001}\">",
+        )
+        .replace(
+            "<x14:iconSet iconSet=\"3Stars\">",
+            "<x14:iconSet iconSet=\"3Stars\" showValue=\"0\" reverse=\"1\">",
+        )
+        .replace(
+            "<x14:cfRule type=\"iconSet\" priority=\"2\" id=\"{DA7ABA51-AAAA-BBBB-0001-000000000002}\">",
+            "<x14:cfRule type=\"iconSet\" priority=\"2\" stopIfTrue=\"1\" id=\"{DA7ABA51-AAAA-BBBB-0001-000000000002}\">",
+        )
+        .replace(
+            "<x14:iconSet iconSet=\"3Arrows\" custom=\"1\">",
+            "<x14:iconSet iconSet=\"3Arrows\" custom=\"1\" showValue=\"0\">",
+        )
     });
     let worksheet_xml = read_zip_part_for_test(&input, "xl/worksheets/sheet1.xml");
     assert!(worksheet_xml.contains("<x14:cfIcon iconSet=\"4Rating\" iconId=\"2\"/>"));
@@ -14640,6 +14656,12 @@ fn external_x14_icon_sets_round_trip_without_manifest() {
     assert!(source.contains("greaterThan: true"), "{source}");
     assert!(source.contains("MAX(A1:A10)"), "{source}");
     assert!(source.contains("iconType=\"threeStars\""), "{source}");
+    assert!(source.contains("reverse={true}"), "{source}");
+    assert!(
+        source.matches("showIconsOnly={true}").count() == 2,
+        "{source}"
+    );
+    assert!(source.matches("stopIfTrue={true}").count() == 2, "{source}");
 
     let output = directory.path().join("x14-icon-set-roundtrip.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -14653,6 +14675,15 @@ fn external_x14_icon_sets_round_trip_without_manifest() {
     let rebuilt_xml = read_zip_part_for_test(&output, "xl/worksheets/sheet1.xml");
     assert!(
         rebuilt_xml.contains("<x14:cfvo type=\"percentile\" gte=\"0\">"),
+        "{rebuilt_xml}"
+    );
+    assert!(rebuilt_xml.contains("stopIfTrue=\"1\""), "{rebuilt_xml}");
+    assert!(
+        rebuilt_xml.contains("<x14:iconSet iconSet=\"3Stars\" reverse=\"1\" showValue=\"0\">"),
+        "{rebuilt_xml}"
+    );
+    assert!(
+        rebuilt_xml.contains("<x14:iconSet iconSet=\"3Arrows\" custom=\"1\" showValue=\"0\">"),
         "{rebuilt_xml}"
     );
 
@@ -14673,6 +14704,45 @@ fn external_x14_icon_sets_round_trip_without_manifest() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("gte must be 0 or 1"));
+
+    let invalid_stop_flag = directory.path().join("x14-icon-set-invalid-stop-flag.xlsx");
+    std::fs::copy(&input, &invalid_stop_flag).expect("invalid flag workbook copies");
+    rewrite_part(&invalid_stop_flag, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace("stopIfTrue=\"1\"", "stopIfTrue=\"sometimes\"")
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&invalid_stop_flag)
+        .args(["-o"])
+        .arg(directory.path().join("x14-icon-set-invalid-stop-flag.tsx"))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("x14:cfRule.stopIfTrue"));
+
+    let invalid_custom_reverse = directory
+        .path()
+        .join("x14-icon-set-invalid-custom-reverse.xlsx");
+    std::fs::copy(&input, &invalid_custom_reverse).expect("custom icon workbook copies");
+    rewrite_part(&invalid_custom_reverse, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<x14:iconSet iconSet=\"3Arrows\" custom=\"1\" showValue=\"0\">",
+            "<x14:iconSet iconSet=\"3Arrows\" custom=\"1\" showValue=\"0\" reverse=\"1\">",
+        )
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&invalid_custom_reverse)
+        .args(["-o"])
+        .arg(
+            directory
+                .path()
+                .join("x14-icon-set-invalid-custom-reverse.tsx"),
+        )
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("reverse=true with custom icons"));
 
     let invalid_no_icon = directory.path().join("x14-icon-set-invalid-no-icon.xlsx");
     std::fs::copy(&input, &invalid_no_icon).expect("noIcon test workbook copies");

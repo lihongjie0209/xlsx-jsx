@@ -7389,14 +7389,6 @@ fn validate_icon_set_conditional_format(format: &Node) -> Result<()> {
         5
     };
     let custom_icons = format.props.get("icons").and_then(Value::as_array);
-    let x14_only = ["threeStars", "threeTriangles", "fiveBoxes"].contains(&icon_type)
-        || custom_icons.is_some_and(|icons| {
-            icons.iter().any(|icon| {
-                icon.as_object().is_some_and(|properties| {
-                    properties.contains_key("iconType") || properties.contains_key("noIcon")
-                })
-            })
-        });
     for property in ["reverse", "showIconsOnly"] {
         if let Some(value) = format.props.get(property) {
             if value.as_bool().is_none() {
@@ -7404,17 +7396,24 @@ fn validate_icon_set_conditional_format(format: &Node) -> Result<()> {
                     "ConditionalFormat.{property} must be boolean"
                 )));
             }
-            if x14_only && value.as_bool() == Some(true) {
-                return Err(Error::Compile(format!(
-                    "ConditionalFormat.{property} cannot be true with iconType `{icon_type}` because the pinned writer omits it for x14-only icon sets; choose a classic icon set or remove the flag"
-                )));
+            if property == "reverse"
+                && custom_icons.is_some_and(|icons| {
+                    icons.iter().any(|icon| {
+                        icon.as_object().is_some_and(|properties| {
+                            ["iconType", "iconIndex", "noIcon"]
+                                .iter()
+                                .any(|property| properties.contains_key(*property))
+                        })
+                    })
+                })
+                && value.as_bool() == Some(true)
+            {
+                return Err(Error::Compile(
+                    "ConditionalFormat.reverse cannot be true with custom icon assignments because OOXML requires reverse to be ignored when custom icons are used; remove reverse or use a built-in icon set"
+                        .into(),
+                ));
             }
         }
-    }
-    if x14_only && format.props.get("stopIfTrue").and_then(Value::as_bool) == Some(true) {
-        return Err(Error::Compile(format!(
-            "ConditionalFormat.stopIfTrue cannot be true with iconType `{icon_type}` because the pinned writer omits it for x14-only icon sets; choose a classic icon set or remove the flag"
-        )));
     }
     let Some(icons) = format.props.get("icons") else {
         return Ok(());
@@ -10673,6 +10672,58 @@ mod tests {
         input
             .validate()
             .expect("compiler normalizes x14 cfvo greaterThan after writing");
+    }
+
+    #[test]
+    fn accepts_representable_flags_for_x14_only_icon_sets() {
+        let input = workbook(vec![worksheet(
+            "Icons",
+            vec![serde_json::json!({
+                "type":"ConditionalFormat",
+                "props":{
+                    "range":"A1:A3",
+                    "type":"iconSet",
+                    "iconType":"threeStars",
+                    "reverse":true,
+                    "showIconsOnly":true,
+                    "stopIfTrue":true
+                },
+                "children":[]
+            })],
+        )]);
+        input
+            .validate()
+            .expect("x14 extension can preserve all three icon flags");
+    }
+
+    #[test]
+    fn rejects_reverse_for_custom_icon_assignments() {
+        let input = workbook(vec![worksheet(
+            "Icons",
+            vec![serde_json::json!({
+                "type":"ConditionalFormat",
+                "props":{
+                    "range":"A1:A3",
+                    "type":"iconSet",
+                    "iconType":"threeArrows",
+                    "reverse":true,
+                    "icons":[
+                        {"type":"percent","value":0},
+                        {"type":"percent","value":50,"iconIndex":1},
+                        {"type":"percent","value":100}
+                    ]
+                },
+                "children":[]
+            })],
+        )]);
+        let error = input
+            .validate()
+            .expect_err("custom icon rules ignore reverse by OOXML definition");
+        assert!(
+            error
+                .to_string()
+                .contains("ignored when custom icons are used")
+        );
     }
 
     #[test]

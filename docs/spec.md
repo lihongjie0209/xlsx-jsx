@@ -1070,10 +1070,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   extension range and priority. If both representations refer to the same
   rule, their thresholds and icon type are cross-checked. Orphaned, duplicate,
   or contradictory classic/x14 rules are rejected.
-  Icon-set types that are x14-only are supported, but the writer does not
-  serialize `reverse`, `showIconsOnly`, or `stopIfTrue` for
-  those types, so setting any of those flags to true is invalid. Reverse keeps
-  threshold order and rejects unrecognized extension metadata.
+  For x14-only or custom-icon rules, the writer emits no classic fallback and
+  omits `stopIfTrue`, `reverse`, and `showValue`; the compiler restores these
+  values in the x14 extension (`showIconsOnly` maps to `showValue="0"`).
+  `reverse={true}` is invalid with custom icon assignments because OOXML
+  requires `reverse` to be ignored when `custom="true"`. Reverse preserves
+  supported x14 flags and threshold order and rejects unrecognized extension
+  metadata.
 - `type="top10"` applies `ConditionalFormatTop`. `rule` is `top`, `bottom`,
   `topPercent`, or `bottomPercent` and defaults to `top`; `rank` defaults to 10
   and is an integer from 1–1000 for top/bottom counts or 1–100 for percent

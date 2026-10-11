@@ -1643,27 +1643,12 @@
               "if": {
                 "properties": {
                   "type": { "const": "iconSet" },
-                  "iconType": { "enum": ["threeStars", "threeTriangles", "fiveBoxes"] }
-                },
-                "required": ["type", "iconType"]
-              },
-              "then": {
-                "properties": {
-                  "reverse": { "const": false },
-                  "showIconsOnly": { "const": false },
-                  "stopIfTrue": { "const": false }
-                }
-              }
-            },
-            {
-              "if": {
-                "properties": {
-                  "type": { "const": "iconSet" },
                   "icons": {
                     "contains": {
                       "anyOf": [
                         { "required": ["iconType"] },
-                        { "properties": { "noIcon": { "const": true } }, "required": ["noIcon"] }
+                        { "required": ["iconIndex"] },
+                        { "required": ["noIcon"] }
                       ]
                     }
                   }
@@ -1672,9 +1657,7 @@
               },
               "then": {
                 "properties": {
-                  "reverse": { "const": false },
-                  "showIconsOnly": { "const": false },
-                  "stopIfTrue": { "const": false }
+                  "reverse": { "const": false }
                 }
               }
             },
