@@ -466,6 +466,8 @@ fn spec_exposes_chart_data_table_font_properties() {
         .stdout(predicate::str::contains("fontSize"))
         .stdout(predicate::str::contains("fontColor"))
         .stdout(predicate::str::contains("fontName"))
+        .stdout(predicate::str::contains("fontPitchFamily"))
+        .stdout(predicate::str::contains("fontCharset"))
         .stdout(predicate::str::contains("fillColor"))
         .stdout(predicate::str::contains("fillTransparency"))
         .stdout(predicate::str::contains("lineColor"))
@@ -4162,7 +4164,9 @@ fn reverses_external_chart_data_table_without_a_manifest() {
                 .set_italic()
                 .set_underline()
                 .set_color("#336699")
-                .set_name("Arial"),
+                .set_name("Arial")
+                .set_pitch_family(34)
+                .set_character_set(127),
         )
         .set_format(
             ChartFormat::new().set_solid_fill(
@@ -4185,7 +4189,7 @@ fn reverses_external_chart_data_table_without_a_manifest() {
         .success();
     let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
     assert!(source.contains(
-        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} fontSize={11} fontBold={true} fontItalic={true} fontUnderline={true} fontColor=\"#336699\" fontName=\"Arial\" fillColor=\"#F0E0D0\" fillTransparency={35} />"
+        "<ChartDataTable showHorizontalBorders={false} showVerticalBorders={true} showOutlineBorders={false} showLegendKeys={true} fontSize={11} fontBold={true} fontItalic={true} fontUnderline={true} fontColor=\"#336699\" fontName=\"Arial\" fontPitchFamily={34} fontCharset={127} fillColor=\"#F0E0D0\" fillTransparency={35} />"
     ));
 
     let rebuilt_path = directory.path().join("rebuilt-chart-data-table.xlsx");
@@ -4207,7 +4211,7 @@ fn reverses_external_chart_data_table_without_a_manifest() {
         chart_xml.contains("<c:spPr><a:solidFill><a:srgbClr val=\"F0E0D0\"><a:alpha val=\"65000\"/></a:srgbClr></a:solidFill></c:spPr>"),
         "{chart_xml}"
     );
-    assert!(chart_xml.contains("<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"1100\" b=\"1\" i=\"1\" u=\"sng\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill><a:latin typeface=\"Arial\"/></a:defRPr></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p></c:txPr>"), "{chart_xml}");
+    assert!(chart_xml.contains("<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz=\"1100\" b=\"1\" i=\"1\" u=\"sng\"><a:solidFill><a:srgbClr val=\"336699\"/></a:solidFill><a:latin typeface=\"Arial\" pitchFamily=\"34\" charset=\"127\"/></a:defRPr></a:pPr><a:endParaRPr lang=\"en-US\"/></a:p></c:txPr>"), "{chart_xml}");
 
     let rebuilt_source_path = directory.path().join("rebuilt-chart-data-table.tsx");
     Command::cargo_bin("xlsx-jsx")
@@ -4340,6 +4344,29 @@ fn rejects_invalid_chart_data_table_font_name_with_guidance() {
         .stderr(predicate::str::contains(
             "use a font name without control characters",
         ));
+}
+
+#[test]
+fn rejects_schema_invalid_chart_data_table_font_charset_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("invalid-chart-data-table-charset.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ChartDataTable } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" /><ChartDataTable fontCharset={128} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ChartDataTable.fontCharset must be an integer from 0 through 127",
+        ))
+        .stderr(predicate::str::contains("schema-valid OOXML font metadata"));
 }
 
 #[test]
@@ -4641,7 +4668,7 @@ fn reverse_rejects_unmodeled_chart_data_table_font_rotation() {
             "unsupported data-table font attribute `bodyPr@rot=2700000`",
         ))
         .stderr(predicate::str::contains(
-            "remove rotation, pitch/charset, or other font metadata",
+            "remove rotation or other font metadata",
         ));
 }
 

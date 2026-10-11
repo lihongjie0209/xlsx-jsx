@@ -205,10 +205,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   non-solid dash. Reverse preserves this line subset and rejects patterns,
   gradients, effects, and other shape content.
   `fontSize` (1–4000 points), `fontBold`, `fontItalic`, `fontUnderline`,
-  `fontColor` (opaque `#RRGGBB`), and `fontName` (1–255 XML-safe characters)
-  style data-table text through `ChartDataTable::set_font`; reverse preserves
-  this subset from external charts. Font rotation, pitch/charset, and other
-  text properties remain rejected.
+  `fontColor` (opaque `#RRGGBB`), `fontName` (1–255 XML-safe characters),
+  `fontPitchFamily` (0–255), and `fontCharset` (0–127) style data-table text
+  through `ChartDataTable::set_font`; reverse preserves this subset from
+  external charts. Font rotation and other text properties remain rejected.
 - `cell` is an A1 cell anchor. `width` and `height` are positive integer pixels
   (1–1790); omission uses the writer defaults of 480×288 pixels. `Series` has
   required `values` and optional `categories` and `name` sheet-qualified A1

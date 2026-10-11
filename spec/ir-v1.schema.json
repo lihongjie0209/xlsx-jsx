@@ -1473,6 +1473,8 @@
             "fontUnderline": { "type": "boolean" },
             "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "fontPitchFamily": { "type": "integer", "minimum": 0, "maximum": 255 },
+            "fontCharset": { "type": "integer", "minimum": 0, "maximum": 127 },
             "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "fillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
             "lineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },

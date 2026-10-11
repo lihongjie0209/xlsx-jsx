@@ -4324,6 +4324,8 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     "fontUnderline",
                     "fontColor",
                     "fontName",
+                    "fontPitchFamily",
+                    "fontCharset",
                     "fillColor",
                     "fillTransparency",
                     "lineColor",
@@ -4575,6 +4577,15 @@ fn validate_chart_data_table_properties(data_table: &Node) -> Result<()> {
             return Err(Error::Compile(
                 "ChartDataTable.fontName must contain 1–255 valid XML characters; use a font name without control characters".into(),
             ));
+        }
+    }
+    for (property, maximum) in [("fontPitchFamily", 255), ("fontCharset", 127)] {
+        if let Some(value) = data_table.props.get(property)
+            && value.as_u64().is_none_or(|value| value > maximum)
+        {
+            return Err(Error::Compile(format!(
+                "ChartDataTable.{property} must be an integer from 0 through {maximum}; use a schema-valid OOXML font metadata value"
+            )));
         }
     }
     Ok(())

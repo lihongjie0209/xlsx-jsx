@@ -1513,6 +1513,8 @@ fn compile_chart(
                 "fontUnderline",
                 "fontColor",
                 "fontName",
+                "fontPitchFamily",
+                "fontCharset",
             ]
             .iter()
             .any(|property| child.props.contains_key(*property))
@@ -1541,6 +1543,16 @@ fn compile_chart(
                 }
                 if let Some(name) = child.props.get("fontName").and_then(Value::as_str) {
                     font.set_name(name);
+                }
+                if let Some(pitch_family) =
+                    child.props.get("fontPitchFamily").and_then(Value::as_u64)
+                {
+                    font.set_pitch_family(
+                        u8::try_from(pitch_family).expect("validated pitch family"),
+                    );
+                }
+                if let Some(charset) = child.props.get("fontCharset").and_then(Value::as_u64) {
+                    font.set_character_set(u8::try_from(charset).expect("validated font charset"));
                 }
                 data_table = data_table.set_font(&font);
             }
@@ -6354,6 +6366,12 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         }
         if let Some(name) = &table.font_name {
             let _ = write!(output, " fontName={name:?}");
+        }
+        if let Some(pitch_family) = table.font_pitch_family {
+            let _ = write!(output, " fontPitchFamily={{{pitch_family}}}");
+        }
+        if let Some(charset) = table.font_charset {
+            let _ = write!(output, " fontCharset={{{charset}}}");
         }
         if let Some(color) = &table.fill_color {
             let _ = write!(output, " fillColor={color:?}");
@@ -14927,6 +14945,19 @@ fn parse_chart_xml(
                             && stack.iter().any(|ancestor| ancestor == "dTable") =>
                     {
                         let name = chart_xml_attribute(&event, "typeface", reader.decoder())?;
+                        let pitch_family = chart_xml_attribute(&event, "pitchFamily", reader.decoder())?
+                            .map(|value| value.parse::<u8>())
+                            .transpose()
+                            .map_err(|_| Error::Reverse(format!(
+                                "chart part `{part}` has an invalid data-table font pitchFamily; use an integer from 0 through 255"
+                            )))?;
+                        let charset = chart_xml_attribute(&event, "charset", reader.decoder())?
+                            .map(|value| value.parse::<u8>())
+                            .transpose()
+                            .map_err(|_| Error::Reverse(format!(
+                                "chart part `{part}` has a schema-invalid data-table font charset; use an integer from 0 through 127"
+                            )))?
+                            .filter(|value| *value <= 127);
                         if name.as_ref().is_some_and(|name| {
                             name.is_empty()
                                 || name.chars().count() > 255
@@ -14934,13 +14965,6 @@ fn parse_chart_xml(
                         }) {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has an invalid data-table Latin typeface; use a nonempty 1–255 character XML-safe name"
-                            )));
-                        }
-                        if chart_xml_attribute(&event, "pitchFamily", reader.decoder())?.is_some()
-                            || chart_xml_attribute(&event, "charset", reader.decoder())?.is_some()
-                        {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has data-table pitchFamily/charset metadata outside the supported font subset; remove those attributes"
                             )));
                         }
                         let table = data_table
@@ -14952,6 +14976,19 @@ fn parse_chart_xml(
                             )));
                         }
                         table.font_name = name;
+                        if table
+                            .font_pitch_family
+                            .is_some_and(|previous| Some(previous) != pitch_family)
+                            || table
+                                .font_charset
+                                .is_some_and(|previous| Some(previous) != charset)
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has inconsistent data-table pitch-family or charset values; make txPr Latin metadata identical"
+                            )));
+                        }
+                        table.font_pitch_family = pitch_family.or(table.font_pitch_family);
+                        table.font_charset = charset.or(table.font_charset);
                     }
                     "spPr" => {
                         if stack.last().is_some_and(|item| item == "trendlineLbl") {
@@ -18960,7 +18997,12 @@ fn audit_chart_attributes(
                     _ => false,
                 }
             } else if tag == "latin" {
-                key == "typeface" && !value.is_empty() && value.chars().all(is_valid_xml_character)
+                match key.as_str() {
+                    "typeface" => !value.is_empty() && value.chars().all(is_valid_xml_character),
+                    "pitchFamily" => value.parse::<u8>().is_ok(),
+                    "charset" => value.parse::<u8>().is_ok_and(|charset| charset <= 127),
+                    _ => false,
+                }
             } else if tag == "endParaRPr" {
                 key == "lang" && value == "en-US"
             } else {
@@ -19030,7 +19072,7 @@ fn audit_chart_attributes(
             && !is_supported_chart_attribute(tag, &key, &value, chart_type)
         {
             return Err(Error::Reverse(format!(
-                "chart part `{part}` has unsupported data-table font attribute `{tag}@{key}={value}`; only point size, bold, italic, single underline, opaque RGB color, and Latin typeface are represented, so remove rotation, pitch/charset, or other font metadata"
+                "chart part `{part}` has unsupported data-table font attribute `{tag}@{key}={value}`; only point size, bold, italic, single underline, opaque RGB color, Latin typeface, pitch-family, and charset are represented, so remove rotation or other font metadata"
             )));
         }
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
@@ -22400,6 +22442,8 @@ struct WorksheetChartDataTable {
     font_underline: Option<bool>,
     font_color: Option<String>,
     font_name: Option<String>,
+    font_pitch_family: Option<u8>,
+    font_charset: Option<u8>,
     fill_color: Option<String>,
     fill_transparency: Option<u8>,
     line_style: Option<WorksheetChartGridlineStyle>,
