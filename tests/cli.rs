@@ -43,6 +43,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("moveAndSizeAfter"))
         .stdout(predicate::str::contains("\"customLabels\""))
         .stdout(predicate::str::contains("underline"))
+        .stdout(predicate::str::contains("secondaryAxis"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
         .stdout(predicate::str::contains("lineColor"))
@@ -3533,6 +3534,207 @@ fn reverses_external_chart_axis_crossings_without_a_manifest() {
     assert!(column_xml.contains("<c:crosses val=\"min\"/>"));
     assert!(bar_xml.contains("<c:crosses val=\"max\"/>"));
     assert!(bar_xml.contains("<c:crosses val=\"min\"/>"));
+}
+
+#[test]
+fn reverses_and_rebuilds_secondary_chart_axes_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("secondary-axes.xlsx");
+    let output_path = directory.path().join("secondary-axes.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_categories("Data!D2:D4")
+        .set_values("Data!C2:C4")
+        .set_secondary_axis(true);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(
+        source.contains("values={\"Data!$C$2:$C$4\"} secondaryAxis={true}"),
+        "{source}"
+    );
+    let secondary_position = source
+        .find("values={\"Data!$C$2:$C$4\"}")
+        .expect("secondary series is present");
+    let primary_position = source
+        .find("values={\"Data!$B$2:$B$4\"}")
+        .expect("primary series is present");
+    assert!(primary_position < secondary_position, "{source}");
+    assert!(source.contains("values={\"Data!$B$2:$B$4\"}"), "{source}");
+    assert!(
+        source.contains("categories={\"Data!$D$2:$D$4\"}"),
+        "{source}"
+    );
+
+    let rebuilt_path = directory.path().join("rebuilt-secondary-axes.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert_eq!(rebuilt_xml.matches("<c:valAx>").count(), 2, "{rebuilt_xml}");
+    assert_eq!(rebuilt_xml.matches("<c:catAx>").count(), 2, "{rebuilt_xml}");
+}
+
+#[test]
+fn reverse_rejects_custom_secondary_axis_title_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("custom-secondary-axis.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart.add_series().set_values("Data!B2:B4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_secondary_axis(true);
+    chart.y2_axis().set_name("Secondary values");
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "secondary axis contains unsupported `title`",
+        ))
+        .stderr(predicate::str::contains("remove secondary-axis styling"));
+}
+
+#[test]
+fn reverses_secondary_axis_pairs_for_supported_cartesian_chart_families() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("secondary-chart-families.xlsx");
+    let output_path = directory.path().join("secondary-chart-families.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let chart_types = [
+        ChartType::Area,
+        ChartType::Bar,
+        ChartType::Column,
+        ChartType::Line,
+        ChartType::LinePercentStacked,
+        ChartType::Scatter,
+    ];
+    for (index, chart_type) in chart_types.into_iter().enumerate() {
+        let mut chart = XlsxChart::new(chart_type);
+        chart
+            .add_series()
+            .set_categories("Data!A2:A4")
+            .set_values("Data!B2:B4");
+        chart
+            .add_series()
+            .set_categories("Data!A2:A4")
+            .set_values("Data!C2:C4")
+            .set_secondary_axis(true);
+        worksheet
+            .insert_chart(
+                u32::try_from(index * 18).expect("test chart row fits u32"),
+                5,
+                &chart,
+            )
+            .unwrap();
+    }
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert_eq!(
+        source.matches("secondaryAxis={true}").count(),
+        6,
+        "{source}"
+    );
+    assert!(
+        source.contains("<Chart type=\"linePercentStacked\""),
+        "{source}"
+    );
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-secondary-chart-families.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let twice_reversed_path = directory.path().join("secondary-chart-families-twice.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(&twice_reversed_path)
+        .assert()
+        .success();
+    let twice_reversed =
+        std::fs::read_to_string(twice_reversed_path).expect("second reverse exists");
+    assert_eq!(
+        twice_reversed.matches("secondaryAxis={true}").count(),
+        6,
+        "{twice_reversed}"
+    );
+}
+
+#[test]
+fn reverse_rejects_chart_with_only_secondary_series() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("only-secondary-series.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_values("Data!B2:B4")
+        .set_secondary_axis(true);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "assigns every series to the secondary axes",
+        ))
+        .stderr(predicate::str::contains(
+            "add at least one primary-axis Series",
+        ));
 }
 
 #[test]

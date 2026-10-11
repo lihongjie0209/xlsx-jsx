@@ -87,6 +87,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   line visibility, smoothing, and marker mode from scatter style, per-series
   line properties, smoothing, and marker overrides. Mixed per-series settings, axis titles,
   and category-axis scatter charts fail with repair guidance.
+- `Series.secondaryAxis?: boolean` assigns a Cartesian series to the chart's
+  secondary axis pair when true; omission/false uses the primary pair. A chart
+  must retain at least one primary and one secondary series when the secondary
+  axis pair is used. Reverse resolves each series through its chart group's
+  `axId` references and the matching axis definitions, without relying on the
+  embedded manifest. The writer-default secondary axes are preserved, including
+  a secondary series' distinct `categories` range. Secondary-axis formatting
+  is not yet modeled: titles, bounds, custom labels, gridlines, crossings, or
+  other non-default axis XML fail with a repair suggestion rather than being
+  merged into primary-axis properties. Ambiguous axis-ID pairs also fail.
 - Stock charts support the standard high-low-close (3 series) and
   open-high-low-close (4 series) forms. `Series` order is significant and must
   be High/Low/Close or Open/High/Low/Close respectively; every series must have

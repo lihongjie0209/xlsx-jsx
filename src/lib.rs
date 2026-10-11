@@ -4300,6 +4300,7 @@ fn validate_chart_legend(chart: &Node) -> Result<()> {
 )]
 fn validate_chart_series(chart: &Node) -> Result<()> {
     let mut series_count = 0;
+    let mut secondary_series_count = 0;
     let mut data_table_seen = false;
     for (child_index, value) in chart.children.iter().enumerate() {
         let child: Node = serde_json::from_value(value.clone())
@@ -4450,9 +4451,51 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "pointColorTransparencies",
                 "gap",
                 "overlap",
+                "secondaryAxis",
             ],
             "Series",
         )?;
+        if let Some(value) = series.props.get("secondaryAxis") {
+            let Some(is_secondary) = value.as_bool() else {
+                return Err(Error::Compile(format!(
+                    "Series {}.secondaryAxis must be a boolean; use true/false or omit it",
+                    series_index + 1
+                )));
+            };
+            if is_secondary {
+                let chart_type = chart
+                    .props
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !matches!(
+                    chart_type,
+                    "area"
+                        | "areaStacked"
+                        | "areaPercentStacked"
+                        | "bar"
+                        | "barStacked"
+                        | "barPercentStacked"
+                        | "column"
+                        | "columnStacked"
+                        | "columnPercentStacked"
+                        | "line"
+                        | "lineStacked"
+                        | "linePercentStacked"
+                        | "scatter"
+                        | "scatterWithLines"
+                        | "scatterWithLinesAndMarkers"
+                        | "scatterWithSmoothLines"
+                        | "scatterWithSmoothLinesAndMarkers"
+                ) {
+                    return Err(Error::Compile(format!(
+                        "Series {}.secondaryAxis is supported only for Cartesian area, bar, column, line, and scatter charts; change Chart.type or remove secondaryAxis",
+                        series_index + 1
+                    )));
+                }
+                secondary_series_count += 1;
+            }
+        }
         validate_chart_series_properties(chart, &series, series_index)?;
         let values = series
             .props
@@ -4518,6 +4561,11 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 )));
             }
         }
+    }
+    if secondary_series_count > 0 && secondary_series_count == series_count {
+        return Err(Error::Compile(
+            "Chart.secondaryAxis requires at least one primary-axis Series; remove secondaryAxis from one Series or add a primary series".into(),
+        ));
     }
     validate_chart_series_spacing(chart)?;
     Ok(())
@@ -10629,6 +10677,45 @@ mod tests {
 
         let validation = input.validate();
         assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_chart_series_secondary_axis_assignment() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"line","cell":"D2"},
+                "children":[
+                    {"type":"Series","props":{"values":"Charts!B1:B3"},"children":[]},
+                    {"type":"Series","props":{"values":"Charts!C1:C3","secondaryAxis":true},"children":[]}
+                ]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn rejects_chart_with_secondary_axis_but_no_primary_series() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"line","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3","secondaryAxis":true
+                },"children":[]}]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("secondary chart needs both axis groups");
+        assert!(
+            error
+                .to_string()
+                .contains("at least one primary-axis Series")
+        );
     }
 
     #[test]

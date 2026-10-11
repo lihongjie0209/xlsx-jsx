@@ -1650,6 +1650,9 @@ fn compile_chart(
         if let Some(title) = series.props.get("title").and_then(Value::as_str) {
             chart_series.set_name(title);
         }
+        if series.props.get("secondaryAxis").and_then(Value::as_bool) == Some(true) {
+            chart_series.set_secondary_axis(true);
+        }
         if series
             .props
             .get("deleteFromLegend")
@@ -6133,6 +6136,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
     for (series_index, series) in chart.series.iter().enumerate() {
         output.push_str("      <Series");
         let _ = write!(output, " values={{{:?}}}", series.values);
+        if series.secondary_axis {
+            output.push_str(" secondaryAxis={true}");
+        }
         if let Some(categories) = &series.categories {
             let _ = write!(output, " categories={{{categories:?}}}");
         }
@@ -10065,6 +10071,403 @@ fn parse_stock_bar_styles(
     Ok((up, down))
 }
 
+#[derive(Default)]
+struct ParsedSecondaryChartGroups {
+    series_secondary: Vec<bool>,
+    secondary_axis_indices: Vec<usize>,
+    secondary_axis_number_formats: Vec<Option<String>>,
+}
+
+#[derive(Default)]
+struct ParsedChartAxisInfo {
+    kind: Option<String>,
+    id: Option<u32>,
+    deleted: bool,
+    tags: Vec<(String, BTreeMap<String, String>)>,
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "Secondary chart group and axis ID relationships are validated as one bounded OOXML graph."
+)]
+fn parse_secondary_chart_groups(
+    xml: &str,
+    part: &str,
+) -> xlsx_jsx::Result<ParsedSecondaryChartGroups> {
+    let group_tags = [
+        "areaChart",
+        "barChart",
+        "lineChart",
+        "radarChart",
+        "scatterChart",
+        "stockChart",
+    ];
+    let axis_tags = ["catAx", "dateAx", "valAx"];
+    let mut reader = XmlReader::from_str(xml);
+    let mut stack = Vec::<String>::new();
+    let mut groups = Vec::<Vec<u32>>::new();
+    let mut series_groups = Vec::<usize>::new();
+    let mut axes = Vec::<ParsedChartAxisInfo>::new();
+    let mut current_group = None;
+    let mut current_axis = None;
+
+    loop {
+        match reader.read_event() {
+            Ok(event @ (Event::Start(_) | Event::Empty(_))) => {
+                let empty = matches!(event, Event::Empty(_));
+                let (Event::Start(event) | Event::Empty(event)) = event else {
+                    unreachable!()
+                };
+                let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                let parent = stack.last().map(String::as_str);
+                if group_tags.contains(&tag.as_str()) && parent == Some("plotArea") {
+                    groups.push(Vec::new());
+                    current_group = Some(groups.len() - 1);
+                } else if axis_tags.contains(&tag.as_str()) && parent == Some("plotArea") {
+                    axes.push(ParsedChartAxisInfo {
+                        kind: Some(tag.clone()),
+                        ..ParsedChartAxisInfo::default()
+                    });
+                    current_axis = Some(axes.len() - 1);
+                } else if tag == "ser"
+                    && let Some(group_index) = current_group
+                {
+                    series_groups.push(group_index);
+                } else if tag == "axId" {
+                    let raw = event
+                        .attributes()
+                        .with_checks(false)
+                        .filter_map(Result::ok)
+                        .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+                        .map(|attribute| {
+                            attribute
+                                .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                                .map(std::borrow::Cow::into_owned)
+                        })
+                        .transpose()
+                        .map_err(|error| Error::Reverse(format!("invalid chart axis ID in `{part}`: {error}")))?
+                        .ok_or_else(|| Error::Reverse(format!("chart part `{part}` has an axis reference without val; restore a numeric c:axId")))?;
+                    let id = raw.parse::<u32>().map_err(|_| Error::Reverse(format!("chart part `{part}` has invalid axis ID `{raw}`; use an unsigned integer")))?;
+                    match parent {
+                        Some(
+                            "areaChart" | "barChart" | "lineChart" | "radarChart" | "scatterChart"
+                            | "stockChart",
+                        ) => {
+                            let Some(index) = current_group else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has c:axId outside a chart group; repair its plotArea structure"
+                                )));
+                            };
+                            groups[index].push(id);
+                        }
+                        Some("catAx" | "dateAx" | "valAx") => {
+                            let Some(index) = current_axis else { continue };
+                            axes[index].id = Some(id);
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(index) = current_axis {
+                    let mut attributes = BTreeMap::new();
+                    for attribute in event.attributes().with_checks(false) {
+                        let attribute =
+                            attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                        let key = String::from_utf8_lossy(attribute.key.local_name().as_ref())
+                            .into_owned();
+                        let value = attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                            .map_err(|error| Error::Reverse(error.to_string()))?
+                            .into_owned();
+                        attributes.insert(key, value);
+                    }
+                    if tag == "delete" {
+                        axes[index].deleted = attributes
+                            .get("val")
+                            .is_some_and(|value| matches!(value.as_str(), "1" | "true"));
+                    }
+                    axes[index].tags.push((tag.clone(), attributes));
+                }
+                // Empty elements do not affect the traversal stack.
+                if !empty {
+                    stack.push(tag);
+                }
+            }
+            Ok(Event::End(event)) => {
+                let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if group_tags.contains(&tag.as_str()) {
+                    current_group = None;
+                }
+                if axis_tags.contains(&tag.as_str()) {
+                    current_axis = None;
+                }
+                stack.pop();
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => {
+                return Err(Error::Reverse(format!(
+                    "invalid chart XML in `{part}`: {error}"
+                )));
+            }
+        }
+    }
+
+    if groups.is_empty() {
+        return Ok(ParsedSecondaryChartGroups {
+            series_secondary: vec![false; series_groups.len()],
+            secondary_axis_indices: Vec::new(),
+            secondary_axis_number_formats: Vec::new(),
+        });
+    }
+    if groups.len() > 2 || groups.iter().any(|group| group.len() != 2) {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has an unsupported number of chart groups or axis references; preserve one primary and one secondary group with two axId references each"
+        )));
+    }
+    let group_axis_indices = groups
+        .iter()
+        .map(|ids| {
+            axes.iter()
+                .enumerate()
+                .filter_map(|(index, axis)| axis.id.filter(|id| ids.contains(id)).map(|_| index))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    if group_axis_indices.iter().any(|indices| indices.len() != 2) {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has chart-group axis IDs that do not resolve to two axis definitions; repair c:axId/crossAx references"
+        )));
+    }
+    for axis_indices in &group_axis_indices {
+        validate_chart_axis_pair(&axes[axis_indices[0]], &axes[axis_indices[1]], part)?;
+    }
+    let secondary_group_matches = group_axis_indices
+        .iter()
+        .enumerate()
+        .filter_map(|(group_index, indices)| {
+            indices
+                .iter()
+                .any(|index| axes[*index].deleted)
+                .then_some(group_index)
+        })
+        .collect::<Vec<_>>();
+    if groups.len() == 1 && axes.len() <= 2 {
+        return Ok(ParsedSecondaryChartGroups {
+            series_secondary: vec![false; series_groups.len()],
+            secondary_axis_indices: Vec::new(),
+            secondary_axis_number_formats: Vec::new(),
+        });
+    }
+    if axes.len() != 4 || secondary_group_matches.len() != 1 {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has an ambiguous secondary axis pair; only a distinct writer-default secondary pair is currently losslessly supported"
+        )));
+    }
+    let secondary_group_index = secondary_group_matches[0];
+    let secondary_axis_indices = group_axis_indices[secondary_group_index].clone();
+    if groups.len() == 2 {
+        let primary_group_index = 1 - secondary_group_index;
+        let primary_axis_indices = &group_axis_indices[primary_group_index];
+        if secondary_axis_indices
+            .iter()
+            .any(|index| primary_axis_indices.contains(index))
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` does not link distinct primary and secondary axis pairs; repair the chart-group axId references"
+            )));
+        }
+    }
+    for index in &secondary_axis_indices {
+        validate_secondary_axis_defaults(&axes[*index], part)?;
+    }
+    let secondary_axis_number_formats = secondary_axis_indices
+        .iter()
+        .map(|index| {
+            axes[*index]
+                .tags
+                .iter()
+                .find(|(tag, _)| tag == "numFmt")
+                .and_then(|(_, attributes)| attributes.get("formatCode").cloned())
+        })
+        .collect();
+    let series_secondary = series_groups
+        .iter()
+        .map(|group| *group == secondary_group_index)
+        .collect();
+    Ok(ParsedSecondaryChartGroups {
+        series_secondary,
+        secondary_axis_indices,
+        secondary_axis_number_formats,
+    })
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "This validator checks the exact writer-default subset for secondary axis elements and attributes."
+)]
+fn validate_secondary_axis_defaults(
+    axis: &ParsedChartAxisInfo,
+    part: &str,
+) -> xlsx_jsx::Result<()> {
+    let allowed_tags = [
+        "catAx",
+        "dateAx",
+        "valAx",
+        "axId",
+        "scaling",
+        "orientation",
+        "delete",
+        "axPos",
+        "tickLblPos",
+        "crossAx",
+        "crosses",
+        "auto",
+        "lblAlgn",
+        "lblOffset",
+        "numFmt",
+        "crossBetween",
+    ];
+    let mut tag_counts = BTreeMap::<&str, usize>::new();
+    for (tag, attributes) in &axis.tags {
+        *tag_counts.entry(tag).or_default() += 1;
+        if !allowed_tags.contains(&tag.as_str()) {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` secondary axis contains unsupported `{tag}`; remove secondary-axis styling or use the writer-default axis formatting"
+            )));
+        }
+        let allowed_attributes: &[&str] = match tag.as_str() {
+            "axId" | "crossAx" | "orientation" | "delete" | "axPos" | "tickLblPos" | "crosses"
+            | "auto" | "lblAlgn" | "lblOffset" | "crossBetween" => &["val"],
+            "numFmt" => &["formatCode", "sourceLinked"],
+            _ => &[],
+        };
+        if attributes
+            .keys()
+            .any(|key| !allowed_attributes.contains(&key.as_str()))
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` secondary axis `{tag}` has unmodeled attributes; remove custom axis formatting or add matching DSL support"
+            )));
+        }
+        let expected = match tag.as_str() {
+            "orientation" => Some(("val", "minMax")),
+            "delete" | "auto" => Some(("val", "1")),
+            "lblAlgn" => Some(("val", "ctr")),
+            "lblOffset" => Some(("val", "100")),
+            _ => None,
+        };
+        if let Some((key, value)) = expected
+            && attributes.get(key).is_none_or(|actual| actual != value)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has non-default secondary-axis `{tag}`; remove the override or add matching secondary-axis DSL support"
+            )));
+        }
+        let values_valid = match tag.as_str() {
+            "axPos" => attributes
+                .get("val")
+                .is_some_and(|value| matches!(value.as_str(), "b" | "l" | "t" | "r")),
+            "tickLblPos" => attributes
+                .get("val")
+                .is_some_and(|value| matches!(value.as_str(), "none" | "nextTo")),
+            "crosses" => attributes
+                .get("val")
+                .is_some_and(|value| matches!(value.as_str(), "autoZero" | "max")),
+            "crossBetween" => attributes
+                .get("val")
+                .is_some_and(|value| matches!(value.as_str(), "between" | "midCat")),
+            "numFmt" => {
+                attributes
+                    .get("formatCode")
+                    .is_some_and(|value| matches!(value.as_str(), "General" | "0%"))
+                    && attributes
+                        .get("sourceLinked")
+                        .is_some_and(|value| matches!(value.as_str(), "1" | "true"))
+            }
+            _ => true,
+        };
+        if !values_valid {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has non-default secondary-axis `{tag}` formatting; remove the override or add matching secondary-axis DSL support"
+            )));
+        }
+    }
+    if tag_counts.values().any(|count| *count > 1) {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` repeats an element on a secondary axis; keep one declaration for each supported default axis property"
+        )));
+    }
+    let required_tags = [
+        "axId",
+        "scaling",
+        "orientation",
+        "axPos",
+        "tickLblPos",
+        "crossAx",
+    ];
+    if required_tags
+        .iter()
+        .any(|tag| tag_counts.get(tag).copied() != Some(1))
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has an incomplete secondary axis; restore one ID, scaling, position, tick-label, and crossing element"
+        )));
+    }
+    match axis.kind.as_deref() {
+        Some("catAx" | "dateAx")
+            if ["auto", "lblAlgn", "lblOffset"]
+                .iter()
+                .any(|tag| tag_counts.get(tag).copied() != Some(1)) =>
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has incomplete secondary category-axis defaults; restore auto, label alignment, and label offset"
+            )));
+        }
+        Some("valAx")
+            if ["numFmt", "crossBetween"]
+                .iter()
+                .any(|tag| tag_counts.get(tag).copied() != Some(1)) =>
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has incomplete secondary value-axis defaults; restore General number format and crossBetween=between"
+            )));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_chart_axis_pair(
+    first: &ParsedChartAxisInfo,
+    second: &ParsedChartAxisInfo,
+    part: &str,
+) -> xlsx_jsx::Result<()> {
+    for (axis, peer) in [(first, second), (second, first)] {
+        let axis_id = axis.id.ok_or_else(|| {
+            Error::Reverse(format!(
+                "chart part `{part}` has an axis definition without c:axId; repair its axis IDs"
+            ))
+        })?;
+        let peer_id = peer.id.ok_or_else(|| {
+            Error::Reverse(format!(
+                "chart part `{part}` has an axis definition without c:axId; repair its axis IDs"
+            ))
+        })?;
+        let cross_id = axis
+            .tags
+            .iter()
+            .find(|(tag, _)| tag == "crossAx")
+            .and_then(|(_, attributes)| attributes.get("val"))
+            .and_then(|value| value.parse::<u32>().ok());
+        if cross_id != Some(peer_id) {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` axis {axis_id} does not cross its chart-group partner {peer_id}; repair the crossAx references"
+            )));
+        }
+    }
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "Chart XML parsing validates the complete supported chart structure in one pass."
@@ -10080,6 +10483,7 @@ fn parse_chart_xml(
     const DEFAULT_COLUMN_PIXELS: u32 = 64;
     const DEFAULT_ROW_PIXELS: u32 = 20;
     let (up_bar_style, down_bar_style) = parse_stock_bar_styles(xml, part)?;
+    let secondary_chart_groups = parse_secondary_chart_groups(xml, part)?;
     let legend_font = parse_chart_legend_font(xml, part)?;
     let movement = match anchor.edit_as.as_deref() {
         None | Some("twoCell") => None,
@@ -10380,13 +10784,17 @@ fn parse_chart_xml(
     let mut stack = Vec::<String>::new();
     let mut chart_type: Option<&'static str> = None;
     let mut chart_axis_count = 0_u8;
+    let mut ignored_secondary_axis: Option<String> = None;
     let mut value_axis_count = 0_u8;
-    let mut chart_grouping_seen = false;
+    let mut chart_grouping_value: Option<String> = None;
+    let mut chart_grouping_base: Option<&'static str> = None;
+    let mut bar_direction: Option<&'static str> = None;
     let mut chart_gap: Option<u16> = None;
     let mut chart_overlap: Option<i8> = None;
     let mut stock_high_low_lines = false;
     let mut stock_up_down_bars = false;
-    let mut chart_group_marker_enabled = false;
+    let mut chart_group_marker_seen = false;
+    let mut chart_group_marker_enabled: Option<bool> = None;
     let mut series = Vec::<WorksheetChartSeries>::new();
     let mut data_table: Option<WorksheetChartDataTable> = None;
     let mut data_table_sppr_seen = false;
@@ -10646,6 +11054,13 @@ fn parse_chart_xml(
                     unreachable!()
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if let Some(axis_tag) = ignored_secondary_axis.as_deref() {
+                    if !is_empty {
+                        stack.push(tag);
+                    }
+                    let _ = axis_tag;
+                    continue;
+                }
                 if tag == "txPr"
                     && let Some(axis) =
                         chart_axis_label_font_target(chart_type, &stack, current_axis_position)
@@ -12183,12 +12598,23 @@ fn parse_chart_xml(
                         }
                     }
                     "catAx" | "dateAx" | "valAx" => {
+                        let axis_index = usize::from(chart_axis_count);
+                        chart_axis_count += 1;
+                        if secondary_chart_groups
+                            .secondary_axis_indices
+                            .contains(&axis_index)
+                        {
+                            ignored_secondary_axis = Some(tag.clone());
+                            if !is_empty {
+                                stack.push(tag);
+                            }
+                            continue;
+                        }
                         if pending_axis_hidden.is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` hides an axis without a supported axPos; repair the axis position"
                             )));
                         }
-                        chart_axis_count += 1;
                         if tag == "valAx" {
                             current_value_axis_index = Some(value_axis_count as usize);
                             value_axis_count += 1;
@@ -12209,11 +12635,6 @@ fn parse_chart_xml(
                                 )));
                             }
                             category_axis_type = Some("date");
-                        }
-                        if chart_axis_count > 2 {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has secondary or duplicate axes that this DSL cannot preserve; keep only the two primary axes"
-                            )));
                         }
                         current_axis_position = None;
                         current_axis_hidden_declared = false;
@@ -13189,7 +13610,11 @@ fn parse_chart_xml(
                 }
                 match tag.as_str() {
                     "areaChart" => chart_type = Some(set_chart_type(chart_type, "area", part)?),
-                    "barChart" => chart_type = Some(set_chart_type(chart_type, "bar", part)?),
+                    "barChart" => {
+                        if !chart_type.is_some_and(|value| matches!(value, "bar" | "column")) {
+                            chart_type = Some(set_chart_type(chart_type, "bar", part)?);
+                        }
+                    }
                     "lineChart" => chart_type = Some(set_chart_type(chart_type, "line", part)?),
                     "stockChart" => chart_type = Some(set_chart_type(chart_type, "stock", part)?),
                     "hiLowLines" => stock_high_low_lines = true,
@@ -13199,12 +13624,7 @@ fn parse_chart_xml(
                         chart_type = Some(set_chart_type(chart_type, "scatter", part)?);
                     }
                     "scatterStyle" => {
-                        if scatter_style_seen {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` repeats scatterStyle; retain one scatter style"
-                            )));
-                        }
-                        scatter_style_seen = true;
+                        let mut group_style = None;
                         for attribute in event.attributes().with_checks(false) {
                             let attribute =
                                 attribute.map_err(|error| Error::Reverse(error.to_string()))?;
@@ -13215,13 +13635,23 @@ fn parse_chart_xml(
                                         reader.decoder(),
                                     )
                                     .map_err(|error| Error::Reverse(error.to_string()))?;
-                                scatter_style = Some(match value.as_ref() {
+                                group_style = Some(match value.as_ref() {
                                     "lineMarker" => "lineMarker",
                                     "smoothMarker" => "smoothMarker",
                                     _ => "unsupported",
                                 });
                             }
                         }
+                        let group_style = group_style.ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has scatterStyle without val; use lineMarker or smoothMarker"
+                        )))?;
+                        if scatter_style_seen && scatter_style != Some(group_style) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` uses different scatter styles across axis groups; use matching lineMarker/smoothMarker styles"
+                            )));
+                        }
+                        scatter_style_seen = true;
+                        scatter_style = Some(group_style);
                     }
                     "pieChart" => chart_type = Some(set_chart_type(chart_type, "pie", part)?),
                     "radarStyle" => {
@@ -13250,13 +13680,12 @@ fn parse_chart_xml(
                             }
                         }
                     }
-                    "grouping" if chart_type.is_some_and(is_groupable_chart_type) => {
-                        if chart_grouping_seen {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` repeats chart grouping; retain one chart group"
-                            )));
-                        }
-                        chart_grouping_seen = true;
+                    "grouping"
+                        if stack.last().is_some_and(|parent| {
+                            matches!(parent.as_str(), "areaChart" | "barChart" | "lineChart")
+                        }) =>
+                    {
+                        let mut grouping = None;
                         for attribute in event.attributes().with_checks(false) {
                             let attribute =
                                 attribute.map_err(|error| Error::Reverse(error.to_string()))?;
@@ -13267,15 +13696,31 @@ fn parse_chart_xml(
                                         reader.decoder(),
                                     )
                                     .map_err(|error| Error::Reverse(error.to_string()))?;
-                                chart_type = Some(
-                                    chart_type_for_grouping(
-                                        chart_type.expect("chart family was checked"),
-                                        &value,
-                                    )
-                                    .expect("grouping was validated above"),
-                                );
+                                grouping = Some(value.into_owned());
                             }
                         }
+                        let grouping = grouping.ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has a chart group without grouping@val; add one supported group value"
+                        )))?;
+                        if let Some(previous) = chart_grouping_value.as_deref() {
+                            if previous != grouping {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` uses different grouping values across primary and secondary groups; use matching grouping or model separate chart types"
+                                )));
+                            }
+                        } else {
+                            chart_grouping_base = chart_type;
+                            chart_grouping_value = Some(grouping.clone());
+                        }
+                        chart_type = Some(
+                            chart_type_for_grouping(
+                                chart_grouping_base.expect("grouping base was recorded"),
+                                &grouping,
+                            )
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` uses unsupported {grouping} grouping for this chart family; use a writer-supported grouping"
+                            )))?,
+                        );
                     }
                     "gapWidth" if stack.last().is_some_and(|parent| parent == "barChart") => {
                         let raw = chart_element_val_attribute(
@@ -13285,21 +13730,23 @@ fn parse_chart_xml(
                             "gapWidth",
                         )?;
                         let value = raw.parse::<u16>().ok().filter(|value| *value <= 500).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has gapWidth outside 0–500; use an integer in that range")))?;
-                        if chart_gap.replace(value).is_some() {
+                        if chart_gap.is_some_and(|previous| previous != value) {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` repeats gapWidth; retain one chart-level gap"
+                                "chart part `{part}` uses different gapWidth values across axis groups; set the same Series.gap on both groups or remove the custom spacing"
                             )));
                         }
+                        chart_gap = Some(value);
                     }
                     "overlap" if stack.last().is_some_and(|parent| parent == "barChart") => {
                         let raw =
                             chart_element_val_attribute(&event, part, reader.decoder(), "overlap")?;
                         let value = raw.parse::<i8>().ok().filter(|value| (-100..=100).contains(value)).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has overlap outside -100–100; use an integer in that range")))?;
-                        if chart_overlap.replace(value).is_some() {
+                        if chart_overlap.is_some_and(|previous| previous != value) {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` repeats overlap; retain one chart-level overlap"
+                                "chart part `{part}` uses different overlap values across axis groups; set the same Series.overlap on both groups or remove the custom spacing"
                             )));
                         }
+                        chart_overlap = Some(value);
                     }
                     "doughnutChart" => {
                         chart_type = Some(set_chart_type(chart_type, "doughnut", part)?);
@@ -13968,6 +14415,13 @@ fn parse_chart_xml(
                     }
                     "ser" => series.push(WorksheetChartSeries {
                         values: String::new(),
+                        secondary_axis: secondary_chart_groups
+                            .series_secondary
+                            .get(series.len())
+                            .copied()
+                            .unwrap_or(false),
+                        plot_index: None,
+                        plot_order: None,
                         gap: None,
                         overlap: None,
                         categories: None,
@@ -14028,6 +14482,24 @@ fn parse_chart_xml(
                         error_bars: Vec::new(),
                         delete_from_legend: false,
                     }),
+                    "idx" | "order" if stack.last().is_some_and(|parent| parent == "ser") => {
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), &tag)?;
+                        let value = raw.parse::<u32>().map_err(|_| Error::Reverse(format!(
+                            "chart part `{part}` has invalid series {tag} `{raw}`; use a non-negative integer"
+                        )))?;
+                        let current = series.last_mut().expect("series context was checked");
+                        let target = if tag == "idx" {
+                            &mut current.plot_index
+                        } else {
+                            &mut current.plot_order
+                        };
+                        if target.replace(value).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats series {tag}; keep one index per series"
+                            )));
+                        }
+                    }
                     "invertIfNegative" => {
                         if stack.last().is_none_or(|parent| parent != "ser") {
                             return Err(Error::Reverse(format!(
@@ -14634,7 +15106,16 @@ fn parse_chart_xml(
                             matches!(parent.as_str(), "lineChart" | "radarChart")
                         }) =>
                     {
-                        chart_group_marker_enabled = true;
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "marker")?;
+                        let enabled = parse_xml_bool(&raw, part, "marker")?;
+                        if chart_group_marker_seen && chart_group_marker_enabled != Some(enabled) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` uses different marker defaults across primary and secondary groups; make them agree or specify markers on every series"
+                            )));
+                        }
+                        chart_group_marker_seen = true;
+                        chart_group_marker_enabled = Some(enabled);
                     }
                     "symbol" if stack.last().is_some_and(|parent| parent == "marker") => {
                         if let Some(current) = series.last_mut() {
@@ -16798,6 +17279,12 @@ fn parse_chart_xml(
                                         "chart part `{part}` has unsupported barDir `{value}`; use column or bar"
                                     )));
                                 };
+                                if bar_direction.is_some_and(|previous| previous != value) {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` combines bar and column chart groups; keep one bar direction for both axis groups"
+                                    )));
+                                }
+                                bar_direction = Some(value);
                                 chart_type = Some(value);
                             }
                         }
@@ -17036,6 +17523,15 @@ fn parse_chart_xml(
             }
             Ok(Event::End(event)) => {
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if ignored_secondary_axis.as_deref() == Some(tag.as_str()) {
+                    ignored_secondary_axis = None;
+                    stack.pop();
+                    continue;
+                }
+                if ignored_secondary_axis.is_some() {
+                    stack.pop();
+                    continue;
+                }
                 if tag == "name" && trendline_name_open {
                     trendline_name_open = false;
                     let name = series
@@ -17381,6 +17877,55 @@ fn parse_chart_xml(
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
+    if !secondary_chart_groups
+        .secondary_axis_number_formats
+        .is_empty()
+    {
+        let expected_format = if is_percent_stacked_chart_type(chart_type) {
+            "0%"
+        } else {
+            "General"
+        };
+        if secondary_chart_groups
+            .secondary_axis_number_formats
+            .iter()
+            .flatten()
+            .any(|format| format != expected_format)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has a secondary value-axis number format inconsistent with the `{chart_type}` writer default; remove the override or add matching secondary-axis format support"
+            )));
+        }
+    }
+    if series.iter().any(|item| item.secondary_axis) {
+        let mut orders = series
+            .iter()
+            .map(|item| {
+                let (Some(index), Some(order)) = (item.plot_index, item.plot_order) else {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has a secondary chart without series idx/order values; retain both indices so series declaration order can be reconstructed"
+                    )));
+                };
+                if index != order {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has different series idx/order values ({index}/{order}); this DSL requires matching indices to preserve series declaration order"
+                    )));
+                }
+                Ok(order)
+            })
+            .collect::<xlsx_jsx::Result<Vec<_>>>()?;
+        orders.sort_unstable();
+        if orders
+            .iter()
+            .enumerate()
+            .any(|(index, order)| usize::try_from(*order).ok() != Some(index))
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has non-contiguous or duplicate series idx/order values; preserve one matching zero-based index per series"
+            )));
+        }
+        series.sort_by_key(|item| item.plot_order);
+    }
     if auto_title_deleted && chart_title.is_some() {
         return Err(Error::Reverse(format!(
             "chart part `{part}` has both a static title and autoTitleDeleted=true; remove the title or clear autoTitleDeleted"
@@ -17484,7 +18029,7 @@ fn parse_chart_xml(
             first.overlap = chart_overlap;
         }
     }
-    if chart_group_marker_enabled {
+    if chart_group_marker_enabled == Some(true) {
         for item in &mut series {
             if item.marker.is_none() {
                 item.marker = Some(true);
@@ -17569,6 +18114,11 @@ fn parse_chart_xml(
     if series.is_empty() {
         return Err(Error::Reverse(format!(
             "chart part `{part}` contains no data series; add at least one series"
+        )));
+    }
+    if series.iter().all(|item| item.secondary_axis) {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` assigns every series to the secondary axes; add at least one primary-axis Series or move one series to the primary axes"
         )));
     }
     if series.iter().any(|item| item.trendline.is_some())
@@ -18885,16 +19435,32 @@ fn set_chart_type(
     candidate: &'static str,
     part: &str,
 ) -> xlsx_jsx::Result<&'static str> {
-    if current.is_some_and(|value| value != candidate) {
+    let family = |chart_type: &str| match chart_type {
+        "area" | "areaStacked" | "areaPercentStacked" => 1,
+        "bar"
+        | "barStacked"
+        | "barPercentStacked"
+        | "column"
+        | "columnStacked"
+        | "columnPercentStacked" => 2,
+        "line" | "lineStacked" | "linePercentStacked" => 3,
+        "scatter"
+        | "scatterWithLines"
+        | "scatterWithLinesAndMarkers"
+        | "scatterWithSmoothLines"
+        | "scatterWithSmoothLinesAndMarkers" => 4,
+        "pie" => 5,
+        "doughnut" => 6,
+        "radar" | "radarWithMarkers" | "radarFilled" => 7,
+        "stock" => 8,
+        _ => u8::MAX,
+    };
+    if current.is_some_and(|value| family(value) != family(candidate)) {
         return Err(Error::Reverse(format!(
             "chart part `{part}` combines chart types; split it into individual charts because combo charts are not represented by Chart"
         )));
     }
     Ok(candidate)
-}
-
-fn is_groupable_chart_type(chart_type: &str) -> bool {
-    matches!(chart_type, "area" | "bar" | "column" | "line")
 }
 
 fn is_percent_stacked_chart_type(chart_type: &str) -> bool {
@@ -22805,6 +23371,9 @@ struct WorksheetImage {
 )]
 struct WorksheetChartSeries {
     values: String,
+    secondary_axis: bool,
+    plot_index: Option<u32>,
+    plot_order: Option<u32>,
     gap: Option<u16>,
     overlap: Option<i8>,
     categories: Option<String>,

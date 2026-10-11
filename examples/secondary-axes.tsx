@@ -1,0 +1,24 @@
+import { Workbook, Worksheet, Row, Cell, Chart, Series } from "xlsx-jsx";
+
+export default (
+  <Workbook>
+    <Worksheet name="Data">
+      <Chart type="line" cell="E2">
+        <Series values="Data!$C$2:$C$4" categories="Data!$D$2:$D$4" secondaryAxis={true} />
+        <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" />
+      </Chart>
+      <Row>
+        <Cell>Quarter</Cell><Cell>Revenue</Cell><Cell>Margin</Cell><Cell>Month</Cell>
+      </Row>
+      <Row>
+        <Cell>Q1</Cell><Cell>125000</Cell><Cell>0.18</Cell><Cell>Jan</Cell>
+      </Row>
+      <Row>
+        <Cell>Q2</Cell><Cell>147000</Cell><Cell>0.21</Cell><Cell>Feb</Cell>
+      </Row>
+      <Row>
+        <Cell>Q3</Cell><Cell>139000</Cell><Cell>0.19</Cell><Cell>Mar</Cell>
+      </Row>
+    </Worksheet>
+  </Workbook>
+);

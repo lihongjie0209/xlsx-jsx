@@ -1324,6 +1324,7 @@
             "showSeriesName": { "type": "boolean" },
             "showPercentage": { "type": "boolean" },
             "deleteFromLegend": { "type": "boolean" },
+            "secondaryAxis": { "type": "boolean" },
             "smooth": { "type": "boolean" },
             "invertIfNegative": { "type": "boolean" },
             "labelPosition": { "enum": ["center", "right", "left", "above", "below", "insideBase", "insideEnd", "outsideEnd", "bestFit"] },
