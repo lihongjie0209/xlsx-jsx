@@ -1278,6 +1278,13 @@
             "labelFontPitchFamily": { "type": "integer", "minimum": 0, "maximum": 255 },
             "labelFontCharset": { "type": "integer", "minimum": 0, "maximum": 127 },
             "labelFontRotation": { "oneOf": [{ "type": "integer", "minimum": -90, "maximum": 90 }, { "enum": [270, 271] }] },
+            "labelFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "labelFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "labelLineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "labelLineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
+            "labelLineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
+            "labelLineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "labelLineHidden": { "type": "boolean" },
             "markerType": { "enum": ["automatic", "square", "diamond", "triangle", "x", "star", "shortDash", "longDash", "circle", "plusSign", "none"] },
             "markerSize": { "type": "integer", "minimum": 2, "maximum": 72 },
             "markerFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
@@ -1315,6 +1322,7 @@
             "gap": { "type": "integer", "minimum": 0, "maximum": 500 },
             "overlap": { "type": "integer", "minimum": -100, "maximum": 100 }
           },
+          "dependentRequired": { "labelFillTransparency": ["labelFillColor"], "labelLineTransparency": ["labelLineColor"] },
           "additionalProperties": false
         },
         "children": {
@@ -1335,6 +1343,17 @@
               "props": { "required": ["name", "title"] }
             },
             "required": ["props"]
+          }
+        },
+        {
+          "if": { "properties": { "props": { "properties": { "labelLineHidden": { "const": true } }, "required": ["labelLineHidden"] } }, "required": ["props"] },
+          "then": {
+            "properties": {
+              "props": {
+                "not": { "anyOf": [{ "required": ["labelLineColor"] }, { "required": ["labelLineTransparency"] }] },
+                "properties": { "labelLineDash": { "enum": ["solid"] } }
+              }
+            }
           }
         }
       ],

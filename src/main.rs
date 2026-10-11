@@ -2252,6 +2252,16 @@ fn compile_series_chart_data_label(series: &Node) -> Option<ChartDataLabel> {
     ]
     .iter()
     .any(|property| series.props.contains_key(*property));
+    let has_shape = [
+        "labelFillColor",
+        "labelLineColor",
+        "labelLineWidth",
+        "labelLineDash",
+        "labelLineTransparency",
+    ]
+    .iter()
+    .any(|property| series.props.contains_key(*property))
+        || series.props.get("labelLineHidden").and_then(Value::as_bool) == Some(true);
     if !(show_value
         || show_category_name
         || show_series_name
@@ -2262,6 +2272,7 @@ fn compile_series_chart_data_label(series: &Node) -> Option<ChartDataLabel> {
         && separator.is_none()
         && number_format.is_none()
         && !has_font
+        && !has_shape
     {
         return None;
     }
@@ -2295,6 +2306,9 @@ fn compile_series_chart_data_label(series: &Node) -> Option<ChartDataLabel> {
     }
     if has_font {
         configure_chart_data_label_font(&mut data_label, series);
+    }
+    if let Some(mut format) = chart_shape_format(series, "labelFillColor", "labelLine") {
+        data_label.set_format(&mut format);
     }
     Some(data_label)
 }
@@ -6068,6 +6082,43 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         }
         if let Some(number_format) = &series.label_number_format {
             let _ = write!(output, " labelNumberFormat={number_format:?}");
+        }
+        if let Some(color) = &series.label_fill_color {
+            let _ = write!(output, " labelFillColor={color:?}");
+        }
+        if let Some(transparency) = series.label_fill_transparency {
+            let _ = write!(output, " labelFillTransparency={{{transparency}}}");
+        }
+        if let Some(color) = series
+            .label_line_style
+            .as_ref()
+            .and_then(|style| style.color.as_ref())
+        {
+            let _ = write!(output, " labelLineColor={color:?}");
+        }
+        if let Some(width) = series
+            .label_line_style
+            .as_ref()
+            .and_then(|style| style.width)
+        {
+            let _ = write!(output, " labelLineWidth={{{width}}}");
+        }
+        if let Some(dash) = series
+            .label_line_style
+            .as_ref()
+            .and_then(|style| style.dash)
+        {
+            let _ = write!(output, " labelLineDash=\"{dash}\"");
+        }
+        if let Some(transparency) = series
+            .label_line_style
+            .as_ref()
+            .and_then(|style| style.transparency)
+        {
+            let _ = write!(output, " labelLineTransparency={{{transparency}}}");
+        }
+        if series.label_line_hidden == Some(true) {
+            output.push_str(" labelLineHidden={true}");
         }
         if !series.custom_labels.is_empty() {
             output.push_str(" customLabels={[ ");
@@ -10875,6 +10926,7 @@ fn parse_chart_xml(
                             | "showLeaderLines"
                             | "separator"
                             | "numFmt"
+                            | "spPr"
                             | "txPr"
                             | "extLst"
                             | "ext"
@@ -10909,6 +10961,12 @@ fn parse_chart_xml(
                                 | "solidFill"
                                 | "srgbClr"
                                 | "latin"
+                        ))
+                    && !(stack.iter().any(|ancestor| ancestor == "dLbls")
+                        && stack.iter().any(|ancestor| ancestor == "spPr")
+                        && matches!(
+                            tag.as_str(),
+                            "ln" | "noFill" | "solidFill" | "srgbClr" | "alpha" | "prstDash"
                         ))
                 {
                     return Err(Error::Reverse(format!(
@@ -13325,6 +13383,12 @@ fn parse_chart_xml(
                         label_font_pitch_family: None,
                         label_font_charset: None,
                         label_font_rotation: None,
+                        label_fill_color: None,
+                        label_fill_transparency: None,
+                        label_line_style: None,
+                        label_line_hidden: None,
+                        data_label_shape_seen: false,
+                        data_label_line_seen: false,
                         data_label_flags_seen: [false; 6],
                         data_labels_seen: false,
                         data_label_position_seen: false,
@@ -14515,6 +14579,21 @@ fn parse_chart_xml(
                         table.font_name = name;
                     }
                     "spPr" => {
+                        let in_series_data_labels =
+                            stack.last().is_some_and(|item| item == "dLbls")
+                                && stack.iter().any(|item| item == "ser");
+                        if in_series_data_labels {
+                            let current = series.last_mut().ok_or_else(|| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has series data-label shape formatting outside a series"
+                                ))
+                            })?;
+                            if std::mem::replace(&mut current.data_label_shape_seen, true) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats series data-label spPr; keep one uniform label shape format"
+                                )));
+                            }
+                        }
                         let has_supported_parent =
                             stack.last().is_some_and(|ancestor| ancestor == "ser")
                                 || (stack.last().is_some_and(|ancestor| ancestor == "marker")
@@ -14532,6 +14611,8 @@ fn parse_chart_xml(
                                 || stack.iter().any(|ancestor| {
                                     matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
                                 })
+                                || (stack.last().is_some_and(|ancestor| ancestor == "dLbls")
+                                    && stack.iter().any(|ancestor| ancestor == "ser"))
                                 || (stack.last().is_some_and(|ancestor| ancestor == "title")
                                     && matches!(
                                         chart_title_target,
@@ -14557,6 +14638,21 @@ fn parse_chart_xml(
                             && stack.last().is_some_and(|parent| parent == "spPr");
                         let in_data_table_shape = stack.iter().any(|item| item == "dTable")
                             && stack.iter().any(|item| item == "spPr");
+                        let in_data_label_shape = stack.iter().any(|item| item == "dLbls")
+                            && stack.iter().any(|item| item == "spPr")
+                            && stack.iter().any(|item| item == "ser")
+                            && !stack.iter().any(|item| item == "dLbl");
+                        if in_data_label_shape {
+                            let current = series
+                                .last_mut()
+                                .expect("data-label line is inside a series");
+                            if std::mem::replace(&mut current.data_label_line_seen, true) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats the series data-label outline; keep one a:ln line"
+                                )));
+                            }
+                            current.label_line_hidden = Some(false);
+                        }
                         if in_data_table_shape && std::mem::replace(&mut data_table_line_seen, true)
                         {
                             return Err(Error::Reverse(format!(
@@ -14595,6 +14691,7 @@ fn parse_chart_xml(
                         if stack.last().is_none_or(|ancestor| ancestor != "spPr")
                             || (!in_gridlines
                                 && !in_data_table_shape
+                                && !in_data_label_shape
                                 && !in_legend_shape
                                 && !in_error_bars
                                 && !in_trendline_line
@@ -14617,7 +14714,8 @@ fn parse_chart_xml(
                                 || in_legend_shape
                                 || in_marker_line
                                 || in_drop_lines
-                                || in_data_table_shape)
+                                || in_data_table_shape
+                                || in_data_label_shape)
                                 && attribute.key.local_name().as_ref() != b"w"
                             {
                                 return Err(Error::Reverse(format!(
@@ -14654,6 +14752,23 @@ fn parse_chart_xml(
                                 if style.width.replace(f64::from(emu) / 12700.0).is_some() {
                                     return Err(Error::Reverse(format!(
                                         "chart part `{part}` repeats data-table line width; keep one supported width"
+                                    )));
+                                }
+                            }
+                        } else if in_data_label_shape {
+                            let current = series
+                                .last_mut()
+                                .expect("data-label shape line is inside a series");
+                            let style = current.label_line_style.get_or_insert_default();
+                            if let Some(width) = line_width {
+                                let emu = width.parse::<u32>().ok().filter(|value| {
+                                    *value > 0 && *value <= 20_116_800 && *value % 3175 == 0
+                                }).ok_or_else(|| Error::Reverse(format!(
+                                    "chart part `{part}` has a data-label line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments"
+                                )))?;
+                                if style.width.replace(f64::from(emu) / 12700.0).is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats a data-label outline width; keep one supported width"
                                     )));
                                 }
                             }
@@ -14840,6 +14955,38 @@ fn parse_chart_xml(
                             )));
                         }
                     }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|ancestor| ancestor == "dLbls")
+                            && stack.iter().any(|ancestor| ancestor == "spPr")
+                            && !stack.iter().any(|ancestor| ancestor == "ln") =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "data-label fill",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB data-label fill; use an opaque six-digit RGB color"
+                            )));
+                        }
+                        let current = series.last_mut().ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has a data-label fill outside a series"
+                            ))
+                        })?;
+                        if current
+                            .label_fill_color
+                            .replace(format!("#{color}").to_ascii_uppercase())
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats the series data-label fill; retain one solid RGB fill"
+                            )));
+                        }
+                    }
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|item| item == "spPr")
@@ -14911,6 +15058,43 @@ fn parse_chart_xml(
                         if table.fill_transparency.replace(transparency).is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats data-table fill transparency; keep one alpha value"
+                            )));
+                        }
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|ancestor| ancestor == "dLbls")
+                            && stack.iter().any(|ancestor| ancestor == "spPr")
+                            && !stack.iter().any(|ancestor| ancestor == "ln") =>
+                    {
+                        let alpha = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "data-label fill alpha",
+                        )?
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|alpha| *alpha <= 100_000 && alpha % 1000 == 0)
+                        .ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has data-label fill alpha not exactly representable by whole-percent transparency; use increments of 1%"
+                        )))?;
+                        let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has data-label fill transparency outside a series"
+                        )))?;
+                        let transparency =
+                            u8::try_from(100 - alpha / 1000).map_err(|error| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has invalid data-label fill transparency: {error}"
+                                ))
+                            })?;
+                        if current
+                            .label_fill_transparency
+                            .replace(transparency)
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats data-label fill transparency; keep one alpha value"
                             )));
                         }
                     }
@@ -15006,7 +15190,24 @@ fn parse_chart_xml(
                                 "chart part `{part}` has non-RGB series line color; use an opaque six-digit RGB color"
                             )));
                         }
-                        if stack.iter().any(|item| item == "dTable") {
+                        if stack.iter().any(|item| item == "dLbls")
+                            && stack.iter().any(|item| item == "spPr")
+                        {
+                            let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a data-label outline color outside a series"
+                            )))?;
+                            if current
+                                .label_line_style
+                                .get_or_insert_default()
+                                .color
+                                .replace(format!("#{color}").to_ascii_uppercase())
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats data-label outline color; keep one RGB color"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "dTable") {
                             let table = data_table.as_mut().ok_or_else(|| {
                                 Error::Reverse(format!("chart part `{part}` has data-table outline color outside dTable"))
                             })?;
@@ -15198,7 +15399,24 @@ fn parse_chart_xml(
                                 "chart part `{part}` has line alpha not exactly representable by integer transparency; use 1% increments"
                             )));
                         }
-                        if stack.iter().any(|item| item == "dTable") {
+                        if stack.iter().any(|item| item == "dLbls")
+                            && stack.iter().any(|item| item == "spPr")
+                        {
+                            let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has data-label outline transparency outside a series"
+                            )))?;
+                            if current
+                                .label_line_style
+                                .get_or_insert_default()
+                                .transparency
+                                .replace(100 - alpha / 1000)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats data-label outline transparency; keep one alpha"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "dTable") {
                             let table = data_table.as_mut().ok_or_else(|| {
                                 Error::Reverse(format!("chart part `{part}` has data-table outline transparency outside dTable"))
                             })?;
@@ -15378,7 +15596,24 @@ fn parse_chart_xml(
                                 )));
                             }
                         };
-                        if stack.iter().any(|item| item == "dTable") {
+                        if stack.iter().any(|item| item == "dLbls")
+                            && stack.iter().any(|item| item == "spPr")
+                        {
+                            let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has data-label outline dash outside a series"
+                            )))?;
+                            if current
+                                .label_line_style
+                                .get_or_insert_default()
+                                .dash
+                                .replace(dash)
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats data-label outline dash; keep one preset dash"
+                                )));
+                            }
+                        } else if stack.iter().any(|item| item == "dTable") {
                             let table = data_table.as_mut().ok_or_else(|| {
                                 Error::Reverse(format!(
                                     "chart part `{part}` has data-table outline dash outside dTable"
@@ -15496,6 +15731,20 @@ fn parse_chart_xml(
                         if std::mem::replace(&mut table.line_hidden, true) {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats hidden data-table outline; keep one noFill"
+                            )));
+                        }
+                    }
+                    "noFill"
+                        if stack.last().is_some_and(|parent| parent == "ln")
+                            && stack.iter().any(|item| item == "dLbls")
+                            && stack.iter().any(|item| item == "spPr") =>
+                    {
+                        let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has a hidden data-label outline outside a series"
+                        )))?;
+                        if current.label_line_hidden.replace(true) == Some(true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats hidden data-label outline; keep one noFill"
                             )));
                         }
                     }
@@ -16429,7 +16678,11 @@ fn parse_chart_xml(
                 || item.label_font_name.is_some()
                 || item.label_font_pitch_family.is_some()
                 || item.label_font_charset.is_some()
-                || item.label_font_rotation.is_some());
+                || item.label_font_rotation.is_some()
+                || item.label_fill_color.is_some()
+                || item.label_fill_transparency.is_some()
+                || item.label_line_style.is_some()
+                || item.label_line_hidden == Some(true));
         if has_unsupported_value_default {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` combines a data-label option with no value/category/percentage label; rust_xlsxwriter automatically enables values for this combination, so add an explicit showVal or remove the ancillary option"
@@ -16440,6 +16693,50 @@ fn parse_chart_xml(
         {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` uses label position `{position}` that is not supported for `{chart_type}` charts; choose a position supported by that chart type or remove the custom placement"
+            )));
+        }
+        if item.data_label_shape_seen
+            && item.label_fill_color.is_none()
+            && !item.data_label_line_seen
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has empty series data-label shape properties; add a supported RGB fill or outline, or remove spPr"
+            )));
+        }
+        if item.data_label_line_seen
+            && item.label_line_hidden != Some(true)
+            && item
+                .label_line_style
+                .as_ref()
+                .is_none_or(WorksheetChartGridlineStyle::is_empty)
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has an empty series data-label outline; specify a supported line property or remove the outline"
+            )));
+        }
+        if item.label_fill_transparency.is_some() && item.label_fill_color.is_none() {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has series data-label fill transparency without RGB color; add labelFillColor or remove alpha"
+            )));
+        }
+        if item
+            .label_line_style
+            .as_ref()
+            .is_some_and(|style| style.transparency.is_some() && style.color.is_none())
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has data-label outline transparency without RGB color; add labelLineColor or remove alpha"
+            )));
+        }
+        if item.label_line_hidden == Some(true)
+            && item.label_line_style.as_ref().is_some_and(|style| {
+                style.color.is_some()
+                    || style.transparency.is_some()
+                    || style.dash.is_some_and(|dash| dash != "solid")
+            })
+        {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` combines a hidden data-label outline with visible formatting; remove noFill or remove color, non-solid dash, and transparency"
             )));
         }
     }
@@ -21499,6 +21796,12 @@ struct WorksheetChartSeries {
     label_font_pitch_family: Option<u8>,
     label_font_charset: Option<u8>,
     label_font_rotation: Option<i16>,
+    label_fill_color: Option<String>,
+    label_fill_transparency: Option<u8>,
+    label_line_style: Option<WorksheetChartGridlineStyle>,
+    label_line_hidden: Option<bool>,
+    data_label_shape_seen: bool,
+    data_label_line_seen: bool,
     data_label_flags_seen: [bool; 6],
     data_labels_seen: bool,
     data_label_position_seen: bool,

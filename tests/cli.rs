@@ -4021,6 +4021,178 @@ fn reverses_hidden_chart_data_table_outline_without_a_manifest() {
 }
 
 #[test]
+fn reverses_chart_data_label_shape_formatting_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("formatted-chart-data-label.xlsx");
+    let source_path = directory.path().join("formatted-chart-data-label.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    let mut label_format = ChartFormat::new();
+    label_format.set_solid_fill(
+        ChartSolidFill::new()
+            .set_color("#F0E0D0")
+            .set_transparency(25),
+    );
+    label_format.set_border(
+        ChartLine::new()
+            .set_color("#123456")
+            .set_width(1.25)
+            .set_dash_type(ChartLineDashType::DashDot)
+            .set_transparency(20),
+    );
+    let mut data_label = ChartDataLabel::new();
+    data_label.show_value().set_format(&mut label_format);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_data_label(&data_label);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("labelFillColor=\"#F0E0D0\""), "{source}");
+    assert!(source.contains("labelFillTransparency={25}"), "{source}");
+    assert!(source.contains("labelLineColor=\"#123456\""), "{source}");
+    assert!(source.contains("labelLineWidth={1.25}"), "{source}");
+    assert!(source.contains("labelLineDash=\"dashDot\""), "{source}");
+    assert!(source.contains("labelLineTransparency={20}"), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-chart-data-label.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:dLbls>"), "{xml}");
+    assert!(
+        xml.contains("<a:srgbClr val=\"F0E0D0\"><a:alpha val=\"75000\"/></a:srgbClr>"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<a:srgbClr val=\"123456\"><a:alpha val=\"80000\"/></a:srgbClr>"),
+        "{xml}"
+    );
+    assert!(xml.contains("<a:ln w=\"15875\"><a:solidFill><a:srgbClr val=\"123456\"><a:alpha val=\"80000\"/></a:srgbClr></a:solidFill><a:prstDash val=\"dashDot\"/></a:ln>"), "{xml}");
+}
+
+#[test]
+fn validates_chart_data_label_shape_properties_in_agent_spec() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("labelFillColor"))
+        .stdout(predicate::str::contains("labelFillTransparency"))
+        .stdout(predicate::str::contains("labelLineColor"))
+        .stdout(predicate::str::contains("labelLineWidth"))
+        .stdout(predicate::str::contains("labelLineDash"))
+        .stdout(predicate::str::contains("labelLineTransparency"))
+        .stdout(predicate::str::contains("labelLineHidden"));
+}
+
+#[test]
+fn rejects_chart_data_label_transparency_without_matching_color() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-data-label-no-color.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" showValue={true} labelFillTransparency={25} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Series.labelFillTransparency requires labelFillColor",
+        ))
+        .stderr(predicate::str::contains("add a fill color"));
+}
+
+#[test]
+fn rejects_hidden_chart_data_label_line_with_visible_styling() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-data-label-hidden-line.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" showValue={true} labelLineHidden={true} labelLineColor="#123456" /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Hidden data-label lines cannot combine color",
+        ))
+        .stderr(predicate::str::contains("remove those properties"));
+}
+
+#[test]
+fn reverses_hidden_chart_data_label_line_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("hidden-chart-data-label-line.xlsx");
+    let source_path = directory.path().join("hidden-chart-data-label-line.tsx");
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-hidden-chart-data-label-line.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    let mut label_format = ChartFormat::new();
+    label_format.set_border(ChartLine::new().set_hidden(true));
+    let mut data_label = ChartDataLabel::new();
+    data_label.show_value().set_format(&mut label_format);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_data_label(&data_label);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("labelLineHidden={true}"), "{source}");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<a:ln><a:noFill/></a:ln>"), "{xml}");
+}
+
+#[test]
 fn reverse_rejects_unmodeled_chart_data_table_font_rotation() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("rotated-chart-data-table-font.xlsx");

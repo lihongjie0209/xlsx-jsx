@@ -4230,6 +4230,13 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "labelFontPitchFamily",
                 "labelFontCharset",
                 "labelFontRotation",
+                "labelFillColor",
+                "labelFillTransparency",
+                "labelLineColor",
+                "labelLineWidth",
+                "labelLineDash",
+                "labelLineTransparency",
+                "labelLineHidden",
                 "markerType",
                 "markerSize",
                 "markerFillColor",
@@ -5602,6 +5609,7 @@ fn validate_chart_error_bar_amount(error_bars: &Node, series: &Node) -> Result<(
 
 fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
     validate_series_data_label_font_properties(series)?;
+    validate_series_data_label_shape_format(series)?;
     validate_custom_chart_data_labels(series)?;
     for property in [
         "showValue",
@@ -5639,19 +5647,7 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
         || series.props.contains_key("labelPosition")
         || series.props.contains_key("labelSeparator")
         || series.props.contains_key("labelNumberFormat")
-        || [
-            "labelFontSize",
-            "labelFontBold",
-            "labelFontItalic",
-            "labelFontUnderline",
-            "labelFontColor",
-            "labelFontName",
-            "labelFontPitchFamily",
-            "labelFontCharset",
-            "labelFontRotation",
-        ]
-        .iter()
-        .any(|property| series.props.contains_key(*property));
+        || series_has_data_label_style(series);
     if value_suppressed && !category_or_percentage_shown && another_label_option {
         return Err(Error::Compile(
             "Series.showValue={false} cannot be combined with Series.showLegendKey, showLeaderLines, showSeriesName, labelPosition, labelSeparator, labelNumberFormat, or labelFont* properties because rust_xlsxwriter automatically enables values; enable showCategoryName or showPercentage, or remove the conflicting options".into(),
@@ -5699,6 +5695,131 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
                 "Series.labelNumberFormat must contain 1–255 valid XML characters; shorten the format code or remove control characters".into(),
             ));
         }
+    }
+    Ok(())
+}
+
+fn series_has_data_label_style(series: &Node) -> bool {
+    [
+        "labelFontSize",
+        "labelFontBold",
+        "labelFontItalic",
+        "labelFontUnderline",
+        "labelFontColor",
+        "labelFontName",
+        "labelFontPitchFamily",
+        "labelFontCharset",
+        "labelFontRotation",
+        "labelFillColor",
+        "labelFillTransparency",
+        "labelLineColor",
+        "labelLineWidth",
+        "labelLineDash",
+        "labelLineTransparency",
+    ]
+    .iter()
+    .any(|property| series.props.contains_key(*property))
+        || series.props.get("labelLineHidden").and_then(Value::as_bool) == Some(true)
+}
+
+fn validate_series_data_label_shape_format(series: &Node) -> Result<()> {
+    if series
+        .props
+        .get("labelFillColor")
+        .is_some_and(|value| !value.as_str().is_some_and(is_opaque_rgb_color))
+    {
+        return Err(Error::Compile(
+            "Series.labelFillColor must be an opaque RGB color like #336699".into(),
+        ));
+    }
+    if series.props.contains_key("labelFillTransparency") {
+        if series
+            .props
+            .get("labelFillTransparency")
+            .is_some_and(|value| value.as_u64().is_none_or(|transparency| transparency > 100))
+        {
+            return Err(Error::Compile(
+                "Series.labelFillTransparency must be an integer from 0 to 100".into(),
+            ));
+        }
+        if !series.props.contains_key("labelFillColor") {
+            return Err(Error::Compile(
+                "Series.labelFillTransparency requires labelFillColor; add a fill color or remove transparency".into(),
+            ));
+        }
+    }
+    if series
+        .props
+        .get("labelLineColor")
+        .is_some_and(|value| !value.as_str().is_some_and(is_opaque_rgb_color))
+    {
+        return Err(Error::Compile(
+            "Series.labelLineColor must be an opaque RGB color like #336699".into(),
+        ));
+    }
+    if series.props.contains_key("labelLineTransparency") {
+        if series
+            .props
+            .get("labelLineTransparency")
+            .is_some_and(|value| value.as_u64().is_none_or(|transparency| transparency > 100))
+        {
+            return Err(Error::Compile(
+                "Series.labelLineTransparency must be an integer from 0 to 100".into(),
+            ));
+        }
+        if !series.props.contains_key("labelLineColor") {
+            return Err(Error::Compile(
+                "Series.labelLineTransparency requires labelLineColor; add an RGB line color or remove transparency".into(),
+            ));
+        }
+    }
+    if series.props.get("labelLineWidth").is_some_and(|value| {
+        !value
+            .as_f64()
+            .is_some_and(|width| (0.25..=1584.0).contains(&width) && (width * 4.0).fract() == 0.0)
+    }) {
+        return Err(Error::Compile(
+            "Series.labelLineWidth must be 0.25–1584 pt in quarter-point increments".into(),
+        ));
+    }
+    if let Some(dash) = series.props.get("labelLineDash") {
+        let supported = [
+            "solid",
+            "roundDot",
+            "squareDot",
+            "dash",
+            "dashDot",
+            "longDash",
+            "longDashDot",
+            "longDashDotDot",
+        ];
+        if dash.as_str().is_none_or(|dash| !supported.contains(&dash)) {
+            return Err(Error::Compile(
+                "Series.labelLineDash must be solid, roundDot, squareDot, dash, dashDot, longDash, longDashDot, or longDashDotDot".into(),
+            ));
+        }
+    }
+    if series
+        .props
+        .get("labelLineHidden")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(Error::Compile(
+            "Series.labelLineHidden must be a boolean".into(),
+        ));
+    }
+    if series.props.get("labelLineHidden").and_then(Value::as_bool) == Some(true)
+        && (series.props.contains_key("labelLineColor")
+            || series.props.contains_key("labelLineTransparency")
+            || series
+                .props
+                .get("labelLineDash")
+                .and_then(Value::as_str)
+                .is_some_and(|dash| dash != "solid"))
+    {
+        return Err(Error::Compile(
+            "Hidden data-label lines cannot combine color, transparency, or non-solid dash; remove those properties because the writer drops them".into(),
+        ));
     }
     Ok(())
 }

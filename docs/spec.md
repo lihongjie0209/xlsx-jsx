@@ -589,6 +589,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   inconsistent font values, point-specific label formatting, and unsupported
   font metadata. The pinned writer exposes `ChartFont::set_strikethrough()` but
   does not serialize it, so data-label strikethrough is not available.
+  Series-level label shapes also accept `labelFillColor?: "#RRGGBB"`,
+  `labelFillTransparency?: integer` (0–100, requires `labelFillColor`), and
+  `labelLineColor`, `labelLineWidth`, `labelLineDash`,
+  `labelLineTransparency`, and `labelLineHidden`, using the same RGB,
+  quarter-point width, dash presets, and hidden-line constraints as series
+  outlines. These properties map to `ChartDataLabel::set_format()` and reverse
+  only the uniform series `<c:dLbls><c:spPr>` shape. Point-specific label
+  shapes, pattern/gradient fills, effects, and unsupported shape children remain
+  rejected.
   Reverse preserves a series `<c:numFmt>` only when `sourceLinked="0"` (the
   writer's explicit, unlinked format) is present; linked or implicit formats
   are rejected because they cannot be reproduced exactly. When no category or
