@@ -5,7 +5,7 @@ use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition,
     ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition,
     ChartDataTable as XlsxChartDataTable, ChartErrorBars, ChartErrorBarsDirection,
-    ChartErrorBarsType, ChartLine, ChartMarker, ChartMarkerType, ChartType,
+    ChartErrorBarsType, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType, ChartType,
     Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
@@ -13,6 +13,10 @@ use tempfile::tempdir;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The agent-spec assertion enumerates the stable component contract."
+)]
 fn spec_is_agent_readable_and_validate_does_not_write_output() {
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command.args(["spec", "--format", "json"]);
@@ -35,6 +39,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("underline"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
+        .stdout(predicate::str::contains("lineColor"))
         .stdout(predicate::str::contains("wrapText"))
         .stdout(predicate::str::contains("shrinkToFit"))
         .stdout(predicate::str::contains("rowSpan"))
@@ -1885,6 +1890,87 @@ fn reverses_external_chart_series_marker_type_and_size_without_a_manifest() {
     let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
     assert!(chart_xml.contains("<c:symbol val=\"circle\"/>"));
     assert!(chart_xml.contains("<c:size val=\"9\"/>"));
+}
+
+#[test]
+fn reverses_external_chart_series_line_style_and_rebuilds_it() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-line.xlsx");
+    let source_path = directory.path().join("external-chart-line.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-chart-line.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    let mut line = ChartLine::new();
+    line.set_color("#336699")
+        .set_width(2.25)
+        .set_dash_type(ChartLineDashType::DashDot)
+        .set_transparency(30);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_format(&mut line);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("lineColor=\"#336699\""));
+    assert!(source.contains("lineWidth={2.25}"));
+    assert!(source.contains("lineDash=\"dashDot\""));
+    assert!(source.contains("lineTransparency={30}"));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<a:ln w=\"28575\">"));
+    assert!(xml.contains("<a:srgbClr val=\"336699\"><a:alpha val=\"70000\"/></a:srgbClr>"));
+    assert!(xml.contains("<a:prstDash val=\"dashDot\"/>"));
+}
+
+#[test]
+fn rejects_invalid_chart_series_line_width_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-line-width.tsx");
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" lineWidth={1.1} /></Chart></Worksheet></Workbook>;"#).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("lineWidth must be"))
+        .stderr(predicate::str::contains("0.25-point increments"));
+}
+
+#[test]
+fn rejects_chart_series_line_transparency_without_color_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-line-transparency.tsx");
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" lineTransparency={20} /></Chart></Worksheet></Workbook>;"#).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "lineTransparency requires lineColor",
+        ));
 }
 
 #[test]

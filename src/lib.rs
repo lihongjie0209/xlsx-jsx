@@ -2601,6 +2601,11 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "labelNumberFormat",
                 "markerType",
                 "markerSize",
+                "lineColor",
+                "lineWidth",
+                "lineDash",
+                "lineTransparency",
+                "lineHidden",
             ],
             "Series",
         )?;
@@ -2680,7 +2685,109 @@ fn validate_chart_series_properties(
 ) -> Result<()> {
     validate_series_data_label_props(chart, series)?;
     validate_chart_series_marker(chart, series, series_index)?;
+    validate_chart_series_line(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
+}
+
+fn validate_chart_series_line(chart: &Node, series: &Node, series_index: usize) -> Result<()> {
+    let chart_type = chart
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let has_line_props = [
+        "lineColor",
+        "lineWidth",
+        "lineDash",
+        "lineTransparency",
+        "lineHidden",
+    ]
+    .iter()
+    .any(|key| series.props.contains_key(*key));
+    if has_line_props
+        && !matches!(
+            chart_type,
+            "area"
+                | "areaStacked"
+                | "areaPercentStacked"
+                | "bar"
+                | "barStacked"
+                | "barPercentStacked"
+                | "column"
+                | "columnStacked"
+                | "columnPercentStacked"
+                | "line"
+                | "lineStacked"
+                | "linePercentStacked"
+                | "radar"
+                | "radarWithMarkers"
+                | "radarFilled"
+                | "scatter"
+                | "scatterWithLines"
+                | "scatterWithLinesAndMarkers"
+                | "scatterWithSmoothLines"
+                | "scatterWithSmoothLinesAndMarkers"
+                | "stock"
+        )
+    {
+        return Err(Error::Compile(format!(
+            "Chart Series {} line formatting is not supported for `{chart_type}`; remove line properties or choose a chart type with series lines",
+            series_index + 1
+        )));
+    }
+    if let Some(color) = series.props.get("lineColor") {
+        validate_rgb_color(color, "Series.lineColor", 0, 0)?;
+    }
+    if let Some(width) = series.props.get("lineWidth") {
+        let Some(width) = width.as_f64() else {
+            return Err(Error::Compile("Series.lineWidth must be a number from 0.25 through 1584 in exact 0.25-point increments".into()));
+        };
+        if !width.is_finite()
+            || !(0.25..=1584.0).contains(&width)
+            || (width * 4.0 - (width * 4.0).round()).abs() > f64::EPSILON
+        {
+            return Err(Error::Compile("Series.lineWidth must be a number from 0.25 through 1584 in exact 0.25-point increments; adjust the width to a supported quarter-point value".into()));
+        }
+    }
+    if let Some(dash) = series.props.get("lineDash").and_then(Value::as_str)
+        && ![
+            "solid",
+            "roundDot",
+            "squareDot",
+            "dash",
+            "dashDot",
+            "longDash",
+            "longDashDot",
+            "longDashDotDot",
+        ]
+        .contains(&dash)
+    {
+        return Err(Error::Compile(format!(
+            "Series.lineDash `{dash}` is unsupported; use solid, roundDot, squareDot, dash, dashDot, longDash, longDashDot, or longDashDotDot"
+        )));
+    }
+    if let Some(transparency) = series.props.get("lineTransparency")
+        && transparency.as_u64().is_none_or(|value| value > 100)
+    {
+        return Err(Error::Compile(
+            "Series.lineTransparency must be an integer percentage from 0 through 100".into(),
+        ));
+    }
+    if series.props.contains_key("lineTransparency") && !series.props.contains_key("lineColor") {
+        return Err(Error::Compile("Series.lineTransparency requires lineColor because transparency is serialized with the RGB color; add lineColor or remove lineTransparency".into()));
+    }
+    if series.props.get("lineHidden").and_then(Value::as_bool) == Some(true)
+        && (series.props.contains_key("lineColor")
+            || series
+                .props
+                .get("lineDash")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value != "solid")
+            || series.props.contains_key("lineTransparency"))
+    {
+        return Err(Error::Compile("A hidden series line cannot combine lineColor, non-solid lineDash, or lineTransparency; remove those properties because the writer drops them".into()));
+    }
+    Ok(())
 }
 
 fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize) -> Result<()> {

@@ -828,6 +828,7 @@ fn compile_chart(
         }
         configure_chart_series_data_labels(chart_series, &series);
         configure_chart_series_marker(chart_series, &series);
+        configure_chart_series_line(chart_series, &series);
         configure_chart_series_error_bars(chart_series, &series)?;
         if component.props.get("type").and_then(Value::as_str) == Some("stock") {
             chart_series
@@ -839,6 +840,48 @@ fn compile_chart(
         .insert_chart(row, column, &chart)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+}
+
+fn configure_chart_series_line(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
+    if ![
+        "lineColor",
+        "lineWidth",
+        "lineDash",
+        "lineTransparency",
+        "lineHidden",
+    ]
+    .iter()
+    .any(|key| series.props.contains_key(*key))
+    {
+        return;
+    }
+    let mut line = ChartLine::new();
+    if let Some(color) = series.props.get("lineColor").and_then(Value::as_str) {
+        line.set_color(color);
+    }
+    if let Some(width) = series.props.get("lineWidth").and_then(Value::as_f64) {
+        line.set_width(width);
+    }
+    if let Some(dash) = series.props.get("lineDash").and_then(Value::as_str) {
+        line.set_dash_type(match dash {
+            "solid" => rust_xlsxwriter::ChartLineDashType::Solid,
+            "roundDot" => rust_xlsxwriter::ChartLineDashType::RoundDot,
+            "squareDot" => rust_xlsxwriter::ChartLineDashType::SquareDot,
+            "dash" => rust_xlsxwriter::ChartLineDashType::Dash,
+            "dashDot" => rust_xlsxwriter::ChartLineDashType::DashDot,
+            "longDash" => rust_xlsxwriter::ChartLineDashType::LongDash,
+            "longDashDot" => rust_xlsxwriter::ChartLineDashType::LongDashDot,
+            "longDashDotDot" => rust_xlsxwriter::ChartLineDashType::LongDashDotDot,
+            _ => unreachable!("validated Series.lineDash"),
+        });
+    }
+    if let Some(transparency) = series.props.get("lineTransparency").and_then(Value::as_u64) {
+        line.set_transparency(u8::try_from(transparency).expect("validated transparency"));
+    }
+    if let Some(hidden) = series.props.get("lineHidden").and_then(Value::as_bool) {
+        line.set_hidden(hidden);
+    }
+    chart_series.set_format(&mut line);
 }
 
 fn configure_chart_series_marker(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
@@ -4150,6 +4193,21 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(marker_size) = series.marker_size {
             let _ = write!(output, " markerSize={{{marker_size}}}");
         }
+        if let Some(color) = &series.line_color {
+            let _ = write!(output, " lineColor={color:?}");
+        }
+        if let Some(width) = series.line_width {
+            let _ = write!(output, " lineWidth={{{width}}}");
+        }
+        if let Some(dash) = series.line_dash {
+            let _ = write!(output, " lineDash=\"{dash}\"");
+        }
+        if let Some(transparency) = series.line_transparency {
+            let _ = write!(output, " lineTransparency={{{transparency}}}");
+        }
+        if series.line_hidden == Some(true) {
+            output.push_str(" lineHidden={true}");
+        }
         for (name, enabled) in [
             ("showValue", series.show_value),
             ("showCategoryName", series.show_category_name),
@@ -7031,6 +7089,10 @@ fn parse_chart_xml(
         "smooth",
         "spPr",
         "ln",
+        "solidFill",
+        "srgbClr",
+        "alpha",
+        "prstDash",
         "noFill",
         "pieChart",
         "ser",
@@ -8511,6 +8573,10 @@ fn parse_chart_xml(
                         marker_size: None,
                         smooth: None,
                         line_hidden: None,
+                        line_color: None,
+                        line_width: None,
+                        line_dash: None,
+                        line_transparency: None,
                         show_value: None,
                         show_category_name: None,
                         show_series_name: None,
@@ -8902,13 +8968,85 @@ fn parse_chart_xml(
                                 );
                             }
                         }
-                        if chart_type != Some("stock") && line_width.as_deref() != Some("28575") {
+                        if let Some(current) = series.last_mut() {
+                            current.line_hidden = Some(false);
+                            if let Some(width) = line_width {
+                                let Ok(width_emu) = width.parse::<u32>() else {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has invalid series line width `{width}`; use a positive quarter-point width"
+                                    )));
+                                };
+                                if width_emu == 0 || width_emu > 20_116_800 || width_emu % 3175 != 0
+                                {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has a series line width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments"
+                                    )));
+                                }
+                                current.line_width = Some(f64::from(width_emu) / 12700.0);
+                            }
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|item| item == "ln") =>
+                    {
+                        let color = event.attributes().with_checks(false).filter_map(Result::ok).find(|attr| attr.key.local_name().as_ref() == b"val").and_then(|attr| attr.decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder()).ok().map(std::borrow::Cow::into_owned)).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has series line RGB without val; add an opaque #RRGGBB lineColor")))?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a scatter series line outside the writer's default 2.25 pt width; remove custom line width or extend Chart series line formatting"
+                                "chart part `{part}` has non-RGB series line color; use an opaque six-digit RGB color"
                             )));
                         }
                         if let Some(current) = series.last_mut() {
-                            current.line_hidden = Some(false);
+                            current.line_color = Some(format!("#{color}"));
+                        }
+                    }
+                    "alpha" if stack.iter().any(|item| item == "ln") => {
+                        let alpha = event.attributes().with_checks(false).filter_map(Result::ok).find(|attr| attr.key.local_name().as_ref() == b"val").and_then(|attr| attr.decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder()).ok().and_then(|v| v.parse::<u32>().ok())).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has invalid line alpha; use transparency in 1% increments")))?;
+                        if alpha > 100_000 || alpha % 1000 != 0 {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has line alpha not exactly representable by integer transparency; use 1% increments"
+                            )));
+                        }
+                        if let Some(current) = series.last_mut() {
+                            current.line_transparency = Some(100 - alpha / 1000);
+                        }
+                    }
+                    "prstDash" if stack.last().is_some_and(|parent| parent == "ln") => {
+                        let dash = event
+                            .attributes()
+                            .with_checks(false)
+                            .filter_map(Result::ok)
+                            .find(|attr| attr.key.local_name().as_ref() == b"val")
+                            .and_then(|attr| {
+                                attr.decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    reader.decoder(),
+                                )
+                                .ok()
+                                .map(std::borrow::Cow::into_owned)
+                            })
+                            .ok_or_else(|| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has series line dash without val"
+                                ))
+                            })?;
+                        let dash = match dash.as_str() {
+                            "solid" => "solid",
+                            "sysDot" => "roundDot",
+                            "sysDash" => "squareDot",
+                            "dash" => "dash",
+                            "dashDot" => "dashDot",
+                            "lgDash" => "longDash",
+                            "lgDashDot" => "longDashDot",
+                            "lgDashDotDot" => "longDashDotDot",
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported series line dash `{dash}`; use a standard preset dash"
+                                )));
+                            }
+                        };
+                        if let Some(current) = series.last_mut() {
+                            current.line_dash = Some(dash);
                         }
                     }
                     "noFill" => {
@@ -10113,6 +10251,10 @@ fn validate_reversed_chart_error_bars(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "The whitelist centralizes chart OOXML attribute validation."
+)]
 fn is_supported_chart_attribute(
     tag: &str,
     key: &str,
@@ -10128,7 +10270,24 @@ fn is_supported_chart_attribute(
         ("scatterStyle", "val") => {
             chart_type == Some("scatter") && matches!(value, "lineMarker" | "smoothMarker")
         }
-        ("ln", "w") => chart_type == Some("scatter") && value == "28575",
+        ("ln", "w") => value
+            .parse::<u32>()
+            .is_ok_and(|width| width > 0 && width <= 20_116_800 && width % 3175 == 0),
+        ("srgbClr", "val") => {
+            value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        }
+        ("alpha", "val") => value.parse::<u32>().is_ok_and(|alpha| alpha <= 100_000),
+        ("prstDash", "val") => matches!(
+            value,
+            "solid"
+                | "sysDot"
+                | "sysDash"
+                | "dash"
+                | "dashDot"
+                | "lgDash"
+                | "lgDashDot"
+                | "lgDashDotDot"
+        ),
         ("grouping", "val") => match chart_type {
             Some("area") => {
                 matches!(value, "standard" | "stacked" | "percentStacked")
@@ -12855,6 +13014,10 @@ struct WorksheetChartSeries {
     marker_size: Option<u8>,
     smooth: Option<bool>,
     line_hidden: Option<bool>,
+    line_color: Option<String>,
+    line_width: Option<f64>,
+    line_dash: Option<&'static str>,
+    line_transparency: Option<u32>,
     show_value: Option<bool>,
     show_category_name: Option<bool>,
     show_series_name: Option<bool>,

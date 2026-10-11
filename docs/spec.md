@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.61
+Version: 1.62
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -104,6 +104,18 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   shape and size overrides are only valid for line, radar, and scatter charts;
   marker shape formatting is currently rejected during reverse rather than
   discarded.
+- `Series.lineColor?: "#RRGGBB"`, `lineWidth?: number`, `lineDash?: "solid" |
+  "roundDot" | "squareDot" | "dash" | "dashDot" | "longDash" |
+  "longDashDot" | "longDashDotDot"`, `lineTransparency?: number`, and
+  `lineHidden?: boolean` format series lines on area, bar/column, line, radar,
+  scatter, and stock charts. Colors are opaque RGB. Width is in points, from
+  0.25 through 1584, in exact 0.25-point increments. Transparency is an
+  integer percentage from 0 through 100 and requires `lineColor`. A hidden
+  line may include `lineWidth`, but cannot include color, non-solid dash, or
+  transparency because the pinned writer emits no-fill and drops those values.
+  Omission preserves the chart-type default. Reverse maps only exact writer
+  representations; unsupported fills, theme colors, effects, and line XML
+  structures fail with repair guidance.
 - `ChartDataTable` is an optional child of `Chart`, at most one per chart.
   `showHorizontalBorders`, `showVerticalBorders`, `showOutlineBorders`, and
   `showLegendKeys` are booleans. Omission uses the pinned writer defaults

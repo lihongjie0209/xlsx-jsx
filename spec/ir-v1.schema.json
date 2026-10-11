@@ -692,7 +692,12 @@
             "labelSeparator": { "enum": ["comma", "semicolon", "period", "space", "newline"] },
             "labelNumberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
             "markerType": { "enum": ["automatic", "square", "diamond", "triangle", "x", "star", "shortDash", "longDash", "circle", "plusSign", "none"] },
-            "markerSize": { "type": "integer", "minimum": 2, "maximum": 72 }
+            "markerSize": { "type": "integer", "minimum": 2, "maximum": 72 },
+            "lineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "lineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
+            "lineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
+            "lineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "lineHidden": { "type": "boolean" }
           },
           "additionalProperties": false
         },
