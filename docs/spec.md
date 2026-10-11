@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.65
+Version: 1.66
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -304,17 +304,17 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   reverse preserves `delete=true` as `true`. Pie/doughnut reject these fields,
   and reverse rejects hidden declarations that cannot be mapped to one primary
   horizontal or vertical axis.
-- `Chart.horizontalAxisMajorGridlines?: boolean`,
-  `Chart.horizontalAxisMinorGridlines?: boolean`,
-  `Chart.verticalAxisMajorGridlines?: boolean`, and
-  `Chart.verticalAxisMinorGridlines?: boolean` control primary axis gridline
-  visibility. Horizontal/vertical refer to OOXML axis position (`b`/`l`), so they
-  retain their meaning for bars and scatter charts. Major-gridline defaults are
-  chart-specific (horizontal for bar/radar, vertical for area/column/line/radar/
-  scatter/stock); minor gridlines default off. Reverse preserves visibility and
-  rejects custom gridline line formatting or secondary-axis gridlines because
-  those are not represented by these properties. Pie/doughnut charts have no
-  axes and reject all four properties.
+- `Chart.horizontalAxisMajorGridlines`, `horizontalAxisMinorGridlines`,
+  `verticalAxisMajorGridlines`, and `verticalAxisMinorGridlines` control primary
+  axis gridlines. Each accepts a boolean or a line-style object with optional
+  `color` (opaque `#RRGGBB`), `width` (0.25–1584 pt in quarter-point steps),
+  `dash` (a supported chart line dash), and `transparency` (integer 0–100).
+  A style object means visible; `transparency` requires `color`. Horizontal/
+  vertical refer to OOXML axis position (`b`/`l`), retaining their meaning for
+  bars and scatter charts. Major-gridline defaults are chart-specific; minor
+  gridlines default off. Reverse preserves supported line styles and rejects
+  unsupported fill/effect/secondary-axis formatting. Pie/doughnut charts have
+  no axes and reject all four properties.
 - `Chart.showLegend?: boolean` defaults to `true`; `Chart.legendPosition?:
   "right" | "left" | "top" | "bottom" | "topRight"` defaults to `"right"`.
   `legendPosition` cannot be combined with `showLegend={false}` because the

@@ -2412,13 +2412,74 @@ fn validate_chart_gridlines(chart: &Node, chart_type: &str) -> Result<()> {
         ));
     }
     for property in properties {
-        if chart
-            .props
-            .get(property)
-            .is_some_and(|value| !value.is_boolean())
+        let Some(value) = chart.props.get(property) else {
+            continue;
+        };
+        if value.is_boolean() {
+            continue;
+        }
+        let Some(style) = value.as_object() else {
+            return Err(Error::Compile(format!(
+                "Chart.{property} must be a boolean or line-style object; use true/false or {{ color, width, dash, transparency }}"
+            )));
+        };
+        if style.is_empty() {
+            return Err(Error::Compile(format!(
+                "Chart.{property} line-style object cannot be empty; add at least one of color, width, dash, or transparency"
+            )));
+        }
+        for key in style.keys() {
+            if !["color", "width", "dash", "transparency"].contains(&key.as_str()) {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} has unsupported line-style property `{key}`; use color, width, dash, or transparency"
+                )));
+            }
+        }
+        if let Some(color) = style.get("color") {
+            validate_rgb_color(color, &format!("Chart.{property}.color"), 0, 0)?;
+        }
+        if let Some(width) = style.get("width") {
+            let Some(width) = width.as_f64().filter(|width| width.is_finite()) else {
+                return Err(Error::Compile(format!(
+                    "Chart.{property}.width must be a finite number from 0.25 through 1584 in quarter-point increments"
+                )));
+            };
+            if !(0.25..=1584.0).contains(&width) || (width * 4.0).fract() != 0.0 {
+                return Err(Error::Compile(format!(
+                    "Chart.{property}.width must be from 0.25 through 1584 in exact quarter-point increments"
+                )));
+            }
+        }
+        if let Some(dash) = style.get("dash") {
+            let valid = dash.as_str().is_some_and(|dash| {
+                [
+                    "solid",
+                    "roundDot",
+                    "squareDot",
+                    "dash",
+                    "dashDot",
+                    "longDash",
+                    "longDashDot",
+                    "longDashDotDot",
+                ]
+                .contains(&dash)
+            });
+            if !valid {
+                return Err(Error::Compile(format!(
+                    "Chart.{property}.dash is unsupported; use solid, roundDot, squareDot, dash, dashDot, longDash, longDashDot, or longDashDotDot"
+                )));
+            }
+        }
+        if let Some(transparency) = style.get("transparency")
+            && transparency.as_u64().is_none_or(|value| value > 100)
         {
             return Err(Error::Compile(format!(
-                "Chart.{property} must be a boolean; use true/false or omit it to keep the chart-type default"
+                "Chart.{property}.transparency must be an integer percentage from 0 through 100"
+            )));
+        }
+        if style.contains_key("transparency") && !style.contains_key("color") {
+            return Err(Error::Compile(format!(
+                "Chart.{property}.transparency requires color because the writer serializes transparency with RGB; add color or remove transparency"
             )));
         }
     }

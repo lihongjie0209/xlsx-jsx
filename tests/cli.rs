@@ -2280,6 +2280,53 @@ fn rejects_conflicting_chart_series_spacing_declarations() {
 }
 
 #[test]
+fn reverses_external_chart_gridline_line_style_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-gridline-style.xlsx");
+    let source_path = directory.path().join("external-gridline-style.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-gridline-style.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart.add_series().set_values("Data!B2:B5");
+    chart.y_axis().set_major_gridlines_line(
+        ChartLine::new()
+            .set_color("#C00000")
+            .set_width(1.5)
+            .set_dash_type(ChartLineDashType::DashDot)
+            .set_transparency(25),
+    );
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains(
+        "verticalAxisMajorGridlines={{color: \"#C00000\", width: 1.5, dash: \"dashDot\", transparency: 25}}"
+    ));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:majorGridlines><c:spPr><a:ln w=\"19050\">"));
+    assert!(xml.contains("<a:srgbClr val=\"C00000\"><a:alpha val=\"75000\"/></a:srgbClr>"));
+    assert!(xml.contains("<a:prstDash val=\"dashDot\"/>"));
+}
+
+#[test]
 fn rejects_invalid_chart_series_line_width_with_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-chart-line-width.tsx");
@@ -3191,7 +3238,7 @@ fn rejects_gridline_properties_for_pie_charts_with_guidance() {
 }
 
 #[test]
-fn reverse_rejects_custom_gridline_formatting_with_repair_guidance() {
+fn reverse_rejects_unsupported_gridline_effects_with_repair_guidance() {
     let directory = tempdir().expect("temporary directory is available");
     let source = directory.path().join("gridline-format.tsx");
     let workbook = directory.path().join("gridline-format.xlsx");
@@ -3212,7 +3259,7 @@ fn reverse_rejects_custom_gridline_formatting_with_repair_guidance() {
     rewrite_part(&workbook, "xl/charts/chart1.xml", |xml| {
         xml.replacen(
             "<c:majorGridlines/>",
-            "<c:majorGridlines><c:spPr/></c:majorGridlines>",
+            "<c:majorGridlines><c:spPr><a:ln><a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>",
             1,
         )
     });
@@ -3224,10 +3271,31 @@ fn reverse_rejects_custom_gridline_formatting_with_repair_guidance() {
         .arg(&reversed)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("custom gridline formatting"))
         .stderr(predicate::str::contains(
-            "preserve only gridline visibility",
-        ));
+            "unsupported `<schemeClr>` gridline formatting",
+        ))
+        .stderr(predicate::str::contains("retain only RGB color"));
+}
+
+#[test]
+fn rejects_chart_gridline_transparency_without_color_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory
+        .path()
+        .join("gridline-transparency-without-color.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" verticalAxisMajorGridlines={{ transparency: 25 }}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("transparency requires color"))
+        .stderr(predicate::str::contains("add color or remove transparency"));
 }
 
 #[test]

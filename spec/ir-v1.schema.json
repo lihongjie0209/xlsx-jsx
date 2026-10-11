@@ -517,10 +517,10 @@
             "verticalAxisHidden": { "type": "boolean" },
             "yAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
-            "horizontalAxisMajorGridlines": { "type": "boolean" },
-            "horizontalAxisMinorGridlines": { "type": "boolean" },
-            "verticalAxisMajorGridlines": { "type": "boolean" },
-            "verticalAxisMinorGridlines": { "type": "boolean" },
+            "horizontalAxisMajorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
+            "horizontalAxisMinorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
+            "verticalAxisMajorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
+            "verticalAxisMinorGridlines": { "oneOf": [{ "type": "boolean" }, { "$ref": "#/$defs/chartGridlineStyle" }] },
             "showLegend": { "type": "boolean" },
             "legendPosition": { "enum": ["right", "left", "top", "bottom", "topRight"] },
             "holeSize": { "type": "integer", "minimum": 10, "maximum": 90 },
@@ -753,6 +753,18 @@
         },
         "children": { "type": "array", "maxItems": 0 }
       },
+      "additionalProperties": false
+    },
+    "chartGridlineStyle": {
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "width": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
+        "dash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
+        "transparency": { "type": "integer", "minimum": 0, "maximum": 100 }
+      },
+      "dependentRequired": { "transparency": ["color"] },
       "additionalProperties": false
     },
     "chartErrorBars": {

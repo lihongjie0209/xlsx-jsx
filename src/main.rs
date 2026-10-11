@@ -13,20 +13,21 @@ use quick_xml::{
 use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
     ChartDataLabel, ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartMarker,
-    ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType,
-    Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
-    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
-    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
-    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
-    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
-    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
-    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
-    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
-    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
-    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
-    FormatUnderline, Formula, IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table,
-    TableColumn, TableStyle, Url, Workbook,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartLineDashType,
+    ChartMarker, ChartMarkerType, ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType,
+    ChartType, Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale,
+    ConditionalFormatAverage, ConditionalFormatAverageRule, ConditionalFormatBlank,
+    ConditionalFormatCell, ConditionalFormatCellRule, ConditionalFormatCustomIcon,
+    ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
+    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
+    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
+    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
+    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
+    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
+    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
+    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
+    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
+    Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -1460,15 +1461,53 @@ fn configure_chart_gridlines(chart: &mut Chart, component: &Node) {
         ("verticalAxisMajorGridlines", false, false),
         ("verticalAxisMinorGridlines", false, true),
     ] {
-        let Some(visible) = component.props.get(property).and_then(Value::as_bool) else {
+        let Some(setting) = component.props.get(property) else {
             continue;
         };
         let chart_axis = if axis { chart.x_axis() } else { chart.y_axis() };
-        if minor {
-            chart_axis.set_minor_gridlines(visible);
+        if let Some(style) = setting.as_object() {
+            let mut line = ChartLine::new();
+            if let Some(color) = style.get("color").and_then(Value::as_str) {
+                line.set_color(color);
+            }
+            if let Some(width) = style.get("width").and_then(Value::as_f64) {
+                line.set_width(width);
+            }
+            if let Some(dash) = style.get("dash").and_then(Value::as_str) {
+                line.set_dash_type(chart_line_dash_type(dash));
+            }
+            if let Some(transparency) = style.get("transparency").and_then(Value::as_u64) {
+                line.set_transparency(
+                    u8::try_from(transparency).expect("validated gridline transparency"),
+                );
+            }
+            if minor {
+                chart_axis.set_minor_gridlines_line(&line);
+            } else {
+                chart_axis.set_major_gridlines_line(&line);
+            }
         } else {
-            chart_axis.set_major_gridlines(visible);
+            let visible = setting.as_bool().expect("validated gridline setting");
+            if minor {
+                chart_axis.set_minor_gridlines(visible);
+            } else {
+                chart_axis.set_major_gridlines(visible);
+            }
         }
+    }
+}
+
+fn chart_line_dash_type(dash: &str) -> ChartLineDashType {
+    match dash {
+        "solid" => ChartLineDashType::Solid,
+        "roundDot" => ChartLineDashType::RoundDot,
+        "squareDot" => ChartLineDashType::SquareDot,
+        "dash" => ChartLineDashType::Dash,
+        "dashDot" => ChartLineDashType::DashDot,
+        "longDash" => ChartLineDashType::LongDash,
+        "longDashDot" => ChartLineDashType::LongDashDot,
+        "longDashDotDot" => ChartLineDashType::LongDashDotDot,
+        _ => unreachable!("validated chart line dash"),
     }
 }
 
@@ -4493,33 +4532,54 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
             "yAxisMinorUnit",
             chart.y_axis_minor_unit.map(|value| format!("{{{value}}}")),
         ),
-        (
-            "horizontalAxisMajorGridlines",
-            chart
-                .horizontal_axis_major_gridlines
-                .map(|value| format!("{{{value}}}")),
-        ),
-        (
-            "horizontalAxisMinorGridlines",
-            chart
-                .horizontal_axis_minor_gridlines
-                .map(|value| format!("{{{value}}}")),
-        ),
-        (
-            "verticalAxisMajorGridlines",
-            chart
-                .vertical_axis_major_gridlines
-                .map(|value| format!("{{{value}}}")),
-        ),
-        (
-            "verticalAxisMinorGridlines",
-            chart
-                .vertical_axis_minor_gridlines
-                .map(|value| format!("{{{value}}}")),
-        ),
     ] {
         if let Some(value) = value {
             let _ = write!(properties, " {name}={value}");
+        }
+    }
+    append_chart_gridline_properties(properties, chart);
+}
+
+fn append_chart_gridline_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (name, visible, style) in [
+        (
+            "horizontalAxisMajorGridlines",
+            chart.horizontal_axis_major_gridlines,
+            chart.gridline_styles[0].as_ref(),
+        ),
+        (
+            "horizontalAxisMinorGridlines",
+            chart.horizontal_axis_minor_gridlines,
+            chart.gridline_styles[1].as_ref(),
+        ),
+        (
+            "verticalAxisMajorGridlines",
+            chart.vertical_axis_major_gridlines,
+            chart.gridline_styles[2].as_ref(),
+        ),
+        (
+            "verticalAxisMinorGridlines",
+            chart.vertical_axis_minor_gridlines,
+            chart.gridline_styles[3].as_ref(),
+        ),
+    ] {
+        if let Some(style) = style {
+            let mut fields = Vec::new();
+            if let Some(color) = &style.color {
+                fields.push(format!("color: {color:?}"));
+            }
+            if let Some(width) = style.width {
+                fields.push(format!("width: {width}"));
+            }
+            if let Some(dash) = style.dash {
+                fields.push(format!("dash: {dash:?}"));
+            }
+            if let Some(transparency) = style.transparency.filter(|value| *value != 0) {
+                fields.push(format!("transparency: {transparency}"));
+            }
+            let _ = write!(properties, " {name}={{{{{}}}}}", fields.join(", "));
+        } else if let Some(visible) = visible {
+            let _ = write!(properties, " {name}={{{visible}}}");
         }
     }
 }
@@ -7367,6 +7427,8 @@ fn parse_chart_xml(
     let mut vertical_major_gridlines = false;
     let mut horizontal_minor_gridlines = false;
     let mut vertical_minor_gridlines = false;
+    let mut gridline_styles: [Option<WorksheetChartGridlineStyle>; 4] =
+        std::array::from_fn(|_| None);
     let mut horizontal_major_gridlines_seen = false;
     let mut vertical_major_gridlines_seen = false;
     let mut horizontal_minor_gridlines_seen = false;
@@ -7425,10 +7487,12 @@ fn parse_chart_xml(
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
                 if stack.iter().any(|ancestor| {
                     matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
-                }) {
+                }) && !matches!(
+                    tag.as_str(),
+                    "spPr" | "ln" | "solidFill" | "srgbClr" | "alpha" | "prstDash" | "noFill"
+                ) {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has custom gridline formatting inside `<{}>`; remove line styling or preserve only gridline visibility",
-                        stack.last().map_or("gridlines", String::as_str)
+                        "chart part `{part}` has unsupported `<{tag}>` gridline formatting; retain only RGB color, line width, dash, or transparency"
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "title")
@@ -9265,6 +9329,9 @@ fn parse_chart_xml(
                                     stack.last().map(String::as_str),
                                     Some("dPt" | "marker")
                                 ))
+                            && !stack.iter().any(|ancestor| {
+                                matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
+                            })
                         {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has formatting outside an individual series; remove custom chart formatting or add explicit reverse support"
@@ -9272,8 +9339,11 @@ fn parse_chart_xml(
                         }
                     }
                     "ln" => {
+                        let in_gridlines = stack.iter().any(|ancestor| {
+                            matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
+                        });
                         if stack.last().is_none_or(|ancestor| ancestor != "spPr")
-                            || !stack.iter().any(|ancestor| ancestor == "ser")
+                            || (!in_gridlines && !stack.iter().any(|ancestor| ancestor == "ser"))
                         {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has a line outside a series shape; remove it or add explicit chart line support"
@@ -9295,7 +9365,27 @@ fn parse_chart_xml(
                                 );
                             }
                         }
-                        if let Some(current) = series.last_mut() {
+                        if in_gridlines {
+                            let index = chart_gridline_index(
+                                current_axis_position.expect("gridline axis position validated"),
+                                stack.iter().any(|ancestor| ancestor == "majorGridlines"),
+                            );
+                            let style = gridline_styles[index].get_or_insert_default();
+                            if let Some(width) = line_width {
+                                let Ok(width_emu) = width.parse::<u32>() else {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has invalid gridline width `{width}`; use a positive quarter-point width"
+                                    )));
+                                };
+                                if width_emu == 0 || width_emu > 20_116_800 || width_emu % 3175 != 0
+                                {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has a gridline width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments"
+                                    )));
+                                }
+                                style.width = Some(f64::from(width_emu) / 12700.0);
+                            }
+                        } else if let Some(current) = series.last_mut() {
                             current.line_hidden = Some(false);
                             if let Some(width) = line_width {
                                 let Ok(width_emu) = width.parse::<u32>() else {
@@ -9345,7 +9435,16 @@ fn parse_chart_xml(
                                 "chart part `{part}` has non-RGB series line color; use an opaque six-digit RGB color"
                             )));
                         }
-                        if let Some(current) = series.last_mut() {
+                        if stack.iter().any(|item| {
+                            matches!(item.as_str(), "majorGridlines" | "minorGridlines")
+                        }) {
+                            let style = gridline_styles[chart_gridline_index(
+                                current_axis_position.expect("gridline axis position validated"),
+                                stack.iter().any(|item| item == "majorGridlines"),
+                            )]
+                            .get_or_insert_default();
+                            style.color = Some(format!("#{color}"));
+                        } else if let Some(current) = series.last_mut() {
                             current.line_color = Some(format!("#{color}"));
                         }
                     }
@@ -9356,7 +9455,16 @@ fn parse_chart_xml(
                                 "chart part `{part}` has line alpha not exactly representable by integer transparency; use 1% increments"
                             )));
                         }
-                        if let Some(current) = series.last_mut() {
+                        if stack.iter().any(|item| {
+                            matches!(item.as_str(), "majorGridlines" | "minorGridlines")
+                        }) {
+                            let style = gridline_styles[chart_gridline_index(
+                                current_axis_position.expect("gridline axis position validated"),
+                                stack.iter().any(|item| item == "majorGridlines"),
+                            )]
+                            .get_or_insert_default();
+                            style.transparency = Some(100 - alpha / 1000);
+                        } else if let Some(current) = series.last_mut() {
                             current.line_transparency = Some(100 - alpha / 1000);
                         }
                     }
@@ -9376,7 +9484,7 @@ fn parse_chart_xml(
                             })
                             .ok_or_else(|| {
                                 Error::Reverse(format!(
-                                    "chart part `{part}` has series line dash without val"
+                                    "chart part `{part}` has chart line dash without val"
                                 ))
                             })?;
                         let dash = match dash.as_str() {
@@ -9390,15 +9498,31 @@ fn parse_chart_xml(
                             "lgDashDotDot" => "longDashDotDot",
                             _ => {
                                 return Err(Error::Reverse(format!(
-                                    "chart part `{part}` has unsupported series line dash `{dash}`; use a standard preset dash"
+                                    "chart part `{part}` has unsupported chart line dash `{dash}`; use a standard preset dash"
                                 )));
                             }
                         };
-                        if let Some(current) = series.last_mut() {
+                        if stack.iter().any(|item| {
+                            matches!(item.as_str(), "majorGridlines" | "minorGridlines")
+                        }) {
+                            let style = gridline_styles[chart_gridline_index(
+                                current_axis_position.expect("gridline axis position validated"),
+                                stack.iter().any(|item| item == "majorGridlines"),
+                            )]
+                            .get_or_insert_default();
+                            style.dash = Some(dash);
+                        } else if let Some(current) = series.last_mut() {
                             current.line_dash = Some(dash);
                         }
                     }
                     "noFill" => {
+                        if stack.iter().any(|ancestor| {
+                            matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
+                        }) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` uses a no-fill gridline; the DSL models visible gridline line styles, so replace noFill with an RGB line or remove the line formatting"
+                            )));
+                        }
                         if stack.last().is_none_or(|ancestor| ancestor != "ln")
                             || !stack.iter().any(|ancestor| ancestor == "ser")
                         {
@@ -9751,6 +9875,14 @@ fn parse_chart_xml(
             }
         }
     }
+    for style in &mut gridline_styles {
+        if style
+            .as_ref()
+            .is_some_and(WorksheetChartGridlineStyle::is_empty)
+        {
+            *style = None;
+        }
+    }
     if matches!(
         chart_type,
         "line"
@@ -10022,6 +10154,7 @@ fn parse_chart_xml(
             != default_chart_major_gridlines(chart_type, false))
         .then_some(vertical_major_gridlines),
         vertical_axis_minor_gridlines: vertical_minor_gridlines.then_some(true),
+        gridline_styles,
         show_legend,
         legend_position: legend_position.filter(|position| *position != "right"),
         hole_size: hole_size.filter(|size| *size != 50),
@@ -10031,6 +10164,16 @@ fn parse_chart_xml(
         data_table,
         series,
     })
+}
+
+fn chart_gridline_index(position: &str, major: bool) -> usize {
+    match (position, major) {
+        ("b" | "t", true) => 0,
+        ("b" | "t", false) => 1,
+        ("l" | "r", true) => 2,
+        ("l" | "r", false) => 3,
+        _ => unreachable!("gridline axis position is validated before lookup"),
+    }
 }
 
 fn default_chart_major_gridlines(chart_type: &str, horizontal_axis: bool) -> bool {
@@ -13436,6 +13579,7 @@ struct WorksheetChart {
     horizontal_axis_minor_gridlines: Option<bool>,
     vertical_axis_major_gridlines: Option<bool>,
     vertical_axis_minor_gridlines: Option<bool>,
+    gridline_styles: [Option<WorksheetChartGridlineStyle>; 4],
     horizontal_axis_major_tick_type: Option<&'static str>,
     horizontal_axis_minor_tick_type: Option<&'static str>,
     vertical_axis_major_tick_type: Option<&'static str>,
@@ -13456,6 +13600,23 @@ struct WorksheetChart {
     alt_text: Option<String>,
     data_table: Option<WorksheetChartDataTable>,
     series: Vec<WorksheetChartSeries>,
+}
+
+#[derive(Clone, Default)]
+struct WorksheetChartGridlineStyle {
+    color: Option<String>,
+    width: Option<f64>,
+    dash: Option<&'static str>,
+    transparency: Option<u32>,
+}
+
+impl WorksheetChartGridlineStyle {
+    fn is_empty(&self) -> bool {
+        self.color.is_none()
+            && self.width.is_none()
+            && self.dash.is_none()
+            && self.transparency.is_none_or(|value| value == 0)
+    }
 }
 
 #[expect(
