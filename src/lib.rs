@@ -1902,6 +1902,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "xAxisMax",
             "yAxisMin",
             "yAxisMax",
+            "xAxisLogBase",
             "yAxisLogBase",
             "valueAxisDisplayUnit",
             "valueAxisDisplayUnitLabel",
@@ -2247,26 +2248,42 @@ fn validate_chart_axis_bound_pair(
 }
 
 fn validate_chart_axis_log_base(chart: &Node, chart_type: &str) -> Result<()> {
-    let Some(base) = chart.props.get("yAxisLogBase") else {
+    let scatter_chart = chart_type.starts_with("scatter");
+    let has_scatter_x_log_base = chart.props.contains_key("xAxisLogBase");
+    let has_value_axis_log_base = chart.props.contains_key("yAxisLogBase");
+    if !has_scatter_x_log_base && !has_value_axis_log_base {
         return Ok(());
-    };
-    if chart_type.starts_with("scatter") || matches!(chart_type, "pie" | "doughnut") {
+    }
+    if has_scatter_x_log_base && !scatter_chart {
         return Err(Error::Compile(
-            "Chart.yAxisLogBase is not supported for scatter, pie, or doughnut charts because the value axis is ambiguous or absent; use a category/value chart or omit it for a linear axis".into(),
+            "Chart.xAxisLogBase is supported only for scatter charts; omit it or use a scatter chart with two numeric axes".into(),
         ));
     }
-    if !base.as_u64().is_some_and(|base| (2..=1000).contains(&base)) {
+    if matches!(chart_type, "pie" | "doughnut") {
         return Err(Error::Compile(
-            "Chart.yAxisLogBase must be an integer from 2 through 1000; provide a schema-valid base or omit it for a linear axis".into(),
+            "Chart axis log bases are not supported for pie or doughnut charts because they have no axes; omit the log base or use a chart with numeric axes".into(),
         ));
     }
-    for property in ["yAxisMin", "yAxisMax"] {
-        if let Some(bound) = parse_chart_axis_bound(chart, property)?
-            && bound <= 0.0
-        {
+    for (base_property, bound_properties) in [
+        ("xAxisLogBase", ["xAxisMin", "xAxisMax"]),
+        ("yAxisLogBase", ["yAxisMin", "yAxisMax"]),
+    ] {
+        let Some(base) = chart.props.get(base_property) else {
+            continue;
+        };
+        if !base.as_u64().is_some_and(|base| (2..=1000).contains(&base)) {
             return Err(Error::Compile(format!(
-                "logarithmic value axis bounds must be greater than zero; omit {property} or set it to a positive value"
+                "Chart.{base_property} must be an integer from 2 through 1000; provide a schema-valid base or omit it for a linear axis"
             )));
+        }
+        for property in bound_properties {
+            if let Some(bound) = parse_chart_axis_bound(chart, property)?
+                && bound <= 0.0
+            {
+                return Err(Error::Compile(format!(
+                    "logarithmic value axis bounds must be greater than zero; omit {property} or set it to a positive value"
+                )));
+            }
         }
     }
     Ok(())

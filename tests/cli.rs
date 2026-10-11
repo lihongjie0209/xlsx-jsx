@@ -3998,12 +3998,29 @@ fn rejects_non_positive_bounds_on_a_logarithmic_value_axis() {
 }
 
 #[test]
-fn rejects_chart_log_base_for_scatter_with_actionable_guidance() {
+fn validates_independent_scatter_logarithmic_axes() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("scatter-log-base.tsx");
     std::fs::write(
         &input,
-        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" yAxisLogBase={10}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" xAxisLogBase={10} yAxisLogBase={2} xAxisMin={1} xAxisMax={100} yAxisMin={0.1} yAxisMax={1000}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .success();
+}
+
+#[test]
+fn rejects_scatter_x_log_base_on_category_chart_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("category-x-log-base.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2" xAxisLogBase={10}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#,
     )
     .expect("source writes");
     Command::cargo_bin("xlsx-jsx")
@@ -4012,8 +4029,55 @@ fn rejects_chart_log_base_for_scatter_with_actionable_guidance() {
         .arg(input)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("not supported for scatter"))
-        .stderr(predicate::str::contains("use a category/value chart"));
+        .stderr(predicate::str::contains(
+            "Chart.xAxisLogBase is supported only for scatter charts",
+        ))
+        .stderr(predicate::str::contains("use a scatter chart"));
+}
+
+#[test]
+fn reverses_and_rebuilds_external_scatter_logarithmic_axes_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-log-axes.xlsx");
+    let output_path = directory.path().join("external-scatter-log-axes.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart.x_axis().set_log_base(10).set_min(1.0).set_max(100.0);
+    chart.y_axis().set_log_base(2).set_min(0.1).set_max(1000.0);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("xAxisLogBase={10}"), "{source}");
+    assert!(source.contains("yAxisLogBase={2}"), "{source}");
+    assert!(source.contains("xAxisMin={1}"), "{source}");
+    assert!(source.contains("yAxisMin={0.1}"), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-log-axes.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:logBase val=\"10\"/>"), "{xml}");
+    assert!(xml.contains("<c:logBase val=\"2\"/>"), "{xml}");
 }
 
 #[test]

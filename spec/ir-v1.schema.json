@@ -505,6 +505,7 @@
             "yAxisMax": { "type": "number" },
             "xAxisMin": { "type": "number" },
             "xAxisMax": { "type": "number" },
+            "xAxisLogBase": { "type": "integer", "minimum": 2, "maximum": 1000 },
             "yAxisLogBase": { "type": "integer", "minimum": 2, "maximum": 1000 },
             "valueAxisReversed": { "type": "boolean" },
             "categoryAxisLabelInterval": { "type": "integer", "minimum": 1, "maximum": 65535 },
@@ -592,6 +593,7 @@
                     { "required": ["yAxisMax"] },
                     { "required": ["yAxisMajorUnit"] },
                     { "required": ["yAxisMinorUnit"] },
+                    { "required": ["xAxisLogBase"] },
                     { "required": ["yAxisLogBase"] },
                     { "required": ["valueAxisReversed"] },
                     { "required": ["categoryAxisLabelInterval"] },
@@ -642,7 +644,6 @@
                   "anyOf": [
                     { "required": ["xAxisTitle"] },
                     { "required": ["yAxisTitle"] },
-                    { "required": ["yAxisLogBase"] },
                     { "required": ["valueAxisReversed"] },
                     { "required": ["valueAxisDisplayUnit"] },
                     { "required": ["valueAxisDisplayUnitLabel"] },
@@ -656,7 +657,7 @@
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }] } } } }
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }, { "required": ["xAxisLogBase"] }] } } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["pie", "doughnut"] } } }, "required": ["type"] } }, "required": ["props"] },

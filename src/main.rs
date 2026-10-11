@@ -1303,6 +1303,11 @@ fn configure_chart_axis_bounds(chart: &mut Chart, component: &Node) {
 }
 
 fn configure_chart_axis_log_base(chart: &mut Chart, component: &Node) {
+    if let Some(base) = component.props.get("xAxisLogBase").and_then(Value::as_u64) {
+        chart
+            .x_axis()
+            .set_log_base(u16::try_from(base).expect("validated Chart.xAxisLogBase"));
+    }
     let Some(base) = component.props.get("yAxisLogBase").and_then(Value::as_u64) else {
         return;
     };
@@ -4839,6 +4844,10 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
             chart.y_axis_max.map(|value| format!("{{{value}}}")),
         ),
         (
+            "xAxisLogBase",
+            chart.x_axis_log_base.map(|value| format!("{{{value}}}")),
+        ),
+        (
             "yAxisLogBase",
             chart.y_axis_log_base.map(|value| format!("{{{value}}}")),
         ),
@@ -7801,8 +7810,10 @@ fn parse_chart_xml(
     let mut x_axis_max = None;
     let mut y_axis_min = None;
     let mut y_axis_max = None;
+    let mut x_axis_log_base = None;
     let mut y_axis_log_base = None;
     let mut y_axis_log_base_seen = false;
+    let mut scatter_axis_log_bases = Vec::<Option<u16>>::new();
     let mut value_axis_reversed = None;
     let mut value_axis_reversed_seen = false;
     let mut nonstandard_axis_position_seen = false;
@@ -8264,6 +8275,7 @@ fn parse_chart_xml(
                             current_value_axis_index = Some(value_axis_count as usize);
                             value_axis_count += 1;
                             scatter_axis_bounds.push((None, None));
+                            scatter_axis_log_bases.push(None);
                             scatter_axis_positions.push(None);
                         } else if tag == "dateAx" {
                             current_value_axis_index = None;
@@ -9532,11 +9544,9 @@ fn parse_chart_xml(
                                 "chart part `{part}` has logBase outside a primary value axis; repair the axis structure"
                             )));
                         }
-                        if chart_type.is_some_and(|value| {
-                            value.starts_with("scatter") || matches!(value, "pie" | "doughnut")
-                        }) {
+                        if chart_type.is_some_and(|value| matches!(value, "pie" | "doughnut")) {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a logBase for a chart without one unambiguous value axis; remove it or use a category/value chart"
+                                "chart part `{part}` has a logBase on a pie/doughnut chart, which has no value axis; remove logBase"
                             )));
                         }
                         let mut base = None;
@@ -9561,13 +9571,31 @@ fn parse_chart_xml(
                                 "chart part `{part}` has an invalid logarithmic base; use an integer from 2 through 1000"
                             )));
                         };
-                        if y_axis_log_base_seen {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` repeats logBase; keep one logarithmic base on the value axis"
-                            )));
+                        if chart_type.is_some_and(|value| value.starts_with("scatter")) {
+                            let Some(index) = current_value_axis_index else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has scatter logBase outside a tracked value axis; repair the axis structure"
+                                )));
+                            };
+                            let Some(target) = scatter_axis_log_bases.get_mut(index) else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has logBase on an untracked scatter axis; keep exactly two primary value axes"
+                                )));
+                            };
+                            if target.replace(base).is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats logBase on one scatter axis; keep one logarithmic base per axis"
+                                )));
+                            }
+                        } else {
+                            if y_axis_log_base_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats logBase; keep one logarithmic base on the value axis"
+                                )));
+                            }
+                            y_axis_log_base_seen = true;
+                            y_axis_log_base = Some(base);
                         }
-                        y_axis_log_base_seen = true;
-                        y_axis_log_base = Some(base);
                     }
                     "orientation" => {
                         let category_axis_context = stack
@@ -11055,6 +11083,8 @@ fn parse_chart_xml(
         x_axis_max = x_maximum;
         y_axis_min = y_minimum;
         y_axis_max = y_maximum;
+        x_axis_log_base = scatter_axis_log_bases[x_axis_index];
+        y_axis_log_base = scatter_axis_log_bases[y_axis_index];
         if x_axis_min
             .zip(x_axis_max)
             .is_some_and(|(minimum, maximum)| minimum >= maximum)
@@ -11063,6 +11093,16 @@ fn parse_chart_xml(
                 "chart part `{part}` has a scatter X-axis minimum greater than or equal to its maximum; lower xAxisMin or raise xAxisMax"
             )));
         }
+    }
+    if x_axis_log_base.is_some()
+        && x_axis_min
+            .into_iter()
+            .chain(x_axis_max)
+            .any(|bound| bound <= 0.0)
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a non-positive bound on the logarithmic X axis; remove the bound or set it to a positive value"
+        )));
     }
     if y_axis_min
         .zip(y_axis_max)
@@ -11179,6 +11219,7 @@ fn parse_chart_xml(
         y_axis_number_format,
         x_axis_min,
         x_axis_max,
+        x_axis_log_base,
         y_axis_min,
         y_axis_max,
         y_axis_log_base,
@@ -14732,6 +14773,7 @@ struct WorksheetChart {
     y_axis_number_format: Option<String>,
     x_axis_min: Option<f64>,
     x_axis_max: Option<f64>,
+    x_axis_log_base: Option<u16>,
     y_axis_min: Option<f64>,
     y_axis_max: Option<f64>,
     y_axis_log_base: Option<u16>,

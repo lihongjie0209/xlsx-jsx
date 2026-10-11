@@ -242,13 +242,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   Unrelated or malformed extensions fail with repair guidance. The pinned
   Open XML SDK validator currently misreports this valid extension structure;
   see the coverage audit for the narrowly scoped validator limitation.
-- `Chart.yAxisLogBase?: integer` enables a logarithmic value axis with a base
-  from 2 through 1000. Omission leaves the value axis linear. This property is
-  available only when the chart has one unambiguous value axis; scatter, pie,
-  and doughnut charts reject it. On a logarithmic axis any explicit `yAxisMin`
-  or `yAxisMax` must be greater than zero, and series data must contain positive
-  values for Excel to plot it. Reverse preserves `<valAx><scaling><logBase>` and
-  rejects category/date-axis or otherwise ambiguous log scales.
+- `Chart.yAxisLogBase?: integer` enables a logarithmic vertical Y-value axis
+  with a base from 2 through 1000. `Chart.xAxisLogBase?: integer` enables a
+  logarithmic horizontal X-value axis with the same range and is valid only for
+  scatter charts. On ordinary category/value charts, `yAxisLogBase` maps to the
+  value axis (including horizontal bars). On scatter charts, `xAxisLogBase` and
+  `yAxisLogBase` configure the two value axes independently. Omission leaves an
+  axis linear. Bounds on a logarithmic axis must be positive; the chart's data
+  should also contain positive values for Excel to plot it. Reverse maps each
+  `<valAx><scaling><logBase>` by its bottom/left axis position, without a
+  manifest, and rejects logarithmic category/date axes.
 - `Chart.valueAxisReversed?: boolean` reverses the primary value-axis scale
   (`<c:scaling><c:orientation val="maxMin"/>`). Omission or `false` keeps the
   normal minimum-to-maximum direction. It applies to area, column, bar, line,
