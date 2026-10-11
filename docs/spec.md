@@ -233,6 +233,22 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   false flags and the comma separator are omitted. Custom label text, fonts,
   and point-specific labels are not represented and are rejected with repair
   guidance.
+- `ErrorBars` is an optional child of `Series`, with at most one each for the
+  `x` and `y` axes. `axis` is required and selects horizontal (`x`) or vertical
+  (`y`) error bars; X error bars are valid only for scatter and bar charts,
+  while Y error bars are unavailable on bar and pie/doughnut charts because
+  the pinned writer either omits the requested axis or has no matching axis.
+  For column and bar charts, the writer omits `errDir`; reverse infers its
+  unambiguous implicit Y or X axis from the chart type. `type` is `standardError`,
+  `fixedValue`, `percentage`, or `standardDeviation`. The latter three require
+  a finite `value`; fixed values must be greater than zero, while percentage
+  and standard-deviation multipliers may be zero. `standardError` forbids
+  `value`. `direction?: "both" | "minus" | "plus"` defaults to `both`, and
+  `endCap?: boolean` defaults to true. Reverse preserves the writer's
+  `errDir`, `errBarType`, `errValType`, optional `val`, and `noEndCap` values;
+  for writer-defaulted bar/column directions it restores the implicit axis.
+  Custom plus/minus ranges and custom line formatting are not yet represented;
+  external instances using either are rejected instead of being flattened.
 - `Chart.horizontalAxisHidden?: boolean` and `Chart.verticalAxisHidden?: boolean`
   hide the primary axis by physical orientation. For bar charts the horizontal
   axis is the value axis and the vertical axis is the category axis; reversed

@@ -15,6 +15,7 @@ export const TableColumn = host("TableColumn");
 export const Note = host("Note");
 export const Chart = host("Chart");
 export const Series = host("Series");
+export const ErrorBars = host("ErrorBars");
 export const Image = host("Image");
 export const Row = host("Row");
 export const Cell = host("Cell");

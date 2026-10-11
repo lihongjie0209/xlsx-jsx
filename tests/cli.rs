@@ -3,7 +3,8 @@ use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition,
-    ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition, ChartLine, ChartMarker, ChartType,
+    ChartAxisTickType, ChartDataLabel, ChartDataLabelPosition, ChartErrorBars,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartLine, ChartMarker, ChartType,
     Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
@@ -156,6 +157,7 @@ fn spec_exposes_chart_components_and_properties() {
         .stdout(predicate::str::contains("showLeaderLines"))
         .stdout(predicate::str::contains("labelSeparator"))
         .stdout(predicate::str::contains("labelNumberFormat"))
+        .stdout(predicate::str::contains("ErrorBars"))
         .stdout(predicate::str::contains("horizontalAxisHidden"))
         .stdout(predicate::str::contains("verticalAxisHidden"))
         .stdout(predicate::str::contains("yAxisMajorUnit"))
@@ -1641,6 +1643,199 @@ fn rejects_invalid_chart_data_label_number_formats_with_guidance() {
             "Series.labelNumberFormat must contain 1–255 valid XML characters",
         ))
         .stderr(predicate::str::contains("shorten the format code"));
+}
+
+#[test]
+fn reverses_external_scatter_error_bars_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-scatter-error-bars.xlsx");
+    let output_path = directory.path().join("external-scatter-error-bars.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    let mut x_errors = ChartErrorBars::new();
+    x_errors
+        .set_type(ChartErrorBarsType::FixedValue(1.25))
+        .set_direction(ChartErrorBarsDirection::Plus)
+        .set_end_cap(false);
+    let mut y_errors = ChartErrorBars::new();
+    y_errors.set_type(ChartErrorBarsType::StandardError);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_x_error_bars(&x_errors)
+        .set_y_error_bars(&y_errors);
+    let mut deviation_errors = ChartErrorBars::new();
+    deviation_errors
+        .set_type(ChartErrorBarsType::StandardDeviation(1.5))
+        .set_direction(ChartErrorBarsDirection::Minus);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!C2:C4")
+        .set_y_error_bars(&deviation_errors);
+    let mut percentage_errors = ChartErrorBars::new();
+    percentage_errors.set_type(ChartErrorBarsType::Percentage(0.0));
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!D2:D4")
+        .set_y_error_bars(&percentage_errors);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    let mut bar_chart = XlsxChart::new(ChartType::Bar);
+    let mut horizontal_errors = ChartErrorBars::new();
+    horizontal_errors.set_type(ChartErrorBarsType::FixedValue(0.5));
+    bar_chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_x_error_bars(&horizontal_errors);
+    worksheet.insert_chart(18, 5, &bar_chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed JSX exists");
+    assert!(source.contains("<ErrorBars axis=\"x\" type=\"fixedValue\" value={1.25} direction=\"plus\" endCap={false} />"));
+    assert!(source.contains("<ErrorBars axis=\"y\" type=\"standardError\" />"));
+    assert!(source.contains(
+        "<ErrorBars axis=\"y\" type=\"standardDeviation\" value={1.5} direction=\"minus\" />"
+    ));
+    assert!(source.contains("<ErrorBars axis=\"y\" type=\"percentage\" value={0} />"));
+    assert!(source.contains("<ErrorBars axis=\"x\" type=\"fixedValue\" value={0.5} />"));
+
+    let rebuilt_path = directory.path().join("rebuilt-scatter-error-bars.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<c:errDir val=\"x\"/>"));
+    assert!(chart_xml.contains("<c:errBarType val=\"plus\"/>"));
+    assert!(chart_xml.contains("<c:errValType val=\"fixedVal\"/>"));
+    assert!(chart_xml.contains("<c:val val=\"1.25\"/>"));
+    assert!(chart_xml.contains("<c:noEndCap val=\"1\"/>"));
+    assert!(chart_xml.contains("<c:errDir val=\"y\"/>"));
+    assert!(chart_xml.contains("<c:errValType val=\"stdErr\"/>"));
+    assert!(chart_xml.contains("<c:errValType val=\"stdDev\"/>"));
+    assert!(chart_xml.contains("<c:val val=\"1.5\"/>"));
+    assert!(chart_xml.contains("<c:errValType val=\"percentage\"/>"));
+    assert!(chart_xml.contains("<c:val val=\"0\"/>"));
+    let bar_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart2.xml");
+    assert!(bar_xml.contains("<c:errBars>"));
+    assert!(bar_xml.contains("<c:errValType val=\"fixedVal\"/>"));
+    assert!(bar_xml.contains("<c:val val=\"0.5\"/>"));
+}
+
+#[test]
+fn rejects_invalid_chart_error_bar_values_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-error-bars.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ErrorBars } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><ErrorBars axis="y" type="fixedValue" value={0} /></Series></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "ErrorBars.value for type=\"fixedValue\" must be greater than zero",
+        ))
+        .stderr(predicate::str::contains("adjust the value"));
+}
+
+#[test]
+fn rejects_x_error_bars_on_unsupported_chart_types_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("unsupported-x-chart-error-bars.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series, ErrorBars } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4"><ErrorBars axis="x" type="standardError" /></Series></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "X ErrorBars are supported only for scatter and bar charts",
+        ))
+        .stderr(predicate::str::contains("use axis=\"y\""));
+}
+
+#[test]
+fn reverse_rejects_custom_chart_error_bar_ranges_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("scalar-error-bars.xlsx");
+    let mutated = directory.path().join("custom-error-bars.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    let mut errors = ChartErrorBars::new();
+    errors.set_type(ChartErrorBarsType::FixedValue(1.0));
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4")
+        .set_y_error_bars(&errors);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&input).unwrap();
+
+    let mut archive = ZipArchive::new(std::fs::File::open(&input).unwrap()).unwrap();
+    let mut writer = ZipWriter::new(std::fs::File::create(&mutated).unwrap());
+    let mut changed = false;
+    for index in 0..archive.len() {
+        let mut part = archive.by_index(index).unwrap();
+        let name = part.name().to_owned();
+        let mut bytes = Vec::new();
+        part.read_to_end(&mut bytes).unwrap();
+        if name == "xl/charts/chart1.xml" {
+            let xml = String::from_utf8(bytes).unwrap();
+            assert!(xml.contains("<c:errValType val=\"fixedVal\"/>"));
+            bytes = xml
+                .replace(
+                    "<c:errValType val=\"fixedVal\"/>",
+                    "<c:errValType val=\"cust\"/>",
+                )
+                .into_bytes();
+            changed = true;
+        }
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .unwrap();
+        writer.write_all(&bytes).unwrap();
+    }
+    assert!(changed, "the chart part was found");
+    writer.finish().unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&mutated)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("custom error bars"))
+        .stderr(predicate::str::contains(
+            "custom plus/minus ranges are not represented",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
 }
 
 #[test]

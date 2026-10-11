@@ -2509,9 +2509,9 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
     for (series_index, value) in chart.children.iter().enumerate() {
         let series: Node = serde_json::from_value(value.clone())
             .map_err(|error| Error::Compile(error.to_string()))?;
-        if series.r#type != "Series" || !series.children.is_empty() {
+        if series.r#type != "Series" {
             return Err(Error::Compile(format!(
-                "Chart child {} must be an empty Series component",
+                "Chart child {} must be a Series component",
                 series_index + 1
             )));
         }
@@ -2534,7 +2534,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
             ],
             "Series",
         )?;
-        validate_series_data_label_props(chart, &series)?;
+        validate_chart_series_properties(chart, &series, series_index)?;
         let values = series
             .props
             .get("values")
@@ -2599,6 +2599,152 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 )));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_chart_series_properties(
+    chart: &Node,
+    series: &Node,
+    series_index: usize,
+) -> Result<()> {
+    validate_series_data_label_props(chart, series)?;
+    validate_chart_series_error_bars(chart, series, series_index)
+}
+
+fn validate_chart_series_error_bars(
+    chart: &Node,
+    series: &Node,
+    series_index: usize,
+) -> Result<()> {
+    let chart_type = chart
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut x_axis_seen = false;
+    let mut y_axis_seen = false;
+    for (error_index, value) in series.children.iter().enumerate() {
+        let error_bars: Node = serde_json::from_value(value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if error_bars.r#type != "ErrorBars" || !error_bars.children.is_empty() {
+            return Err(Error::Compile(format!(
+                "Series {} child {} must be an empty ErrorBars component",
+                series_index + 1,
+                error_index + 1
+            )));
+        }
+        reject_unknown_props(
+            &error_bars,
+            &["axis", "type", "value", "direction", "endCap"],
+            "ErrorBars",
+        )?;
+        let axis = error_bars
+            .props
+            .get("axis")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                Error::Compile(
+                    "ErrorBars.axis is required; use `x` for horizontal or `y` for vertical error bars".into(),
+                )
+            })?;
+        let seen = match axis {
+            "x" => &mut x_axis_seen,
+            "y" => &mut y_axis_seen,
+            _ => {
+                return Err(Error::Compile(format!(
+                    "ErrorBars.axis `{axis}` is unsupported; use `x` or `y`"
+                )));
+            }
+        };
+        if *seen {
+            return Err(Error::Compile(format!(
+                "Series {} has more than one {axis}-axis ErrorBars component; keep at most one per axis",
+                series_index + 1
+            )));
+        }
+        *seen = true;
+        if axis == "x" && !(chart_type.starts_with("scatter") || chart_type.starts_with("bar")) {
+            return Err(Error::Compile(format!(
+                "X ErrorBars are supported only for scatter and bar charts, not `{chart_type}`; use axis=\"y\" or choose a supported chart type"
+            )));
+        }
+        if axis == "y"
+            && (chart_type.starts_with("bar") || matches!(chart_type, "pie" | "doughnut"))
+        {
+            return Err(Error::Compile(format!(
+                "Y ErrorBars are not supported for `{chart_type}` charts; use axis=\"x\" for bar charts or choose an area, column, line, radar, scatter, or stock chart"
+            )));
+        }
+        validate_chart_error_bar_amount(&error_bars)?;
+        if let Some(direction) = error_bars.props.get("direction")
+            && !matches!(direction.as_str(), Some("both" | "minus" | "plus"))
+        {
+            return Err(Error::Compile(
+                "ErrorBars.direction must be both, minus, or plus; choose one of those values"
+                    .into(),
+            ));
+        }
+        if let Some(end_cap) = error_bars.props.get("endCap")
+            && !end_cap.is_boolean()
+        {
+            return Err(Error::Compile(
+                "ErrorBars.endCap must be a boolean; use true/false or omit it for the default cap"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_error_bar_amount(error_bars: &Node) -> Result<()> {
+    let error_type = error_bars
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile(
+                "ErrorBars.type is required; use standardError, fixedValue, percentage, or standardDeviation".into(),
+            )
+        })?;
+    let value = error_bars.props.get("value");
+    if error_type == "standardError" {
+        if value.is_some() {
+            return Err(Error::Compile(
+                "ErrorBars.value is not valid with type=\"standardError\"; remove value or choose fixedValue, percentage, or standardDeviation".into(),
+            ));
+        }
+    } else if matches!(
+        error_type,
+        "fixedValue" | "percentage" | "standardDeviation"
+    ) {
+        let Some(value) = value
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+        else {
+            return Err(Error::Compile(format!(
+                "ErrorBars.value is required for type=\"{error_type}\" and must be finite; provide a number"
+            )));
+        };
+        let constraint = if error_type == "fixedValue" {
+            value > 0.0
+        } else {
+            value >= 0.0
+        };
+        if !constraint {
+            let requirement = if error_type == "fixedValue" {
+                "greater than zero"
+            } else {
+                "zero or greater"
+            };
+            return Err(Error::Compile(format!(
+                "ErrorBars.value for type=\"{error_type}\" must be {requirement}; adjust the value"
+            )));
+        }
+    } else {
+        return Err(Error::Compile(format!(
+            "ErrorBars.type `{error_type}` is unsupported; use standardError, fixedValue, percentage, or standardDeviation"
+        )));
     }
     Ok(())
 }

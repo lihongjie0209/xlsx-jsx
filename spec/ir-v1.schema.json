@@ -685,7 +685,11 @@
           },
           "additionalProperties": false
         },
-        "children": { "type": "array", "maxItems": 0 }
+        "children": {
+          "type": "array",
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/chartErrorBars" }
+        }
       },
       "allOf": [
         {
@@ -695,6 +699,37 @@
             },
             "required": ["props"]
           }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "chartErrorBars": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "ErrorBars" },
+        "props": {
+          "type": "object",
+          "required": ["axis", "type"],
+          "properties": {
+            "axis": { "enum": ["x", "y"] },
+            "type": { "enum": ["standardError", "fixedValue", "percentage", "standardDeviation"] },
+            "value": { "type": "number" },
+            "direction": { "enum": ["both", "minus", "plus"] },
+            "endCap": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "props": { "properties": { "type": { "const": "standardError" } }, "required": ["type"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "not": { "required": ["value"] } } } }
+        },
+        {
+          "if": { "properties": { "props": { "properties": { "type": { "enum": ["fixedValue", "percentage", "standardDeviation"] } }, "required": ["type"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "required": ["value"] } } }
         }
       ],
       "additionalProperties": false

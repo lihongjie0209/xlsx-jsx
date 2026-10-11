@@ -1,4 +1,4 @@
-import { Workbook, Worksheet, Row, Cell, Chart, Series } from "xlsx-jsx";
+import { Workbook, Worksheet, Row, Cell, Chart, Series, ErrorBars } from "xlsx-jsx";
 
 export default <Workbook>
   <Worksheet name="Data">
@@ -9,14 +9,18 @@ export default <Workbook>
   </Worksheet>
   <Worksheet name="Sales">
     <Chart type="column" cell="D2" width={480} height={288} name="Revenue and expenses" title="Monthly revenue &amp; expenses — 2026" xAxisTitle="Month" yAxisTitle="Revenue ($)" yAxisNumberFormat="$#,##0.00" yAxisMin={0} yAxisMax={20} yAxisMajorUnit={5} yAxisMinorUnit={1} categoryAxisLabelAlignment="left" categoryAxisOnTickMarks={true} style={7} xAxisCrossing="max" yAxisCrossing="min" horizontalAxisHidden={true} horizontalAxisMinorGridlines={true} verticalAxisMajorGridlines={false} horizontalAxisMajorTickType="none" verticalAxisMajorTickType="outside" horizontalAxisLabelPosition="high" verticalAxisLabelPosition="low" legendPosition="bottom" altText="Monthly revenue compared with expenses">
-      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" showValue={true} showCategoryName={true} labelPosition="insideEnd" labelNumberFormat="$#,##0.00" />
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" showValue={true} showCategoryName={true} labelPosition="insideEnd" labelNumberFormat="$#,##0.00">
+        <ErrorBars axis="y" type="standardError" />
+      </Series>
       <Series values="Data!$C$2:$C$4" categories="Data!$A$2:$A$4" title="Expenses &amp; travel" />
     </Chart>
     <Chart type="line" cell="K2" width={480} height={288} showLegend={false} valueAxisReversed={true} categoryAxisLabelInterval={2} categoryAxisTickInterval={2}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" showValue={true} showLegendKey={true} showLeaderLines={true} labelSeparator="semicolon" />
     </Chart>
     <Chart type="bar" cell="D20" width={480} height={288} verticalAxisHidden={true}>
-      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" />
+      <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1">
+        <ErrorBars axis="x" type="standardError" />
+      </Series>
     </Chart>
     <Chart type="pie" cell="K20" width={480} height={288} firstSliceAngle={210}>
       <Series values="Data!$B$2:$B$4" categories="Data!$A$2:$A$4" name="Data!$B$1" showPercentage={true} />

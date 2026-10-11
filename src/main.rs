@@ -12,8 +12,9 @@ use quick_xml::{
 };
 use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType,
-    ChartDataLabel, ChartDataLabelPosition, ChartLegendPosition, ChartLine, ChartMarker, ChartType,
-    Color, ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
+    ChartDataLabel, ChartDataLabelPosition, ChartErrorBars, ChartErrorBarsDirection,
+    ChartErrorBarsType, ChartLegendPosition, ChartLine, ChartMarker, ChartType, Color,
+    ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
     ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
     ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
     ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
@@ -780,6 +781,7 @@ fn compile_chart(
             chart_series.set_name(title);
         }
         configure_chart_series_data_labels(chart_series, &series);
+        configure_chart_series_error_bars(chart_series, &series)?;
         if component.props.get("type").and_then(Value::as_str) == Some("stock") {
             chart_series
                 .set_format(ChartLine::new().set_hidden(true))
@@ -790,6 +792,51 @@ fn compile_chart(
         .insert_chart(row, column, &chart)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+}
+
+fn configure_chart_series_error_bars(
+    chart_series: &mut rust_xlsxwriter::ChartSeries,
+    series: &Node,
+) -> xlsx_jsx::Result<()> {
+    for child in &series.children {
+        let error_bars: Node = serde_json::from_value(child.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        let axis = error_bars.props["axis"].as_str().expect("validated axis");
+        let error_type = error_bars.props["type"].as_str().expect("validated type");
+        let value = error_bars.props.get("value").and_then(Value::as_f64);
+        let mut settings = ChartErrorBars::new();
+        let error_type = match error_type {
+            "standardError" => ChartErrorBarsType::StandardError,
+            "fixedValue" => ChartErrorBarsType::FixedValue(value.expect("validated value")),
+            "percentage" => ChartErrorBarsType::Percentage(value.expect("validated value")),
+            "standardDeviation" => {
+                ChartErrorBarsType::StandardDeviation(value.expect("validated value"))
+            }
+            _ => unreachable!("validated error-bar type"),
+        };
+        settings.set_type(error_type);
+        if let Some(direction) = error_bars.props.get("direction").and_then(Value::as_str) {
+            settings.set_direction(match direction {
+                "both" => ChartErrorBarsDirection::Both,
+                "minus" => ChartErrorBarsDirection::Minus,
+                "plus" => ChartErrorBarsDirection::Plus,
+                _ => unreachable!("validated error-bar direction"),
+            });
+        }
+        if error_bars.props.get("endCap").and_then(Value::as_bool) == Some(false) {
+            settings.set_end_cap(false);
+        }
+        match axis {
+            "x" => {
+                chart_series.set_x_error_bars(&settings);
+            }
+            "y" => {
+                chart_series.set_y_error_bars(&settings);
+            }
+            _ => unreachable!("validated error-bar axis"),
+        }
+    }
+    Ok(())
 }
 
 fn configure_chart_series_data_labels(
@@ -3455,7 +3502,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         open_workbook_auto(path).map_err(|error| Error::Reverse(error.to_string()))?;
     let sheet_names = workbook.sheet_names().clone();
     let mut output = String::from(
-        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Image, Chart, Series, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
+        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Image, Chart, Series, ErrorBars, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
     for (name, value) in [
         ("title", workbook_properties.title.as_deref()),
@@ -4024,7 +4071,28 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(number_format) = &series.label_number_format {
             let _ = write!(output, " labelNumberFormat={number_format:?}");
         }
-        output.push_str(" />\n");
+        if series.error_bars.is_empty() {
+            output.push_str(" />\n");
+        } else {
+            output.push_str(">\n");
+            for error_bar in &series.error_bars {
+                output.push_str("        <ErrorBars");
+                let axis = error_bar.axis.expect("validated error-bar axis");
+                let error_type = error_bar.error_type.expect("validated error-bar type");
+                let _ = write!(output, " axis=\"{axis}\" type=\"{error_type}\"");
+                if let Some(value) = error_bar.value {
+                    let _ = write!(output, " value={{{value}}}");
+                }
+                if let Some(direction) = error_bar.direction {
+                    let _ = write!(output, " direction=\"{direction}\"");
+                }
+                if error_bar.end_cap == Some(false) {
+                    output.push_str(" endCap={false}");
+                }
+                output.push_str(" />\n");
+            }
+            output.push_str("      </Series>\n");
+        }
     }
     output.push_str("    </Chart>\n");
 }
@@ -6918,6 +6986,13 @@ fn parse_chart_xml(
         "showLeaderLines",
         "separator",
         "numFmt",
+        "errBars",
+        "errDir",
+        "errBarType",
+        "errValType",
+        "noEndCap",
+        "plus",
+        "minus",
         "extLst",
         "ext",
         "style",
@@ -6931,6 +7006,7 @@ fn parse_chart_xml(
     let mut stock_high_low_lines = false;
     let mut stock_up_down_bars = false;
     let mut series = Vec::<WorksheetChartSeries>::new();
+    let mut current_error_bar: Option<usize> = None;
     let mut formula_target: Option<&'static str> = None;
     let mut title_source_open = false;
     let mut category_source_open = false;
@@ -7054,6 +7130,31 @@ fn parse_chart_xml(
                 if !allowed_tags.contains(&tag.as_str()) {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` contains unsupported `<{tag}>` semantics; remove chart titles/formatting or add matching Chart properties and reverse support"
+                    )));
+                }
+                let in_error_bars = stack.iter().any(|ancestor| ancestor == "errBars");
+                if in_error_bars
+                    && !matches!(
+                        tag.as_str(),
+                        "errDir" | "errBarType" | "errValType" | "noEndCap" | "val"
+                    )
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported `<{tag}>` error-bar content; custom plus/minus ranges and line formatting are not represented, so use a standard scalar error-bar type without custom formatting"
+                    )));
+                }
+                if matches!(
+                    tag.as_str(),
+                    "errDir" | "errBarType" | "errValType" | "noEndCap"
+                ) && !in_error_bars
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has {tag} outside an errBars group; repair the error-bar structure"
+                    )));
+                }
+                if matches!(tag.as_str(), "plus" | "minus") && !in_error_bars {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has {tag} outside an errBars group; custom error-bar values must be attached to one supported series error-bar group"
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "dLbls")
@@ -8226,7 +8327,106 @@ fn parse_chart_xml(
                         data_labels_seen: false,
                         data_label_position_seen: false,
                         label_separator_seen: false,
+                        error_bars: Vec::new(),
                     }),
+                    "errBars" => {
+                        if stack.last().is_none_or(|parent| parent != "ser") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has errBars outside a data series; move the error bars into a Series"
+                            )));
+                        }
+                        let Some(current) = series.last_mut() else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has error bars without a data series"
+                            )));
+                        };
+                        current.error_bars.push(WorksheetChartErrorBars::default());
+                        current_error_bar = Some(current.error_bars.len() - 1);
+                    }
+                    "errDir" | "errBarType" | "errValType" | "noEndCap" | "val"
+                        if stack.last().is_some_and(|parent| parent == "errBars") =>
+                    {
+                        let Some(error_bar) = current_error_bar
+                            .and_then(|index| series.last_mut()?.error_bars.get_mut(index))
+                        else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has an error-bar property outside errBars; repair the chart structure"
+                            )));
+                        };
+                        let raw_value = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            tag.as_str(),
+                        )?;
+                        match tag.as_str() {
+                            "errDir" => {
+                                let parsed = match raw_value.as_str() {
+                                    "x" => "x",
+                                    "y" => "y",
+                                    _ => unreachable!("audit validates error-bar direction"),
+                                };
+                                if error_bar.axis.replace(parsed).is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats errDir in one error-bar group; keep one axis declaration"
+                                    )));
+                                }
+                            }
+                            "errBarType" => {
+                                let parsed = match raw_value.as_str() {
+                                    "both" => "both",
+                                    "minus" => "minus",
+                                    "plus" => "plus",
+                                    _ => unreachable!("audit validates error-bar direction"),
+                                };
+                                if error_bar.direction.replace(parsed).is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats errBarType; keep one error-bar direction"
+                                    )));
+                                }
+                            }
+                            "errValType" => {
+                                let parsed = match raw_value.as_str() {
+                                    "stdErr" => "standardError",
+                                    "fixedVal" => "fixedValue",
+                                    "percentage" => "percentage",
+                                    "stdDev" => "standardDeviation",
+                                    _ => {
+                                        return Err(Error::Reverse(format!(
+                                            "chart part `{part}` uses custom error bars; custom plus/minus ranges are not represented, so use a standard error-bar type"
+                                        )));
+                                    }
+                                };
+                                if error_bar.error_type.replace(parsed).is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats errValType; keep one error-bar amount type"
+                                    )));
+                                }
+                            }
+                            "noEndCap" => {
+                                let disabled = parse_xml_bool(&raw_value, part, "noEndCap")?;
+                                if error_bar.end_cap.replace(!disabled).is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats noEndCap; keep one end-cap setting"
+                                    )));
+                                }
+                            }
+                            "val" => {
+                                let value = raw_value.parse::<f64>().ok().filter(|v| v.is_finite());
+                                let Some(value) = value else {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has a missing or non-finite error-bar val; provide a finite value"
+                                    )));
+                                };
+                                if error_bar.value.replace(value).is_some() {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` repeats the error-bar val; keep one numeric amount"
+                                    )));
+                                }
+                            }
+                            _ => unreachable!("error-bar child tag was matched"),
+                        }
+                    }
                     "dLbls" => {
                         if stack.last().is_none_or(|ancestor| ancestor != "ser") {
                             return Err(Error::Reverse(format!(
@@ -8725,6 +8925,9 @@ fn parse_chart_xml(
                         "chart part `{part}` has a series without a value range; add a valid c:val/c:numRef/c:f source"
                     )));
                 }
+                if tag == "errBars" {
+                    current_error_bar = None;
+                }
                 stack.pop();
             }
             Ok(Event::Eof) => break,
@@ -8753,6 +8956,7 @@ fn parse_chart_xml(
             "chart part `{part}` contains no data series; add at least one series"
         )));
     }
+    validate_reversed_chart_error_bars(chart_type, &mut series, part)?;
     for item in &mut series {
         if item.label_position.as_deref() == chart_default_data_label_position(chart_type) {
             item.label_position = None;
@@ -9527,6 +9731,122 @@ fn audit_chart_attributes(
     Ok(())
 }
 
+fn chart_element_val_attribute(
+    event: &BytesStart<'_>,
+    part: &str,
+    decoder: quick_xml::encoding::Decoder,
+    tag: &str,
+) -> xlsx_jsx::Result<String> {
+    event
+        .attributes()
+        .with_checks(false)
+        .filter_map(Result::ok)
+        .find(|attribute| attribute.key.local_name().as_ref() == b"val")
+        .and_then(|attribute| {
+            attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+                .ok()
+                .map(std::borrow::Cow::into_owned)
+        })
+        .ok_or_else(|| {
+            Error::Reverse(format!(
+                "chart part `{part}` has {tag} without val; add the explicit OOXML value"
+            ))
+        })
+}
+
+fn validate_reversed_chart_error_bars(
+    chart_type: &str,
+    series: &mut [WorksheetChartSeries],
+    part: &str,
+) -> xlsx_jsx::Result<()> {
+    for item in series {
+        let mut x_axis_seen = false;
+        let mut y_axis_seen = false;
+        for error_bar in &mut item.error_bars {
+            let axis = match error_bar.axis {
+                Some(axis) => axis,
+                None if chart_type.starts_with("bar") => {
+                    error_bar.axis = Some("x");
+                    "x"
+                }
+                None if chart_type.starts_with("column") => {
+                    error_bar.axis = Some("y");
+                    "y"
+                }
+                None => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has errBars without errDir on `{chart_type}`; add an explicit x or y axis"
+                    )));
+                }
+            };
+            let seen = match axis {
+                "x" => &mut x_axis_seen,
+                "y" => &mut y_axis_seen,
+                _ => unreachable!("error-bar axes are validated while parsing"),
+            };
+            if *seen {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats {axis}-axis error bars in one series; retain at most one error-bar group per axis"
+                )));
+            }
+            *seen = true;
+            if axis == "x" && !(chart_type.starts_with("scatter") || chart_type.starts_with("bar"))
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has X error bars on unsupported chart type `{chart_type}`; use X error bars only on scatter or bar charts"
+                )));
+            }
+            if axis == "y"
+                && (chart_type.starts_with("bar") || matches!(chart_type, "pie" | "doughnut"))
+            {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has Y error bars on unsupported chart type `{chart_type}`; use Y error bars on area, column, line, radar, scatter, or stock charts"
+                )));
+            }
+            let error_type = error_bar.error_type.ok_or_else(|| {
+                Error::Reverse(format!(
+                    "chart part `{part}` has errBars without errValType; specify a supported error-bar type"
+                ))
+            })?;
+            if error_bar.direction.is_none() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has errBars without errBarType; specify both, minus, or plus"
+                )));
+            }
+            match (error_type, error_bar.value) {
+                ("standardError", None) => {}
+                ("standardError", Some(_)) => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` combines standard error bars with a numeric val; remove val or use a fixed, percentage, or standard-deviation type"
+                    )));
+                }
+                ("fixedValue", Some(value)) if value.is_finite() && value > 0.0 => {}
+                ("percentage" | "standardDeviation", Some(value))
+                    if value.is_finite() && value >= 0.0 => {}
+                ("fixedValue" | "percentage" | "standardDeviation", None) => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has a numeric error-bar type without val; provide a finite amount"
+                    )));
+                }
+                ("fixedValue" | "percentage" | "standardDeviation", Some(_)) => {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has an invalid error-bar amount; fixed values must be > 0 and percentages/deviations must be >= 0"
+                    )));
+                }
+                _ => unreachable!("error-bar types are validated while parsing"),
+            }
+            if error_bar.direction == Some("both") {
+                error_bar.direction = None;
+            }
+            if error_bar.end_cap == Some(true) {
+                error_bar.end_cap = None;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn is_supported_chart_attribute(
     tag: &str,
     key: &str,
@@ -9568,7 +9888,7 @@ fn is_supported_chart_attribute(
         ("logBase", "val") => value
             .parse::<u16>()
             .is_ok_and(|base| (2..=1000).contains(&base)),
-        ("min" | "max", "val") => value.parse::<f64>().is_ok_and(f64::is_finite),
+        ("min" | "max" | "val", "val") => value.parse::<f64>().is_ok_and(f64::is_finite),
         ("majorUnit" | "minorUnit", "val") => value
             .parse::<f64>()
             .is_ok_and(|unit| unit.is_finite() && unit > 0.0),
@@ -9621,10 +9941,28 @@ fn is_supported_chart_attribute(
             matches!(chart_type, Some("pie" | "doughnut"))
                 && value.parse::<u16>().is_ok_and(|angle| angle <= 360)
         }
+        ("errDir" | "errBarType" | "errValType" | "noEndCap", "val") => {
+            is_supported_error_bar_attribute(tag, value)
+        }
         ("pPr", "rtl") => value == "0",
         ("pageMargins", "b" | "t") => value == "0.75",
         ("pageMargins", "l" | "r") => value == "0.7",
         ("pageMargins", "header" | "footer") => value == "0.3",
+        _ => false,
+    }
+}
+
+fn is_supported_error_bar_attribute(tag: &str, value: &str) -> bool {
+    match tag {
+        "errDir" => matches!(value, "x" | "y"),
+        "errBarType" => matches!(value, "both" | "minus" | "plus"),
+        "errValType" => {
+            matches!(
+                value,
+                "stdErr" | "fixedVal" | "percentage" | "stdDev" | "cust"
+            )
+        }
+        "noEndCap" => matches!(value, "0" | "1" | "false" | "true"),
         _ => false,
     }
 }
@@ -12223,6 +12561,16 @@ struct WorksheetChartSeries {
     data_labels_seen: bool,
     data_label_position_seen: bool,
     label_separator_seen: bool,
+    error_bars: Vec<WorksheetChartErrorBars>,
+}
+
+#[derive(Clone, Default)]
+struct WorksheetChartErrorBars {
+    axis: Option<&'static str>,
+    error_type: Option<&'static str>,
+    value: Option<f64>,
+    direction: Option<&'static str>,
+    end_cap: Option<bool>,
 }
 
 #[derive(Clone)]
