@@ -4038,6 +4038,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "lineTransparency",
                 "lineHidden",
                 "pointColors",
+                "pointColorTransparencies",
                 "gap",
                 "overlap",
             ],
@@ -4256,6 +4257,7 @@ fn validate_chart_series_properties(
     validate_chart_series_marker(chart, series, series_index)?;
     validate_chart_series_line(chart, series, series_index)?;
     validate_chart_series_point_colors(series)?;
+    validate_chart_series_point_color_transparencies(series)?;
     validate_chart_series_trendline(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
 }
@@ -4741,6 +4743,52 @@ fn validate_chart_series_point_colors(series: &Node) -> Result<()> {
             "Series.pointColors index {max_index} exceeds the Series.values point count {point_count}; use an index from 0 through {}",
             point_count.saturating_sub(1)
         )));
+    }
+    Ok(())
+}
+
+fn validate_chart_series_point_color_transparencies(series: &Node) -> Result<()> {
+    let Some(value) = series.props.get("pointColorTransparencies") else {
+        return Ok(());
+    };
+    let Some(transparencies) = value.as_object() else {
+        return Err(Error::Compile("Series.pointColorTransparencies must be an object keyed by zero-based point indices; use {3: 25} with a matching pointColors entry".into()));
+    };
+    let Some(colors) = series.props.get("pointColors").and_then(Value::as_object) else {
+        return Err(Error::Compile("Series.pointColorTransparencies requires pointColors; add matching pointColors entries or remove pointColorTransparencies".into()));
+    };
+    let point_count = series
+        .props
+        .get("values")
+        .and_then(Value::as_str)
+        .and_then(|formula| formula.split_once('!'))
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length);
+    for (index, value) in transparencies {
+        let parsed_index = index
+            .parse::<usize>()
+            .ok()
+            .filter(|parsed| *parsed <= 1_048_575 && parsed.to_string() == *index)
+            .ok_or_else(|| Error::Compile(format!(
+                "Series.pointColorTransparencies key `{index}` must be a canonical zero-based point index from 0 through 1,048,575"
+            )))?;
+        if value.as_u64().is_none_or(|transparency| transparency > 100) {
+            return Err(Error::Compile(format!(
+                "Series.pointColorTransparencies[{index}] must be an integer from 0 through 100; use whole-percent transparency"
+            )));
+        }
+        if !colors.contains_key(index) {
+            return Err(Error::Compile(format!(
+                "Series.pointColorTransparencies[{index}] has no matching pointColors entry; add pointColors[{index}] or remove the transparency"
+            )));
+        }
+        if point_count
+            .is_some_and(|count| u32::try_from(parsed_index).is_ok_and(|index| index >= count))
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointColorTransparencies index {index} exceeds the Series.values point count; choose an index within the value range"
+            )));
+        }
     }
     Ok(())
 }
@@ -9647,6 +9695,45 @@ mod tests {
 
         let validation = input.validate();
         assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_chart_point_color_transparency_for_existing_color_indices() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B4",
+                    "pointColors":{"0":"#FF0000","3":"#336699"},
+                    "pointColorTransparencies":{"3":25}
+                },"children":[]}]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn rejects_chart_point_color_transparency_without_matching_color() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B4",
+                    "pointColors":{"0":"#FF0000"},
+                    "pointColorTransparencies":{"2":25}
+                },"children":[]}]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("point transparency needs a color for the same point");
+        assert!(error.to_string().contains("pointColors[2]"), "{error}");
+        assert!(error.to_string().contains("add"), "{error}");
     }
 
     #[test]

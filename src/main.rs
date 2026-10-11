@@ -1757,10 +1757,26 @@ fn configure_chart_series_point_colors(
         return;
     };
     let mut points = vec![ChartPoint::new(); max_index + 1];
+    let transparencies = series
+        .props
+        .get("pointColorTransparencies")
+        .and_then(Value::as_object);
     for (index, color) in colors {
         let index = index.parse::<usize>().expect("validated point color index");
         let color = color.as_str().expect("validated point color");
-        points[index] = ChartPoint::new().set_format(ChartSolidFill::new().set_color(color));
+        let mut fill = ChartSolidFill::new();
+        fill.set_color(color);
+        if let Some(transparency) = transparencies
+            .and_then(|values| values.get(&index.to_string()))
+            .and_then(Value::as_u64)
+        {
+            fill.set_transparency(
+                u8::try_from(transparency).expect("validated point color transparency"),
+            );
+        }
+        let mut format = ChartFormat::new();
+        format.set_solid_fill(&fill);
+        points[index] = ChartPoint::new().set_format(&mut format);
     }
     chart_series.set_points(&points);
 }
@@ -6011,6 +6027,18 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             }
             output.push_str("}}");
         }
+        if !series.point_color_transparencies.is_empty() {
+            output.push_str(" pointColorTransparencies={{");
+            for (index, (point, transparency)) in
+                series.point_color_transparencies.iter().enumerate()
+            {
+                if index > 0 {
+                    output.push_str(", ");
+                }
+                let _ = write!(output, "{point}: {transparency}");
+            }
+            output.push_str("}}");
+        }
         if let Some(smooth) = series.smooth {
             let _ = write!(output, " smooth={{{smooth}}}");
         }
@@ -9739,6 +9767,7 @@ fn parse_chart_xml(
     let mut current_error_bar: Option<usize> = None;
     let mut point_index: Option<usize> = None;
     let mut point_color: Option<String> = None;
+    let mut point_transparency: Option<u32> = None;
     let mut formula_target: Option<&'static str> = None;
     let mut title_source_open = false;
     let mut category_source_open = false;
@@ -10914,7 +10943,7 @@ fn parse_chart_xml(
                 if stack.iter().any(|ancestor| ancestor == "dPt")
                     && !matches!(
                         tag.as_str(),
-                        "idx" | "spPr" | "solidFill" | "srgbClr" | "marker"
+                        "idx" | "spPr" | "solidFill" | "srgbClr" | "alpha" | "marker"
                     )
                 {
                     return Err(Error::Reverse(format!(
@@ -11308,6 +11337,7 @@ fn parse_chart_xml(
                         }
                         point_index = None;
                         point_color = None;
+                        point_transparency = None;
                     }
                     "idx" if stack.last().is_some_and(|parent| parent == "dPt") => {
                         let raw =
@@ -13176,6 +13206,7 @@ fn parse_chart_xml(
                         line_dash: None,
                         line_transparency: None,
                         point_colors: BTreeMap::new(),
+                        point_color_transparencies: BTreeMap::new(),
                         custom_labels: BTreeMap::new(),
                         pending_custom_label_index: None,
                         trendline: None,
@@ -14880,6 +14911,30 @@ fn parse_chart_xml(
                     }
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|item| item == "dPt")
+                            && stack.iter().any(|item| item == "spPr")
+                            && !stack.iter().any(|item| item == "ln") =>
+                    {
+                        let alpha = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "data-point fill alpha",
+                        )?
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|alpha| *alpha <= 100_000 && alpha % 1000 == 0)
+                        .ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has data-point fill alpha not exactly representable by whole-percent transparency; use increments of 1%"
+                        )))?;
+                        if point_transparency.replace(100 - alpha / 1000).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats data-point fill transparency; keep one alpha value"
+                            )));
+                        }
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|item| item == "marker")
                             && !stack.iter().any(|item| item == "ln")
                             && !stack.iter().any(|item| item == "dPt") =>
@@ -15696,6 +15751,7 @@ fn parse_chart_xml(
                 if tag == "dPt" {
                     let index = point_index.take().ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a data point without an index; add `<c:idx val=.../>`")))?;
                     let color = point_color.take().ok_or_else(|| Error::Reverse(format!("chart part `{part}` has unsupported point formatting; add one opaque RGB solid fill")))?;
+                    let transparency = point_transparency.take();
                     let current = series.last_mut().ok_or_else(|| {
                         Error::Reverse(format!(
                             "chart part `{part}` has a data point without a series"
@@ -15704,6 +15760,16 @@ fn parse_chart_xml(
                     if current.point_colors.insert(index, color).is_some() {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` repeats data-point index {index}; retain one color per point"
+                        )));
+                    }
+                    if let Some(transparency) = transparency
+                        && current
+                            .point_color_transparencies
+                            .insert(index, transparency)
+                            .is_some()
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats transparency for data-point index {index}; retain one alpha value"
                         )));
                     }
                 }
@@ -21015,6 +21081,7 @@ struct WorksheetChartSeries {
     line_dash: Option<&'static str>,
     line_transparency: Option<u32>,
     point_colors: BTreeMap<usize, String>,
+    point_color_transparencies: BTreeMap<usize, u32>,
     custom_labels: BTreeMap<usize, String>,
     pending_custom_label_index: Option<usize>,
     trendline: Option<WorksheetChartTrendline>,

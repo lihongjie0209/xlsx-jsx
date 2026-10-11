@@ -139,10 +139,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   RGB solid-fill colors to data points by zero-based category/value position.
   Keys are canonical decimal point indices from 0 through 1,048,575; omitted
   keys leave points at the chart-type default, so sparse overrides retain their
-  original positions. Reverse preserves explicit
-  point indices and rejects custom point borders, patterns, gradients,
-  transparency, marker formatting, duplicate indices, and indices beyond the
-  source range.
+  original positions. `Series.pointColorTransparencies?: { [zeroBasedIndex:
+  string]: integer }` adds whole-percent alpha (0–100) to a colored point; each
+  key must also exist in `pointColors`. Reverse preserves explicit point indices
+  and transparency, and rejects custom point borders, patterns, gradients,
+  marker formatting, duplicate indices, and indices beyond the source range.
 - A `Trendline` child of `Series` supports `type="linear" | "exponential" |
   "logarithmic" | "polynomial" | "power" | "movingAverage"`, optional
   `order` (2–5, required for polynomial) and `period` (2–3, required for

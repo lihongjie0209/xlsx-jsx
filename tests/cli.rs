@@ -6,8 +6,8 @@ use rust_xlsxwriter::{
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
-    ChartLineDashType, ChartMarker, ChartMarkerType, ChartRange, ChartSolidFill, ChartTrendline,
-    ChartTrendlineType, ChartType, Image as XlsxImage, Workbook as XlsxWorkbook,
+    ChartLineDashType, ChartMarker, ChartMarkerType, ChartPoint, ChartRange, ChartSolidFill,
+    ChartTrendline, ChartTrendlineType, ChartType, Image as XlsxImage, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -47,6 +47,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("markerFillTransparency"))
         .stdout(predicate::str::contains("markerLineColor"))
         .stdout(predicate::str::contains("markerLineWidth"))
+        .stdout(predicate::str::contains("pointColorTransparencies"))
         .stdout(predicate::str::contains("wrapText"))
         .stdout(predicate::str::contains("shrinkToFit"))
         .stdout(predicate::str::contains("rowSpan"))
@@ -4690,6 +4691,70 @@ fn reverses_external_chart_data_point_colors_and_rebuilds_them() {
 }
 
 #[test]
+fn reverses_and_rebuilds_external_chart_point_color_transparency_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-point-alpha.xlsx");
+    let source_path = directory.path().join("external-chart-point-alpha.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-chart-point-alpha.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let points = [
+        ChartPoint::new(),
+        ChartPoint::new().set_format(
+            ChartSolidFill::new()
+                .set_color("#336699")
+                .set_transparency(25),
+        ),
+        ChartPoint::new(),
+        ChartPoint::new().set_format(ChartSolidFill::new().set_color("#F0A020")),
+    ];
+    let mut chart = XlsxChart::new(ChartType::Pie);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A5")
+        .set_values("Data!B2:B5")
+        .set_points(&points);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
+    assert!(source.contains("pointColors={{1: \"#336699\", 3: \"#F0A020\"}}"));
+    assert!(source.contains("pointColorTransparencies={{1: 25}}"));
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<a:srgbClr val=\"336699\"><a:alpha val=\"75000\"/></a:srgbClr>"));
+    assert!(chart_xml.contains("<a:srgbClr val=\"F0A020\"/>"));
+
+    let roundtrip_path = directory.path().join("roundtrip-chart-point-alpha.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(&roundtrip_path)
+        .assert()
+        .success();
+    let roundtrip = std::fs::read_to_string(roundtrip_path).expect("roundtrip JSX exists");
+    assert_eq!(roundtrip, source);
+}
+
+#[test]
 fn reverses_sparse_external_chart_point_colors_without_shifting_indices() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("sparse-chart-points.xlsx");
@@ -4800,24 +4865,31 @@ fn rejects_chart_point_color_index_beyond_series_range() {
 }
 
 #[test]
-fn reverse_rejects_transparent_chart_point_fill_instead_of_dropping_alpha() {
+fn reverse_rejects_chart_point_alpha_not_representable_as_whole_percent() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("transparent-chart-point.xlsx");
     let mut workbook = XlsxWorkbook::new();
     let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
     let mut chart = XlsxChart::new(ChartType::Pie);
-    let points = [rust_xlsxwriter::ChartPoint::new().set_format(
-        rust_xlsxwriter::ChartSolidFill::new()
-            .set_color("#FF0000")
-            .set_transparency(30),
-    )];
+    let points = [
+        rust_xlsxwriter::ChartPoint::new().set_format(
+            rust_xlsxwriter::ChartSolidFill::new()
+                .set_color("#FF0000")
+                .set_transparency(30),
+        ),
+        rust_xlsxwriter::ChartPoint::new()
+            .set_format(rust_xlsxwriter::ChartSolidFill::new().set_color("#336699")),
+    ];
     chart
         .add_series()
-        .set_categories("Data!A2:A2")
-        .set_values("Data!B2:B2")
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3")
         .set_points(&points);
     worksheet.insert_chart(0, 5, &chart).unwrap();
     workbook.save(&workbook_path).unwrap();
+    rewrite_part(&workbook_path, "xl/charts/chart1.xml", |xml| {
+        xml.replace("<a:alpha val=\"70000\"/>", "<a:alpha val=\"70001\"/>")
+    });
 
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -4826,9 +4898,9 @@ fn reverse_rejects_transparent_chart_point_fill_instead_of_dropping_alpha() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "unsupported `<alpha>` point formatting",
+            "data-point fill alpha not exactly representable by whole-percent transparency",
         ))
-        .stderr(predicate::str::contains("opaque RGB solid fills"));
+        .stderr(predicate::str::contains("increments of 1%"));
 }
 
 #[test]
