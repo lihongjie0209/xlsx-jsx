@@ -707,7 +707,9 @@
                 "^(0|[1-9][0-9]*)$": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
               },
               "additionalProperties": false
-            }
+            },
+            "gap": { "type": "integer", "minimum": 0, "maximum": 500 },
+            "overlap": { "type": "integer", "minimum": -100, "maximum": 100 }
           },
           "additionalProperties": false
         },

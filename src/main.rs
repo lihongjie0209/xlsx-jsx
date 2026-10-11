@@ -830,6 +830,7 @@ fn compile_chart(
         configure_chart_series_marker(chart_series, &series);
         configure_chart_series_line(chart_series, &series);
         configure_chart_series_point_colors(chart_series, &series);
+        configure_chart_series_spacing(chart_series, &series);
         configure_chart_series_trendline(chart_series, &series);
         configure_chart_series_error_bars(chart_series, &series)?;
         if component.props.get("type").and_then(Value::as_str) == Some("stock") {
@@ -842,6 +843,15 @@ fn compile_chart(
         .insert_chart(row, column, &chart)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+}
+
+fn configure_chart_series_spacing(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
+    if let Some(gap) = series.props.get("gap").and_then(Value::as_u64) {
+        chart_series.set_gap(u16::try_from(gap).expect("validated Series.gap range"));
+    }
+    if let Some(overlap) = series.props.get("overlap").and_then(Value::as_i64) {
+        chart_series.set_overlap(i8::try_from(overlap).expect("validated Series.overlap range"));
+    }
 }
 
 fn configure_chart_series_point_colors(
@@ -4237,7 +4247,7 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             .map(|value| format!(" firstSliceAngle={{{value}}}"))
             .unwrap_or_default()
     );
-    for series in &chart.series {
+    for (series_index, series) in chart.series.iter().enumerate() {
         output.push_str("      <Series");
         let _ = write!(output, " values={{{:?}}}", series.values);
         if let Some(categories) = &series.categories {
@@ -4248,6 +4258,14 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         }
         if let Some(title) = &series.title {
             let _ = write!(output, " title={{{title:?}}}");
+        }
+        if series_index == 0 {
+            if let Some(gap) = series.gap {
+                let _ = write!(output, " gap={{{gap}}}");
+            }
+            if let Some(overlap) = series.overlap {
+                let _ = write!(output, " overlap={{{overlap}}}");
+            }
         }
         if let Some(marker_type) = series.marker_type {
             let marker_type = match marker_type {
@@ -7302,6 +7320,8 @@ fn parse_chart_xml(
     let mut chart_type: Option<&'static str> = None;
     let mut chart_axis_count = 0_u8;
     let mut chart_grouping_seen = false;
+    let mut chart_gap: Option<u16> = None;
+    let mut chart_overlap: Option<i8> = None;
     let mut stock_high_low_lines = false;
     let mut stock_up_down_bars = false;
     let mut chart_group_marker_enabled = false;
@@ -8364,6 +8384,30 @@ fn parse_chart_xml(
                             }
                         }
                     }
+                    "gapWidth" if stack.last().is_some_and(|parent| parent == "barChart") => {
+                        let raw = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "gapWidth",
+                        )?;
+                        let value = raw.parse::<u16>().ok().filter(|value| *value <= 500).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has gapWidth outside 0–500; use an integer in that range")))?;
+                        if chart_gap.replace(value).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats gapWidth; retain one chart-level gap"
+                            )));
+                        }
+                    }
+                    "overlap" if stack.last().is_some_and(|parent| parent == "barChart") => {
+                        let raw =
+                            chart_element_val_attribute(&event, part, reader.decoder(), "overlap")?;
+                        let value = raw.parse::<i8>().ok().filter(|value| (-100..=100).contains(value)).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has overlap outside -100–100; use an integer in that range")))?;
+                        if chart_overlap.replace(value).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats overlap; retain one chart-level overlap"
+                            )));
+                        }
+                    }
                     "doughnutChart" => {
                         chart_type = Some(set_chart_type(chart_type, "doughnut", part)?);
                     }
@@ -8838,6 +8882,8 @@ fn parse_chart_xml(
                     }
                     "ser" => series.push(WorksheetChartSeries {
                         values: String::new(),
+                        gap: None,
+                        overlap: None,
                         categories: None,
                         name: None,
                         title: None,
@@ -9678,6 +9724,25 @@ fn parse_chart_xml(
     })?;
     let chart_type = resolve_radar_chart_type(chart_type, radar_style, &series, part)?;
     let chart_type = resolve_scatter_chart_type(chart_type, scatter_style, &series, part)?;
+    if chart_gap.is_some() || chart_overlap.is_some() {
+        if !matches!(
+            chart_type,
+            "bar"
+                | "column"
+                | "barStacked"
+                | "columnStacked"
+                | "barPercentStacked"
+                | "columnPercentStacked"
+        ) {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has bar/column spacing on a non-bar chart; remove gapWidth/overlap"
+            )));
+        }
+        if let Some(first) = series.first_mut() {
+            first.gap = chart_gap.filter(|gap| *gap != 150);
+            first.overlap = chart_overlap;
+        }
+    }
     if chart_group_marker_enabled {
         for item in &mut series {
             if item.marker.is_none() {
@@ -10693,8 +10758,17 @@ fn is_supported_chart_attribute(
         ("overlap", "val") => {
             matches!(
                 chart_type,
-                Some("columnStacked" | "columnPercentStacked" | "barStacked" | "barPercentStacked")
-            ) && value == "100"
+                Some(
+                    "column"
+                        | "columnStacked"
+                        | "columnPercentStacked"
+                        | "bar"
+                        | "barStacked"
+                        | "barPercentStacked"
+                )
+            ) && value
+                .parse::<i8>()
+                .is_ok_and(|overlap| (-100..=100).contains(&overlap))
         }
         ("idx" | "order" | "period" | "ptCount" | "axId" | "crossAx", "val") | ("pt", "idx") => {
             value.parse::<u32>().is_ok()
@@ -10759,7 +10833,18 @@ fn is_supported_chart_attribute(
                     .parse::<u8>()
                     .is_ok_and(|size| (10..=90).contains(&size))
         }
-        ("gapWidth", "val") => chart_type == Some("stock") && value == "150",
+        ("gapWidth", "val") => match chart_type {
+            Some("stock") => value == "150",
+            Some(
+                "column"
+                | "columnStacked"
+                | "columnPercentStacked"
+                | "bar"
+                | "barStacked"
+                | "barPercentStacked",
+            ) => value.parse::<u16>().is_ok_and(|gap| gap <= 500),
+            _ => false,
+        },
         ("firstSliceAng", "val") => {
             matches!(chart_type, Some("pie" | "doughnut"))
                 && value.parse::<u16>().is_ok_and(|angle| angle <= 360)
@@ -13401,6 +13486,8 @@ struct WorksheetImage {
 #[derive(Clone)]
 struct WorksheetChartSeries {
     values: String,
+    gap: Option<u16>,
+    overlap: Option<i8>,
     categories: Option<String>,
     name: Option<String>,
     title: Option<String>,

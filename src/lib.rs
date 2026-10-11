@@ -2607,6 +2607,8 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "lineTransparency",
                 "lineHidden",
                 "pointColors",
+                "gap",
+                "overlap",
             ],
             "Series",
         )?;
@@ -2674,6 +2676,60 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                     series_index + 1
                 )));
             }
+        }
+    }
+    validate_chart_series_spacing(chart)?;
+    Ok(())
+}
+
+fn validate_chart_series_spacing(chart: &Node) -> Result<()> {
+    let chart_type = chart
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let is_bar_column = chart_type.starts_with("bar") || chart_type.starts_with("column");
+    let mut declared_gap = None;
+    let mut declared_overlap = None;
+    for value in &chart.children {
+        let series: Node = serde_json::from_value(value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if series.r#type != "Series" {
+            continue;
+        }
+        for (property, declared) in [
+            ("gap", &mut declared_gap),
+            ("overlap", &mut declared_overlap),
+        ] {
+            let Some(setting) = series.props.get(property) else {
+                continue;
+            };
+            if !is_bar_column {
+                return Err(Error::Compile(format!(
+                    "Series.{property} is supported only for bar and column charts; remove it or change Chart.type"
+                )));
+            }
+            let value = setting
+                .as_i64()
+                .ok_or_else(|| Error::Compile(format!("Series.{property} must be an integer")))?;
+            let valid = if property == "gap" {
+                (0..=500).contains(&value)
+            } else {
+                (-100..=100).contains(&value)
+            };
+            if !valid {
+                return Err(Error::Compile(if property == "gap" {
+                    "Series.gap must be an integer from 0 through 500".into()
+                } else {
+                    "Series.overlap must be an integer from -100 through 100".into()
+                }));
+            }
+            if declared.is_some_and(|existing| existing != value) {
+                return Err(Error::Compile(format!(
+                    "Chart has conflicting Series.{property} declarations; use the same value on every Series or set it on one Series only"
+                )));
+            }
+            *declared = Some(value);
         }
     }
     Ok(())

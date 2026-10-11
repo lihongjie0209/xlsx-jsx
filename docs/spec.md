@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.64
+Version: 1.65
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -133,6 +133,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   Reverse preserves these calculation settings without a manifest; custom
   trendline names, line/label formatting, legend deletion, and equation/
   R-squared labels are rejected with repair guidance.
+- `Series.gap?: integer` (0–500) and `Series.overlap?: integer` (-100–100)
+  control the group-level spacing of bar/column charts. Since OOXML stores
+  these values on the chart group, declarations across all Series must agree;
+  reverse places an explicit group value on the first Series only. Omission
+  keeps the writer/Excel defaults (gap 150; overlap depends on grouping).
 - `ChartDataTable` is an optional child of `Chart`, at most one per chart.
   `showHorizontalBorders`, `showVerticalBorders`, `showOutlineBorders`, and
   `showLegendKeys` are booleans. Omission uses the pinned writer defaults
