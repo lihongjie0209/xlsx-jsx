@@ -896,12 +896,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   retained when reversing within each scope.
 - v1 has no implicit sheet; sheets are emitted in source order.
 - Optional `title`, `subject`, `author`, `keywords`, `description`, `category`,
-  and `status` string
-  properties map to OOXML core document properties. Empty strings are omitted.
+  and `status` string properties map to OOXML core document properties;
+  `manager`, `company`, and `hyperlinkBase` map to extended document properties
+  in `docProps/app.xml`. Empty strings are omitted.
   Reverse preserves these values; `creator` and `lastModifiedBy` must agree and
   are represented as `author`. Writer-generated creation/modification timestamps
-  are intentionally ignored. Other authored core metadata (identifiers,
-  custom properties, and independent last-modifier values) is
+  are intentionally ignored. The reader ignores standard app properties
+  generated from workbook structure and preserves `Manager`, `Company`, and
+  `HyperlinkBase`; unknown authored app properties are rejected. Other
+  authored core metadata (identifiers, custom properties, and independent
+  last-modifier values) is
   rejected because it has no lossless Workbook property in v1.
 
 ### DefinedName

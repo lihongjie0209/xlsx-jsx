@@ -25,7 +25,10 @@
             "keywords": { "type": "string" },
             "description": { "type": "string" },
             "category": { "type": "string" },
-            "status": { "type": "string" }
+            "status": { "type": "string" },
+            "manager": { "type": "string" },
+            "company": { "type": "string" },
+            "hyperlinkBase": { "type": "string" }
           }
         },
         "children": {

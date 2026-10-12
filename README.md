@@ -123,7 +123,7 @@ xlsx-jsx spec --format json
 | Blank cells and special text | yes | yes | quoted, multiline, Unicode, and interior blank cells round-trip |
 | Time-only and duration display | yes | yes | numeric serial plus `numberFormat`, including elapsed-time formats |
 | Excel error cells | no | rejected with repair diagnostics | fix the error or add an explicit error-cell type |
-| Core workbook document properties | yes | yes | `title`, `subject`, `author`, `keywords`, `description`, `category`, `status`; generated timestamps are ignored, unsupported authored metadata is rejected |
+| Workbook document properties | yes | yes | Core: `title`, `subject`, `author`, `keywords`, `description`, `category`, `status`; extended: `manager`, `company`, `hyperlinkBase`; generated metadata is ignored, unsupported authored metadata is rejected |
 | Workbook and worksheet-scoped defined names | yes | yes | `<DefinedName name="TaxRate" formula="0.05" />` at workbook scope or inside a worksheet; names and formula text round-trip, while hidden/comment metadata is rejected |
 | Phonetics, custom package parts | no | rejected | unsupported semantics are not silently flattened or discarded |
 | Shared/data-table formulas, other custom view state, unsupported authored metadata | no | rejected with diagnostics | ordinary/legacy array formulas, screen gridline visibility, and default workbook view remain supported |

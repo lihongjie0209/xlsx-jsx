@@ -256,6 +256,20 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     if let Some(value) = ir.workbook.props.get("status").and_then(Value::as_str) {
         properties = properties.set_status(value);
     }
+    if let Some(value) = ir.workbook.props.get("manager").and_then(Value::as_str) {
+        properties = properties.set_manager(value);
+    }
+    if let Some(value) = ir.workbook.props.get("company").and_then(Value::as_str) {
+        properties = properties.set_company(value);
+    }
+    if let Some(value) = ir
+        .workbook
+        .props
+        .get("hyperlinkBase")
+        .and_then(Value::as_str)
+    {
+        properties = properties.set_hyperlink_base(value);
+    }
     workbook.set_properties(&properties);
     let mut local_defined_names = Vec::new();
     for value in &ir.workbook.children {
@@ -5936,6 +5950,12 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         ("description", workbook_properties.description.as_deref()),
         ("category", workbook_properties.category.as_deref()),
         ("status", workbook_properties.status.as_deref()),
+        ("manager", workbook_properties.manager.as_deref()),
+        ("company", workbook_properties.company.as_deref()),
+        (
+            "hyperlinkBase",
+            workbook_properties.hyperlink_base.as_deref(),
+        ),
     ] {
         if let Some(value) = value {
             let _ = write!(output, " {name}={value:?}");
@@ -9404,7 +9424,23 @@ fn audit_reverse_subset(
             let mut xml = String::new();
             std::io::Read::read_to_string(&mut part, &mut xml)
                 .map_err(|error| Error::Reverse(error.to_string()))?;
-            workbook_properties = audit_core_properties(&xml)?;
+            let core_properties = audit_core_properties(&xml)?;
+            workbook_properties.title = core_properties.title;
+            workbook_properties.subject = core_properties.subject;
+            workbook_properties.author = core_properties.author;
+            workbook_properties.keywords = core_properties.keywords;
+            workbook_properties.description = core_properties.description;
+            workbook_properties.category = core_properties.category;
+            workbook_properties.status = core_properties.status;
+        }
+        if name == "docProps/app.xml" {
+            let mut xml = String::new();
+            std::io::Read::read_to_string(&mut part, &mut xml)
+                .map_err(|error| Error::Reverse(error.to_string()))?;
+            let extended_properties = audit_app_properties(&xml)?;
+            workbook_properties.manager = extended_properties.manager;
+            workbook_properties.company = extended_properties.company;
+            workbook_properties.hyperlink_base = extended_properties.hyperlink_base;
         }
     }
     let mut referenced_drawing_parts = std::collections::HashSet::new();
@@ -33798,7 +33834,134 @@ struct WorkbookProperties {
     description: Option<String>,
     category: Option<String>,
     status: Option<String>,
+    manager: Option<String>,
+    company: Option<String>,
+    hyperlink_base: Option<String>,
     defined_names: Vec<ReverseDefinedName>,
+}
+
+fn audit_app_properties(xml: &str) -> xlsx_jsx::Result<WorkbookProperties> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut properties = WorkbookProperties::default();
+    let mut depth = 0usize;
+    let mut current_property = None;
+    let mut seen_properties = std::collections::HashSet::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event)) => {
+                if depth == 1 {
+                    let name = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                    if !is_supported_app_property(&name) {
+                        return Err(unsupported_app_property(&name));
+                    }
+                    if !seen_properties.insert(name.clone()) {
+                        return Err(Error::Reverse(format!(
+                            "docProps/app.xml contains duplicate `{name}` values; keep one value"
+                        )));
+                    }
+                    current_property = Some(name);
+                }
+                depth += 1;
+            }
+            Ok(Event::Empty(event)) => {
+                if depth == 1 {
+                    let name = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                    if !is_supported_app_property(&name) {
+                        return Err(unsupported_app_property(&name));
+                    }
+                    if !seen_properties.insert(name.clone()) {
+                        return Err(Error::Reverse(format!(
+                            "docProps/app.xml contains duplicate `{name}` values; keep one value"
+                        )));
+                    }
+                }
+            }
+            Ok(Event::Text(text)) if depth == 2 => {
+                let decoded = text
+                    .decode()
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                let value = quick_xml::escape::unescape(&decoded)
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                append_app_property_value(&mut properties, current_property.as_deref(), &value);
+            }
+            Ok(Event::CData(text)) if depth == 2 => {
+                let value = text
+                    .decode()
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                append_app_property_value(&mut properties, current_property.as_deref(), &value);
+            }
+            Ok(Event::GeneralRef(reference)) if depth == 2 => {
+                let value = reference
+                    .resolve_char_ref()
+                    .map_err(|error| Error::Reverse(error.to_string()))?
+                    .or_else(|| match &reference[..] {
+                        b"amp" => Some('&'),
+                        b"lt" => Some('<'),
+                        b"gt" => Some('>'),
+                        b"quot" => Some('"'),
+                        b"apos" => Some('\''),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "docProps/app.xml contains unsupported entity `&{};`",
+                            String::from_utf8_lossy(reference.as_ref())
+                        ))
+                    })?;
+                append_app_property_value(
+                    &mut properties,
+                    current_property.as_deref(),
+                    &value.to_string(),
+                );
+            }
+            Ok(Event::End(_)) => {
+                depth = depth.saturating_sub(1);
+                if depth == 1 {
+                    current_property = None;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => return Err(Error::Reverse(error.to_string())),
+            _ => {}
+        }
+    }
+    Ok(properties)
+}
+
+fn is_supported_app_property(name: &str) -> bool {
+    matches!(
+        name,
+        "Application"
+            | "DocSecurity"
+            | "ScaleCrop"
+            | "HeadingPairs"
+            | "TitlesOfParts"
+            | "Manager"
+            | "Company"
+            | "LinksUpToDate"
+            | "SharedDoc"
+            | "HyperlinkBase"
+            | "HyperlinksChanged"
+            | "AppVersion"
+    )
+}
+
+fn unsupported_app_property(name: &str) -> Error {
+    Error::Reverse(format!(
+        "docProps/app.xml contains authored property `{name}` that v1 cannot preserve; remove it or add matching Workbook metadata support"
+    ))
+}
+
+fn append_app_property_value(properties: &mut WorkbookProperties, name: Option<&str>, value: &str) {
+    let field = match name {
+        Some("Manager") => Some(&mut properties.manager),
+        Some("Company") => Some(&mut properties.company),
+        Some("HyperlinkBase") => Some(&mut properties.hyperlink_base),
+        _ => None,
+    };
+    if let Some(field) = field {
+        field.get_or_insert_default().push_str(value);
+    }
 }
 
 #[expect(
@@ -36020,6 +36183,34 @@ mod tests {
 
         assert_eq!(properties.category.as_deref(), Some("Finance"));
         assert_eq!(properties.status.as_deref(), Some("Draft"));
+    }
+
+    #[test]
+    fn app_properties_preserve_supported_values_and_ignore_generated_fields() {
+        let xml = r#"<Properties xmlns="urn:extended" xmlns:vt="urn:types"><Application>Excel</Application><HeadingPairs><vt:vector><vt:variant><vt:lpstr>Worksheets</vt:lpstr></vt:variant></vt:vector></HeadingPairs><Manager>Ada &amp; Co</Manager><Company><![CDATA[Analytical Engines]]></Company><HyperlinkBase>https://example.test/</HyperlinkBase></Properties>"#;
+
+        let properties = audit_app_properties(xml).expect("supported app properties parse");
+
+        assert_eq!(properties.manager.as_deref(), Some("Ada & Co"));
+        assert_eq!(properties.company.as_deref(), Some("Analytical Engines"));
+        assert_eq!(
+            properties.hyperlink_base.as_deref(),
+            Some("https://example.test/")
+        );
+    }
+
+    #[test]
+    fn app_properties_reject_unknown_authored_fields_with_repair_guidance() {
+        let xml = r#"<Properties xmlns="urn:extended"><Template>Custom</Template></Properties>"#;
+
+        let error = audit_app_properties(xml).expect_err("unknown authored metadata is rejected");
+
+        assert!(error.to_string().contains("Template"));
+        assert!(
+            error
+                .to_string()
+                .contains("matching Workbook metadata support")
+        );
     }
 
     #[test]

@@ -361,6 +361,9 @@ const WORKBOOK_PROPERTIES: &[&str] = &[
     "description",
     "category",
     "status",
+    "manager",
+    "company",
+    "hyperlinkBase",
 ];
 
 impl IrEnvelope {
@@ -474,6 +477,9 @@ fn validate_workbook_properties(workbook: &Node) -> Result<()> {
         "description",
         "category",
         "status",
+        "manager",
+        "company",
+        "hyperlinkBase",
     ] {
         if let Some(value) = workbook.props.get(property)
             && !value.is_string()
@@ -12021,7 +12027,10 @@ mod tests {
             "keywords": "quarterly,finance",
             "description": "Reviewed & approved",
             "category": "Finance",
-            "status": "Draft"
+            "status": "Draft",
+            "manager": "Ada Lovelace",
+            "company": "Analytical Engines",
+            "hyperlinkBase": "https://example.test/reports/"
         }))
         .expect("properties are a JSON object");
 
@@ -12067,7 +12076,7 @@ mod tests {
     #[test]
     fn rejects_non_string_workbook_document_properties_with_guidance() {
         let mut input = workbook(vec![worksheet("Data", vec![])]);
-        input.workbook.props = serde_json::from_value(serde_json::json!({"title": 42}))
+        input.workbook.props = serde_json::from_value(serde_json::json!({"hyperlinkBase": 42}))
             .expect("properties are a JSON object");
 
         let error = input
@@ -12076,7 +12085,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("Workbook.title must be a string")
+                .contains("Workbook.hyperlinkBase must be a string")
         );
         assert!(error.to_string().contains("quoted string"));
     }

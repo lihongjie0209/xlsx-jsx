@@ -26,7 +26,10 @@ fn workbook_category_and_status_round_trip_external_xlsx_without_manifest() {
         .expect("sheet name is valid");
     let properties = XlsxDocProperties::new()
         .set_category("Finance")
-        .set_status("Draft");
+        .set_status("Draft")
+        .set_manager("Ada Lovelace")
+        .set_company("Analytical Engines")
+        .set_hyperlink_base("https://example.test/reports/");
     workbook.set_properties(&properties);
     workbook.save(&external).expect("external workbook saves");
 
@@ -42,6 +45,15 @@ fn workbook_category_and_status_round_trip_external_xlsx_without_manifest() {
     let source = std::fs::read_to_string(&reversed).expect("reversed source exists");
     assert!(source.contains("category=\"Finance\""), "{source}");
     assert!(source.contains("status=\"Draft\""), "{source}");
+    assert!(source.contains("manager=\"Ada Lovelace\""), "{source}");
+    assert!(
+        source.contains("company=\"Analytical Engines\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("hyperlinkBase=\"https://example.test/reports/\""),
+        "{source}"
+    );
 
     let rebuilt = directory.path().join("rebuilt.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -67,6 +79,21 @@ fn workbook_category_and_status_round_trip_external_xlsx_without_manifest() {
     assert!(
         core.contains("<cp:contentStatus>Draft</cp:contentStatus>"),
         "{core}"
+    );
+    let mut app = String::new();
+    archive
+        .by_name("docProps/app.xml")
+        .expect("extended properties exist")
+        .read_to_string(&mut app)
+        .expect("extended properties are UTF-8");
+    assert!(app.contains("<Manager>Ada Lovelace</Manager>"), "{app}");
+    assert!(
+        app.contains("<Company>Analytical Engines</Company>"),
+        "{app}"
+    );
+    assert!(
+        app.contains("<HyperlinkBase>https://example.test/reports/</HyperlinkBase>"),
+        "{app}"
     );
 }
 
@@ -98,6 +125,9 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("BackgroundImage"))
         .stdout(predicate::str::contains("category"))
         .stdout(predicate::str::contains("status"))
+        .stdout(predicate::str::contains("manager"))
+        .stdout(predicate::str::contains("company"))
+        .stdout(predicate::str::contains("hyperlinkBase"))
         .stdout(predicate::str::contains("sparklineType"))
         .stdout(predicate::str::contains("sparklineGroup"))
         .stdout(predicate::str::contains("showEmptyCellsAs"))

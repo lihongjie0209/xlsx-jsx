@@ -8,6 +8,9 @@ export default <Workbook
   description="Reviewed & approved"
   category="Finance"
   status="Draft"
+  manager="Ada Lovelace"
+  company="Analytical Engines"
+  hyperlinkBase="https://example.test/reports/"
 >
   <Worksheet name="Summary">
     <Row><Cell>Revenue</Cell><Cell value={125000} /></Row>
