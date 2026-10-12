@@ -16287,6 +16287,63 @@ fn external_worksheet_code_name_round_trips_without_a_macro_project() {
 }
 
 #[test]
+fn external_workbook_code_name_round_trips_without_a_macro_project() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("workbook-code-name.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .set_vba_name("ReportBook")
+        .expect("workbook code name is valid");
+    workbook.add_worksheet();
+    workbook.save(&input).expect("workbook writes");
+
+    let reversed = directory.path().join("workbook-code-name.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("codeName=\"ReportBook\""), "{source}");
+
+    let rebuilt = directory.path().join("rebuilt-workbook-code-name.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+    let workbook_xml = read_zip_part_for_test(&rebuilt, "xl/workbook.xml");
+    assert!(
+        workbook_xml.contains("codeName=\"ReportBook\""),
+        "{workbook_xml}"
+    );
+}
+
+#[test]
+fn reverse_rejects_invalid_external_workbook_code_name() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-workbook-code-name.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook.add_worksheet();
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/workbook.xml", |xml| {
+        xml.replace("<workbookPr", "<workbookPr codeName=\"9 Report\"")
+    });
+
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["reverse"]).arg(input);
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid workbookPr.codeName"))
+        .stderr(predicate::str::contains("beginning with a letter"));
+}
+
+#[test]
 fn external_hidden_and_very_hidden_worksheets_survive_recompile() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("worksheet-visibility.xlsx");

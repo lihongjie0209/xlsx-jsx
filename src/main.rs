@@ -270,6 +270,11 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     {
         properties = properties.set_hyperlink_base(value);
     }
+    if let Some(code_name) = ir.workbook.props.get("codeName").and_then(Value::as_str) {
+        workbook
+            .set_vba_name(code_name)
+            .map_err(|error| Error::Compile(error.to_string()))?;
+    }
     properties = compile_custom_workbook_properties(properties, &ir.workbook.children)?;
     workbook.set_properties(&properties);
     let mut local_defined_names = Vec::new();
@@ -6047,6 +6052,9 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         if let Some(value) = value {
             let _ = write!(output, " {name}={value:?}");
         }
+    }
+    if let Some(code_name) = workbook_properties.code_name.as_deref() {
+        let _ = write!(output, " codeName={code_name:?}");
     }
     output.push_str(">\n");
     for property in &workbook_properties.custom_properties {
@@ -33496,15 +33504,29 @@ fn audit_workbook_xml(
                     for attribute in event.attributes().with_checks(false) {
                         let attribute =
                             attribute.map_err(|error| Error::Reverse(error.to_string()))?;
-                        if attribute.key.local_name().as_ref() == b"date1904"
-                            && attribute
-                                .decoded_and_normalized_value(
-                                    XmlVersion::Implicit1_0,
-                                    reader.decoder(),
-                                )
-                                .is_ok_and(|value| value == "1" || value == "true")
-                        {
-                            return Err(Error::Reverse("workbook uses the 1904 date system, which v1 cannot reproduce because the XLSX writer only supports the 1900 date system; convert dates to the 1900 system before reverse or add date-system support".into()));
+                        let value = attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                            .map_err(|error| Error::Reverse(error.to_string()))?
+                            .into_owned();
+                        match attribute.key.local_name().as_ref() {
+                            b"date1904" if value == "1" || value == "true" => {
+                                return Err(Error::Reverse("workbook uses the 1904 date system, which v1 cannot reproduce because the XLSX writer only supports the 1900 date system; convert dates to the 1900 system before reverse or add date-system support".into()));
+                            }
+                            b"codeName" if workbook_properties.code_name.is_none() => {
+                                if !xlsx_jsx::is_valid_vba_code_name(&value) {
+                                    return Err(Error::Reverse(format!(
+                                        "workbook has invalid workbookPr.codeName `{value}`; use 1–31 alphanumeric or underscore characters beginning with a letter"
+                                    )));
+                                }
+                                workbook_properties.code_name = Some(value);
+                            }
+                            b"codeName" => {
+                                return Err(Error::Reverse(
+                                    "workbook repeats workbookPr.codeName; keep one code name"
+                                        .into(),
+                                ));
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -33976,6 +33998,7 @@ fn validate_filter_database_definitions(
 
 #[derive(Debug, Default)]
 struct WorkbookProperties {
+    code_name: Option<String>,
     title: Option<String>,
     subject: Option<String>,
     author: Option<String>,

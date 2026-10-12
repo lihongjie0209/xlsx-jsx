@@ -11,6 +11,7 @@ export default <Workbook
   manager="Ada Lovelace"
   company="Analytical Engines"
   hyperlinkBase="https://example.test/reports/"
+  codeName="QuarterlyReport"
 >
   <Worksheet name="Summary">
     <Row><Cell>Revenue</Cell><Cell value={125000} /></Row>

@@ -364,6 +364,7 @@ const WORKBOOK_PROPERTIES: &[&str] = &[
     "manager",
     "company",
     "hyperlinkBase",
+    "codeName",
 ];
 
 impl IrEnvelope {
@@ -496,7 +497,31 @@ fn validate_workbook_properties(workbook: &Node) -> Result<()> {
             )));
         }
     }
+    if let Some(value) = workbook.props.get("codeName") {
+        let code_name = value.as_str().ok_or_else(|| {
+            Error::Compile(
+                "Workbook.codeName must be a string; use a VBA identifier such as `ReportBook`"
+                    .into(),
+            )
+        })?;
+        if !is_valid_vba_code_name(code_name) {
+            return Err(Error::Compile(format!(
+                "Workbook.codeName `{code_name}` is invalid; use 1–31 alphanumeric or underscore characters beginning with a letter"
+            )));
+        }
+    }
     Ok(())
+}
+
+/// Returns whether a value follows Excel's VBA object code-name rules.
+#[doc(hidden)]
+pub fn is_valid_vba_code_name(code_name: &str) -> bool {
+    let mut characters = code_name.chars();
+    characters.next().is_some_and(char::is_alphabetic)
+        && code_name.chars().count() <= 31
+        && code_name
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_')
 }
 
 fn validate_defined_name(
@@ -1029,14 +1054,7 @@ fn validate_worksheet_code_name(
             "Worksheet.codeName on `{worksheet_name}` must be a string; use a VBA identifier such as `DataSheet`"
         ))
     })?;
-    let mut characters = code_name.chars();
-    let valid_first_character = characters.next().is_some_and(char::is_alphabetic);
-    if !valid_first_character
-        || code_name.chars().count() > 31
-        || !code_name
-            .chars()
-            .all(|character| character.is_alphanumeric() || character == '_')
-    {
+    if !is_valid_vba_code_name(code_name) {
         return Err(Error::Compile(format!(
             "Worksheet.codeName `{code_name}` on `{worksheet_name}` is invalid; use 1–31 alphanumeric or underscore characters beginning with a letter"
         )));
@@ -12746,6 +12764,30 @@ mod tests {
             "type":"Worksheet","props":{"name":"Data","codeName":"DataSheet"},"children":[]
         })]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_valid_workbook_code_name() {
+        let mut input = workbook(vec![worksheet("Data", vec![])]);
+        input
+            .workbook
+            .props
+            .insert("codeName".into(), serde_json::json!("ReportBook"));
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_workbook_code_name_with_repair_guidance() {
+        let mut input = workbook(vec![worksheet("Data", vec![])]);
+        input
+            .workbook
+            .props
+            .insert("codeName".into(), serde_json::json!("9 Report"));
+        let error = input
+            .validate()
+            .expect_err("invalid workbook code names are rejected");
+        assert!(error.to_string().contains("Workbook.codeName"));
+        assert!(error.to_string().contains("beginning with a letter"));
     }
 
     #[test]

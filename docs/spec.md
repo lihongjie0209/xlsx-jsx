@@ -900,6 +900,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   and `status` string properties map to OOXML core document properties;
   `manager`, `company`, and `hyperlinkBase` map to extended document properties
   in `docProps/app.xml`. Empty strings are omitted.
+  `codeName?: string` maps to `workbookPr@codeName` using
+  `Workbook::set_vba_name()`; it must be 1–31 Unicode alphanumeric or `_`
+  characters and begin with a letter. Reverse preserves it without requiring a
+  VBA project and rejects invalid or duplicate code-name metadata.
   Reverse preserves these values; `creator` and `lastModifiedBy` must agree and
   are represented as `author`. Writer-generated creation/modification timestamps
   are intentionally ignored. The reader ignores standard app properties
