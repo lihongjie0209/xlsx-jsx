@@ -902,7 +902,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Series.invertIfNegative?: boolean` enables Excel's inverted fill for
   negative values on bar/column charts. Omission and `false` use the writer's
   default; reverse preserves `true` and folds explicit `false`. Custom
-  `c14:invertSolidFillFmt` colors are not represented and are rejected.
+  `invertIfNegativeColor?: "#RRGGBB"` selects an opaque RGB negative-value fill
+  through the writer's `c14:invertSolidFillFmt` extension and implies
+  `invertIfNegative={true}`. It is mutually exclusive with the boolean property;
+  reverse reconstructs external extension colors without a manifest and rejects
+  theme/indexed/alpha colors or malformed extension metadata.
 - `ErrorBars` is an optional child of `Series`, with at most one each for the
   `x` and `y` axes. `axis` is required and selects horizontal (`x`) or vertical
   (`y`) error bars; X error bars are valid only for scatter and bar charts,

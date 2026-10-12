@@ -1702,6 +1702,7 @@
             "secondaryAxis": { "type": "boolean" },
             "smooth": { "type": "boolean" },
             "invertIfNegative": { "type": "boolean" },
+            "invertIfNegativeColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "labelPosition": { "enum": ["center", "right", "left", "above", "below", "insideBase", "insideEnd", "outsideEnd", "bestFit"] },
             "showLegendKey": { "type": "boolean" },
             "showLeaderLines": { "type": "boolean" },
@@ -1985,6 +1986,9 @@
             },
             "required": ["props"]
           }
+        },
+        {
+          "not": { "properties": { "props": { "required": ["invertIfNegative", "invertIfNegativeColor"] } }, "required": ["props"] }
         },
         {
           "not": { "properties": { "props": { "required": ["fillColor", "fillPattern"] } }, "required": ["props"] }

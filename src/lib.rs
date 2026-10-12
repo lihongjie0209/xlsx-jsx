@@ -5132,6 +5132,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "deleteFromLegend",
                 "smooth",
                 "invertIfNegative",
+                "invertIfNegativeColor",
                 "labelPosition",
                 "showLegendKey",
                 "showLeaderLines",
@@ -5770,14 +5771,20 @@ fn validate_chart_series_legend_deletion(chart: &Node, series: &Node) -> Result<
 }
 
 fn validate_chart_series_invert_if_negative(chart: &Node, series: &Node) -> Result<()> {
-    let Some(setting) = series.props.get("invertIfNegative") else {
-        return Ok(());
-    };
-    let Some(enabled) = setting.as_bool() else {
+    let inverted_color = series.props.get("invertIfNegativeColor");
+    if let Some(color) = inverted_color {
+        validate_rgb_color(color, "Series.invertIfNegativeColor", 0, 0)?;
+    }
+    if inverted_color.is_some() && series.props.contains_key("invertIfNegative") {
         return Err(Error::Compile(
-            "Series.invertIfNegative must be a boolean; use true/false or omit it for the default"
-                .into(),
+            "Series.invertIfNegativeColor implies inversion and is mutually exclusive with invertIfNegative; remove the boolean property".into(),
         ));
+    }
+    let enabled = match series.props.get("invertIfNegative") {
+        Some(setting) => setting.as_bool().ok_or_else(|| Error::Compile(
+            "Series.invertIfNegative must be a boolean; use true/false or omit it for the default".into(),
+        ))?,
+        None => inverted_color.is_some(),
     };
     if !enabled {
         return Ok(());
@@ -12930,6 +12937,59 @@ mod tests {
 
         let validation = input.validate();
         assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_custom_invert_if_negative_rgb_fill_on_column_charts() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3","invertIfNegativeColor":"#FF6666"
+                },"children":[]}]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn rejects_custom_invert_if_negative_color_with_boolean_form() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3","invertIfNegative":true,
+                    "invertIfNegativeColor":"#FF6666"
+                },"children":[]}]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("the two inversion APIs conflict");
+        assert!(error.to_string().contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn rejects_custom_invert_if_negative_color_on_line_charts() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"line","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3","invertIfNegativeColor":"#FF6666"
+                },"children":[]}]
+            })],
+        )]);
+
+        let error = input
+            .validate()
+            .expect_err("only bar and column charts invert fills");
+        assert!(error.to_string().contains("bar and column chart families"));
     }
 
     #[test]

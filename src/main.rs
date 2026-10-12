@@ -1993,7 +1993,13 @@ fn compile_chart(
         if let Some(smooth) = series.props.get("smooth").and_then(Value::as_bool) {
             chart_series.set_smooth(smooth);
         }
-        if series
+        if let Some(color) = series
+            .props
+            .get("invertIfNegativeColor")
+            .and_then(Value::as_str)
+        {
+            chart_series.set_invert_if_negative_color(color);
+        } else if series
             .props
             .get("invertIfNegative")
             .and_then(Value::as_bool)
@@ -7389,7 +7395,9 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if let Some(smooth) = series.smooth {
             let _ = write!(output, " smooth={{{smooth}}}");
         }
-        if series.invert_if_negative == Some(true) {
+        if let Some(color) = &series.invert_if_negative_color {
+            let _ = write!(output, " invertIfNegativeColor={color:?}");
+        } else if series.invert_if_negative == Some(true) {
             output.push_str(" invertIfNegative={true}");
         }
         let (value_label_property, category_label_property) =
@@ -13956,6 +13964,7 @@ fn parse_chart_xml(
         "scatterStyle",
         "smooth",
         "invertIfNegative",
+        "invertSolidFillFmt",
         "dropLines",
         "trendline",
         "name",
@@ -15197,8 +15206,29 @@ fn parse_chart_xml(
                     )));
                 }
                 if !allowed_tags.contains(&tag.as_str()) {
+                    if matches!(tag.as_str(), "schemeClr" | "sysClr" | "prstClr")
+                        && stack
+                            .iter()
+                            .any(|ancestor| ancestor == "invertSolidFillFmt")
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has a theme/system/preset color in c14 inverted-fill formatting; `invertIfNegativeColor` requires an opaque RGB `#RRGGBB` color, so replace it with an RGB value"
+                        )));
+                    }
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` contains unsupported `<{tag}>` semantics; remove chart titles/formatting or add matching Chart properties and reverse support"
+                    )));
+                }
+                if stack
+                    .iter()
+                    .any(|ancestor| ancestor == "invertSolidFillFmt")
+                    && !matches!(
+                        tag.as_str(),
+                        "invertSolidFillFmt" | "spPr" | "solidFill" | "srgbClr" | "alpha"
+                    )
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has unsupported `{tag}` metadata in c14 inverted-fill formatting; retain only one opaque RGB solid fill"
                     )));
                 }
                 if tag == "gradFill"
@@ -15216,6 +15246,7 @@ fn parse_chart_xml(
                                             | "trendline"
                                             | "errBars"
                                             | "ln"
+                                            | "invertSolidFillFmt"
                                     )
                                 }))))
                 {
@@ -16013,6 +16044,7 @@ fn parse_chart_xml(
                                         | "trendline"
                                         | "errBars"
                                         | "ln"
+                                        | "invertSolidFillFmt"
                                 )
                             }) =>
                     {
@@ -16061,6 +16093,7 @@ fn parse_chart_xml(
                                                 | "trendline"
                                                 | "errBars"
                                                 | "ln"
+                                                | "invertSolidFillFmt"
                                         )
                                     }))) =>
                     {
@@ -16080,6 +16113,9 @@ fn parse_chart_xml(
                         }
                         if stack.iter().any(|ancestor| ancestor == "ser")
                             && !stack.iter().any(|ancestor| ancestor == "dPt")
+                            && !stack
+                                .iter()
+                                .any(|ancestor| ancestor == "invertSolidFillFmt")
                         {
                             let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
                                 "chart part `{part}` has a series gradient outside a data series"
@@ -18082,6 +18118,9 @@ fn parse_chart_xml(
                         marker_line_seen: false,
                         smooth: None,
                         invert_if_negative: None,
+                        invert_if_negative_color: None,
+                        invert_color_extension_seen: false,
+                        invert_color_sppr_seen: false,
                         line_hidden: None,
                         line_color: None,
                         line_width: None,
@@ -18660,9 +18699,29 @@ fn parse_chart_xml(
                         current.label_position = Some(position.to_owned());
                     }
                     "extLst" => {
-                        if !matches!(stack.last().map(String::as_str), Some("dLbls" | "chart")) {
+                        if !matches!(
+                            stack.last().map(String::as_str),
+                            Some("dLbls" | "chart" | "ser")
+                        ) {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has extLst outside supported chart-level or series data-label locations; preserve only the pinned c15/c16r3 extensions"
+                                "chart part `{part}` has extLst outside supported chart-level, series, or data-label locations; preserve only the pinned c14/c15/c16r3 extensions"
+                            )));
+                        }
+                    }
+                    "invertSolidFillFmt" => {
+                        let valid_location = stack.last().is_some_and(|parent| parent == "ext")
+                            && stack.iter().any(|ancestor| ancestor == "ser")
+                            && stack.iter().any(|ancestor| ancestor == "extLst");
+                        let Some(current) = series.last_mut().filter(|_| valid_location) else {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has invertSolidFillFmt outside the pinned c14 series extension; repair its extLst structure"
+                            )));
+                        };
+                        if !current.invert_color_extension_seen
+                            || current.invert_if_negative_color.is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats or misplaces invertSolidFillFmt; keep one extension under its data series"
                             )));
                         }
                     }
@@ -18674,6 +18733,22 @@ fn parse_chart_xml(
                         }
                         if stack.iter().any(|ancestor| ancestor == "dLbls") {
                             validate_chart_leader_line_extension(&event, part, reader.decoder())?;
+                        } else if stack.iter().any(|ancestor| ancestor == "ser") {
+                            validate_chart_invert_fill_extension(&event, part, reader.decoder())?;
+                            let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a series extension outside a data series"
+                            )))?;
+                            if current.invert_color_extension_seen {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats the c14 inverted-fill extension; retain at most one custom negative-value color per series"
+                                )));
+                            }
+                            current.invert_color_extension_seen = true;
+                            if is_empty {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an empty c14 inverted-fill extension; include invertSolidFillFmt with an opaque RGB fill"
+                                )));
+                            }
                         } else if stack.iter().any(|ancestor| ancestor == "chart") {
                             validate_chart_na_as_blank_extension(&event, part, reader.decoder())?;
                             if c16r3_extension_seen {
@@ -19364,6 +19439,19 @@ fn parse_chart_xml(
                         table.font_charset = charset.or(table.font_charset);
                     }
                     "spPr" => {
+                        if stack
+                            .last()
+                            .is_some_and(|parent| parent == "invertSolidFillFmt")
+                        {
+                            let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has c14 inverted-fill shape properties outside a data series"
+                            )))?;
+                            if std::mem::replace(&mut current.invert_color_sppr_seen, true) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats c14 inverted-fill spPr; keep one solid-fill shape"
+                                )));
+                            }
+                        }
                         if stack.last().is_some_and(|item| item == "trendlineLbl") {
                             let trendline = series
                                 .last_mut()
@@ -19394,6 +19482,9 @@ fn parse_chart_xml(
                         }
                         let has_supported_parent =
                             stack.last().is_some_and(|ancestor| ancestor == "ser")
+                                || stack
+                                    .last()
+                                    .is_some_and(|ancestor| ancestor == "invertSolidFillFmt")
                                 || (stack.last().is_some_and(|ancestor| ancestor == "marker")
                                     && !stack.iter().any(|ancestor| ancestor == "dPt"))
                                 || stack.last().is_some_and(|ancestor| ancestor == "trendline")
@@ -19765,6 +19856,46 @@ fn parse_chart_xml(
                     }
                     "srgbClr"
                         if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.len() >= 3
+                            && stack[stack.len() - 2] == "spPr"
+                            && stack[stack.len() - 3] == "invertSolidFillFmt" =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "c14 inverted-fill color",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB c14 inverted-fill color; use one opaque six-digit #RRGGBB color"
+                            )));
+                        }
+                        let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has a c14 inverted-fill color outside a data series"
+                        )))?;
+                        if current.invert_if_negative != Some(true) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has c14 inverted-fill color without invertIfNegative=true; add the standard flag or remove the extension"
+                            )));
+                        }
+                        if !current.invert_color_sppr_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has c14 inverted-fill color without its required spPr; repair the extension shape"
+                            )));
+                        }
+                        if current
+                            .invert_if_negative_color
+                            .replace(format!("#{color}").to_ascii_uppercase())
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats c14 inverted-fill colors; keep one opaque RGB fill"
+                            )));
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
                             && stack.iter().any(|item| item == "trendlineLbl")
                             && stack.iter().any(|item| item == "spPr")
                             && !stack.iter().any(|item| item == "ln") =>
@@ -19869,6 +20000,7 @@ fn parse_chart_xml(
                                         | "trendline"
                                         | "errBars"
                                         | "ln"
+                                        | "invertSolidFillFmt"
                                 )
                             }) =>
                     {
@@ -19951,6 +20083,7 @@ fn parse_chart_xml(
                                         | "trendline"
                                         | "errBars"
                                         | "ln"
+                                        | "invertSolidFillFmt"
                                 )
                             }) {
                             if is_foreground {
@@ -20086,6 +20219,16 @@ fn parse_chart_xml(
                     }
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack
+                                .iter()
+                                .any(|ancestor| ancestor == "invertSolidFillFmt") =>
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has alpha on a c14 inverted-fill color; invertIfNegativeColor supports opaque RGB only, so remove alpha"
+                        )));
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|ancestor| ancestor == "ser")
                             && stack.iter().any(|ancestor| ancestor == "spPr")
                             && stack.iter().any(|ancestor| ancestor == "solidFill")
@@ -20099,6 +20242,7 @@ fn parse_chart_xml(
                                         | "trendline"
                                         | "errBars"
                                         | "ln"
+                                        | "invertSolidFillFmt"
                                 )
                             }) =>
                     {
@@ -20141,6 +20285,7 @@ fn parse_chart_xml(
                                         | "trendline"
                                         | "errBars"
                                         | "ln"
+                                        | "invertSolidFillFmt"
                                 )
                             }) =>
                     {
@@ -21133,6 +21278,14 @@ fn parse_chart_xml(
                         table.fill_hidden = true;
                     }
                     "noFill" => {
+                        if stack
+                            .iter()
+                            .any(|ancestor| ancestor == "invertSolidFillFmt")
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` uses noFill in the c14 inverted-fill extension; use an opaque RGB fill or remove the extension"
+                            )));
+                        }
                         if stack.iter().any(|ancestor| {
                             matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
                         }) {
@@ -21636,6 +21789,30 @@ fn parse_chart_xml(
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has an incomplete c16r3 extension; include exactly one dispNaAsBlank value"
+                    )));
+                }
+                if tag == "invertSolidFillFmt" {
+                    let current = series.last().ok_or_else(|| Error::Reverse(format!(
+                        "chart part `{part}` closes c14 inverted-fill formatting outside a data series"
+                    )))?;
+                    if !current.invert_color_extension_seen
+                        || !current.invert_color_sppr_seen
+                        || current.invert_if_negative_color.is_none()
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an empty or unsupported c14 inverted-fill extension; use one opaque RGB solid fill"
+                        )));
+                    }
+                }
+                if tag == "ext"
+                    && stack.iter().any(|ancestor| ancestor == "ser")
+                    && series.last().is_some_and(|current| {
+                        current.invert_color_extension_seen
+                            && current.invert_if_negative_color.is_none()
+                    })
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has an incomplete c14 inverted-fill extension; include one opaque RGB solid color"
                     )));
                 }
                 if tag == "f" {
@@ -24470,7 +24647,14 @@ fn audit_chart_attributes(
             && !stack.iter().any(|ancestor| {
                 matches!(
                     ancestor.as_str(),
-                    "marker" | "dPt" | "dLbls" | "title" | "trendline" | "errBars" | "ln"
+                    "marker"
+                        | "dPt"
+                        | "dLbls"
+                        | "title"
+                        | "trendline"
+                        | "errBars"
+                        | "ln"
+                        | "invertSolidFillFmt"
                 )
             })
             && stack.iter().any(|ancestor| ancestor == "spPr")
@@ -24917,7 +25101,9 @@ fn is_supported_chart_attribute(
         ("autoTitleDeleted", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("ext", "uri") => matches!(
             value,
-            "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}" | "{56B9EC1D-385E-4148-901F-78D8002777C0}"
+            "{CE6537A1-D6FC-4f65-9D91-7224C49458BB}"
+                | "{56B9EC1D-385E-4148-901F-78D8002777C0}"
+                | "{6F2FDCE9-48DA-4B69-8628-5D25D57E5C99}"
         ),
         ("dLblPos", "val") => chart_data_label_position_from_ooxml(value).is_some(),
         ("plotVisOnly" | "dispNaAsBlank", "val") => {
@@ -25100,6 +25286,37 @@ fn validate_chart_na_as_blank_extension(
     if !has_expected_uri || !has_expected_namespace {
         return Err(Error::Reverse(format!(
             "chart part `{part}` has a c16r3 extension with an unknown URI or namespace; preserve the exact Excel 2016 dispNaAsBlank extension"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_chart_invert_fill_extension(
+    event: &BytesStart<'_>,
+    part: &str,
+    decoder: quick_xml::encoding::Decoder,
+) -> xlsx_jsx::Result<()> {
+    let mut has_expected_namespace = false;
+    let mut has_expected_uri = false;
+    for attribute in event.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+            .map_err(|error| Error::Reverse(error.to_string()))?;
+        match attribute.key.as_ref() {
+            b"xmlns:c14" => {
+                has_expected_namespace =
+                    value.as_ref() == "http://schemas.microsoft.com/office/drawing/2007/8/2/chart";
+            }
+            b"uri" => {
+                has_expected_uri = value.as_ref() == "{6F2FDCE9-48DA-4B69-8628-5D25D57E5C99}";
+            }
+            _ => {}
+        }
+    }
+    if !has_expected_namespace || !has_expected_uri {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has a c14 inverted-fill extension with an unknown URI or namespace; retain the pinned rust_xlsxwriter extension"
         )));
     }
     Ok(())
@@ -28348,6 +28565,9 @@ struct WorksheetChartSeries {
     marker_line_seen: bool,
     smooth: Option<bool>,
     invert_if_negative: Option<bool>,
+    invert_if_negative_color: Option<String>,
+    invert_color_extension_seen: bool,
+    invert_color_sppr_seen: bool,
     line_hidden: Option<bool>,
     line_color: Option<String>,
     line_width: Option<f64>,
