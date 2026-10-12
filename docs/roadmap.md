@@ -29,6 +29,10 @@ reported as complete.
 
 ## Recently delivered
 
+- External cell-format errors now list the actual supported horizontal
+  alignments, including `justify`, rather than directing users to add an already
+  implemented alignment. The spec requires repair guidance to track the DSL
+  property contract.
 - Cell, row, and column formats now preserve horizontal justify alignment in
   both directions. Table-column justify DXFs remain deferred because the pinned
   writer can change explicitly formatted worksheet cells during compilation.

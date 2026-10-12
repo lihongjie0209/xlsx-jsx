@@ -22541,7 +22541,7 @@ fn reverse_rejects_unmodeled_border_metadata_instead_of_silently_dropping_it() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "outside the bold/italic/underline/strikethrough/script/font-name/size/family/charset/RGB-font-color/four-edge/diagonal-border/solid-fill/alignment/indent/wrapText/shrinkToFit/number-format subset",
+            "horizontal-alignment (left, center, right, justify, distributed)",
         ))
         .stderr(predicate::str::contains("suggestion:"));
 }

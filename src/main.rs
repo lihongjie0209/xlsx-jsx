@@ -35773,7 +35773,7 @@ fn audit_cell_style(
     })?;
     if style.support != StyleSupport::Supported {
         return Err(Error::Reverse(format!(
-            "worksheet `{part}` cell `{reference}` uses a style outside the bold/italic/underline/strikethrough/script/font-name/size/family/charset/RGB-font-color/four-edge/diagonal-border/solid-fill/alignment/indent/wrapText/shrinkToFit/number-format subset; unsupported metadata may include font sizes outside the OOXML range, patterned or gradient fill, unsupported built-in formats, theme/indexed font colors, theme/indexed border colors, or unmodeled border metadata. Remove the unsupported feature or add matching DSL support"
+            "worksheet `{part}` cell `{reference}` uses a style outside the bold/italic/underline/strikethrough/script/font-name/size/family/charset/RGB-font-color/four-edge/diagonal-border/solid-fill/horizontal-alignment (left, center, right, justify, distributed)/indent/wrapText/shrinkToFit/number-format subset; unsupported metadata may include font sizes outside the OOXML range, patterned or gradient fill, unsupported built-in formats, theme/indexed font colors, theme/indexed border colors, or unmodeled border metadata. Remove the unsupported feature or add matching DSL support"
         )));
     }
     if style.bold

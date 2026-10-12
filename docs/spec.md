@@ -1946,6 +1946,11 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 - `xlsx-jsx spec [--format json|markdown]` emits the machine-readable contract.
 - Errors identify the failing component/property and suggest a concrete repair.
   Reverse errors explain the source structure that cannot be represented; for
+  cell-format diagnostics, supported alignment names must stay synchronized with
+  `Cell.horizontalAlign` (including `justify`) so repair guidance does not
+  misclassify a supported value as missing functionality. Prefer naming the
+  unsupported OOXML metadata and a direct normalization/removal step over a
+  generic suggestion to add support.
   legacy array-formula cached values, diagnostics state that only the writer's
   default zero caches are supported and that scalar `formulaResult` applies to
   ordinary formulas, not legacy array caches.
