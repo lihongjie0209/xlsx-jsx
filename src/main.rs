@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt::Write as FmtWrite;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -2152,17 +2152,27 @@ fn configure_chart_series_point_colors(
     let colors = series.props.get("pointColors").and_then(Value::as_object);
     let lines = series.props.get("pointLines").and_then(Value::as_object);
     let patterns = series.props.get("pointPatterns").and_then(Value::as_object);
-    if colors.is_none() && lines.is_none() && patterns.is_none() {
+    let hidden_fills = series
+        .props
+        .get("pointFillHidden")
+        .and_then(Value::as_array);
+    if colors.is_none() && lines.is_none() && patterns.is_none() && hidden_fills.is_none() {
         return;
     }
-    let Some(max_index) = colors
+    let max_property_index = colors
         .into_iter()
         .flat_map(serde_json::Map::keys)
         .chain(lines.into_iter().flat_map(serde_json::Map::keys))
         .chain(patterns.into_iter().flat_map(serde_json::Map::keys))
         .filter_map(|key| key.parse::<usize>().ok())
-        .max()
-    else {
+        .max();
+    let max_hidden_index = hidden_fills
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_u64)
+        .filter_map(|index| usize::try_from(index).ok())
+        .max();
+    let Some(max_index) = max_property_index.into_iter().chain(max_hidden_index).max() else {
         return;
     };
     let mut points = vec![ChartPoint::new(); max_index + 1];
@@ -2174,10 +2184,18 @@ fn configure_chart_series_point_colors(
         let color = colors.and_then(|values| values.get(&index.to_string()));
         let line = lines.and_then(|values| values.get(&index.to_string()));
         let pattern = patterns.and_then(|values| values.get(&index.to_string()));
-        if color.is_none() && line.is_none() && pattern.is_none() {
+        let fill_hidden = hidden_fills.is_some_and(|indices| {
+            indices
+                .iter()
+                .any(|value| value.as_u64() == Some(index as u64))
+        });
+        if color.is_none() && line.is_none() && pattern.is_none() && !fill_hidden {
             continue;
         }
         let mut format = ChartFormat::new();
+        if fill_hidden {
+            format.set_no_fill();
+        }
         if let Some(color) = color.and_then(Value::as_str) {
             let mut fill = ChartSolidFill::new();
             fill.set_color(color);
@@ -7117,6 +7135,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 let _ = write!(output, "{point}: {}", Value::Object(properties.clone()));
             }
             output.push_str("}}");
+        }
+        if !series.point_fill_hidden.is_empty() {
+            output.push_str(" pointFillHidden={[");
+            for (entry_index, point) in series.point_fill_hidden.iter().enumerate() {
+                if entry_index > 0 {
+                    output.push_str(", ");
+                }
+                let _ = write!(output, "{point}");
+            }
+            output.push_str("]}");
         }
         if let Some(smooth) = series.smooth {
             let _ = write!(output, " smooth={{{smooth}}}");
@@ -13836,6 +13864,7 @@ fn parse_chart_xml(
     let mut point_pattern: Option<String> = None;
     let mut point_pattern_foreground_color: Option<String> = None;
     let mut point_pattern_background_color: Option<String> = None;
+    let mut point_fill_hidden = false;
     let mut point_line_style = WorksheetChartGridlineStyle::default();
     let mut point_line_seen = false;
     let mut point_line_hidden = false;
@@ -15589,6 +15618,7 @@ fn parse_chart_xml(
                         point_pattern = None;
                         point_pattern_foreground_color = None;
                         point_pattern_background_color = None;
+                        point_fill_hidden = false;
                         point_line_style = WorksheetChartGridlineStyle::default();
                         point_line_seen = false;
                         point_line_hidden = false;
@@ -17548,6 +17578,7 @@ fn parse_chart_xml(
                         point_color_transparencies: BTreeMap::new(),
                         point_lines: BTreeMap::new(),
                         point_patterns: BTreeMap::new(),
+                        point_fill_hidden: BTreeSet::new(),
                         custom_labels: BTreeMap::new(),
                         point_labels: BTreeMap::new(),
                         pending_custom_label_index: None,
@@ -20380,6 +20411,18 @@ fn parse_chart_xml(
                     }
                     "noFill"
                         if stack.last().is_some_and(|parent| parent == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "dPt") =>
+                    {
+                        if point_fill_hidden {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats point no-fill; keep one fill override per point"
+                            )));
+                        }
+                        point_fill_hidden = true;
+                        continue;
+                    }
+                    "noFill"
+                        if stack.last().is_some_and(|parent| parent == "spPr")
                             && stack.iter().any(|ancestor| ancestor == "dTable") =>
                     {
                         let table = data_table.as_mut().ok_or_else(|| {
@@ -21002,7 +21045,11 @@ fn parse_chart_xml(
                     let color = point_color.take();
                     let transparency = point_transparency.take();
                     let pattern = point_pattern.take();
-                    if color.is_none() && pattern.is_none() && !point_line_seen {
+                    if color.is_none()
+                        && pattern.is_none()
+                        && !point_fill_hidden
+                        && !point_line_seen
+                    {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` has an empty data-point override; add a supported RGB or pattern fill, or a ChartLine outline"
                         )));
@@ -21010,6 +21057,11 @@ fn parse_chart_xml(
                     if color.is_some() && pattern.is_some() {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` has both solid and pattern fills on one data point; retain only one fill representation"
+                        )));
+                    }
+                    if point_fill_hidden && (color.is_some() || pattern.is_some()) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` combines point no-fill with another fill; retain only one fill representation"
                         )));
                     }
                     if transparency.is_some() && color.is_none() {
@@ -21077,6 +21129,11 @@ fn parse_chart_xml(
                                 "chart part `{part}` repeats point pattern at index {index}; keep one pattern fill per point"
                             )));
                         }
+                    }
+                    if point_fill_hidden && !current.point_fill_hidden.insert(index) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats point no-fill at index {index}; keep one no-fill override"
+                        )));
                     }
                     if point_line_seen {
                         let mut properties = serde_json::Map::new();
@@ -21525,6 +21582,7 @@ fn parse_chart_xml(
             .keys()
             .chain(item.point_patterns.keys())
             .chain(item.point_lines.keys())
+            .chain(item.point_fill_hidden.iter())
             .max()
             .copied()
         {
@@ -27363,6 +27421,7 @@ struct WorksheetChartSeries {
     point_color_transparencies: BTreeMap<usize, u32>,
     point_lines: BTreeMap<usize, serde_json::Map<String, Value>>,
     point_patterns: BTreeMap<usize, serde_json::Map<String, Value>>,
+    point_fill_hidden: BTreeSet<usize>,
     custom_labels: BTreeMap<usize, String>,
     point_labels: BTreeMap<usize, serde_json::Map<String, Value>>,
     pending_custom_label_index: Option<usize>,

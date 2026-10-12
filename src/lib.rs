@@ -2,6 +2,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use rust_xlsxwriter::Image as XlsxImage;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 pub mod error;
 pub mod runtime;
 pub use error::Error;
@@ -5172,6 +5173,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "pointColorTransparencies",
                 "pointLines",
                 "pointPatterns",
+                "pointFillHidden",
                 "gap",
                 "overlap",
                 "secondaryAxis",
@@ -5722,6 +5724,7 @@ fn validate_chart_series_properties(
     validate_chart_series_point_color_transparencies(series)?;
     validate_chart_series_point_lines(series)?;
     validate_chart_series_point_patterns(series)?;
+    validate_chart_series_point_fill_hidden(series)?;
     validate_chart_series_trendline(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
 }
@@ -6553,6 +6556,63 @@ fn validate_chart_series_point_patterns(series: &Node) -> Result<()> {
                     "Series.pointPatterns[{index}].{property} must be an opaque RGB color like #336699"
                 )));
             }
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_series_point_fill_hidden(series: &Node) -> Result<()> {
+    const MAX_POINT_INDEX: u64 = 1_048_575;
+    let Some(value) = series.props.get("pointFillHidden") else {
+        return Ok(());
+    };
+    let Some(indices) = value.as_array() else {
+        return Err(Error::Compile(
+            "Series.pointFillHidden must be an array of zero-based point indices; use `[1, 3]`"
+                .into(),
+        ));
+    };
+    if indices.is_empty() {
+        return Err(Error::Compile(
+            "Series.pointFillHidden cannot be empty; add an index or omit the property".into(),
+        ));
+    }
+    let point_count = series
+        .props
+        .get("values")
+        .and_then(Value::as_str)
+        .and_then(|formula| formula.split_once('!'))
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length);
+    let colors = series.props.get("pointColors").and_then(Value::as_object);
+    let patterns = series.props.get("pointPatterns").and_then(Value::as_object);
+    let mut seen = BTreeSet::new();
+    for value in indices {
+        let Some(index) = value.as_u64().filter(|index| *index <= MAX_POINT_INDEX) else {
+            return Err(Error::Compile(
+                "Series.pointFillHidden indices must be integers from 0 through 1,048,575".into(),
+            ));
+        };
+        if !seen.insert(index) {
+            return Err(Error::Compile(format!(
+                "Series.pointFillHidden repeats index {index}; list each point once"
+            )));
+        }
+        if point_count.is_some_and(|count| index >= u64::from(count)) {
+            return Err(Error::Compile(format!(
+                "Series.pointFillHidden index {index} is outside Series.values; choose an index within the source range"
+            )));
+        }
+        let key = index.to_string();
+        if colors.is_some_and(|colors| colors.contains_key(&key)) {
+            return Err(Error::Compile(format!(
+                "Series.pointFillHidden index {index} conflicts with pointColors[{index}]; choose one fill representation"
+            )));
+        }
+        if patterns.is_some_and(|patterns| patterns.contains_key(&key)) {
+            return Err(Error::Compile(format!(
+                "Series.pointFillHidden index {index} conflicts with pointPatterns[{index}]; choose one fill representation"
+            )));
         }
     }
     Ok(())

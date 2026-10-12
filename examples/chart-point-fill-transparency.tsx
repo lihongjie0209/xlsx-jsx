@@ -17,6 +17,7 @@ export default <Workbook>
         pointColorTransparencies={{1: 25}}
         pointLines={{1: {color: "#17365D", width: 1.25, dash: "dash"}, 2: {hidden: true}}}
         pointPatterns={{2: {pattern: "pct20", foregroundColor: "#C00000", backgroundColor: "#FFF2CC"}}}
+        pointFillHidden={[0]}
       />
     </Chart>
   </Worksheet>

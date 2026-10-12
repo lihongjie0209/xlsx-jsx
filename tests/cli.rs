@@ -811,14 +811,15 @@ fn spec_exposes_chart_components_and_properties() {
 }
 
 #[test]
-fn spec_exposes_chart_point_line_formatting() {
+fn spec_exposes_chart_point_formatting() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["spec", "--format", "json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("pointLines"))
-        .stdout(predicate::str::contains("pointPatterns"));
+        .stdout(predicate::str::contains("pointPatterns"))
+        .stdout(predicate::str::contains("pointFillHidden"));
 }
 
 #[test]
@@ -8213,6 +8214,77 @@ fn point_patterns_and_solid_point_colors_conflict_at_same_index() {
         .failure()
         .stderr(predicate::str::contains(
             "pointPatterns[1] conflicts with pointColors[1]",
+        ));
+}
+
+#[test]
+fn reverses_external_point_no_fill_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("point-no-fill.xlsx");
+    let source_path = directory.path().join("point-no-fill.tsx");
+    let rebuilt_path = directory.path().join("point-no-fill-rebuilt.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_number(0, 0, 10).unwrap();
+    worksheet.write_number(1, 0, 20).unwrap();
+    let mut outline = ChartLine::new();
+    outline.set_color("#17365D").set_width(1.25);
+    let mut point_format = ChartFormat::new();
+    point_format.set_no_fill().set_line(&outline);
+    let points = [
+        ChartPoint::new(),
+        ChartPoint::new().set_format(&mut point_format),
+    ];
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_values("Data!$A$1:$A$2")
+        .set_points(&points);
+    worksheet.insert_chart(4, 2, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(source.contains("pointFillHidden={[1]}"), "{source}");
+    assert!(source.contains("pointLines={{1:"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(rebuilt_xml.contains("<a:noFill/>"), "{rebuilt_xml}");
+    assert!(rebuilt_xml.contains("val=\"17365D\""), "{rebuilt_xml}");
+}
+
+#[test]
+fn point_fill_hidden_conflicts_with_other_fill_at_same_index() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source_path = directory.path().join("point-no-fill-conflict.tsx");
+    std::fs::write(
+        &source_path,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B3" pointColors={{1: "#336699"}} pointFillHidden={[1]} /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(&source_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "pointFillHidden index 1 conflicts with pointColors[1]",
         ));
 }
 

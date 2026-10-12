@@ -297,6 +297,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   Reverse preserves pattern and color values without a manifest; gradient fills,
   alpha, theme/indexed colors, and malformed or out-of-range point indices are
   rejected with repair guidance.
+  `Series.pointFillHidden?: number[]` disables the point fill through
+  `ChartFormat::set_no_fill()`; indices are unique, zero-based points within the
+  `Series.values` range. It can be combined with `pointLines` at the same index,
+  but conflicts with `pointColors` or `pointPatterns` there. Reverse preserves
+  external point no-fill without a manifest.
 - A `Trendline` child of `Series` supports `type="linear" | "exponential" |
   "logarithmic" | "polynomial" | "power" | "movingAverage"`, optional
   `order` (2–5, required for polynomial) and `period` (2–3, required for
