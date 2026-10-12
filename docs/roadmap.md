@@ -29,6 +29,9 @@ reported as complete.
 
 ## Recently delivered
 
+- Cell, row, and column formats now preserve horizontal justify alignment in
+  both directions. Table-column justify DXFs remain deferred because the pinned
+  writer can change explicitly formatted worksheet cells during compilation.
 - Excel table autofilter criteria now support list-value filters and one/two
   custom comparisons with `and`/`or`; table-relative column indices are
   validated and reverse without a manifest. Date grouping, top-10, dynamic,
