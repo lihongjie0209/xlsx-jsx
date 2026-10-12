@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.85
+Version: 1.86
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -1267,6 +1267,16 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `bandedColumns?`, `firstColumn?`, and `lastColumn?` control the matching
   table flags and default to true, true, false, false, and false. Table ranges
   must not overlap each other, worksheet auto-filters, or merged cells.
+  `autoFilterColumns?: FilterColumn[]` adds list-value or custom comparison
+  criteria to the table's filter dropdowns, using zero-based column indices
+  relative to the table's first column and the same criterion shape as
+  `Worksheet.autoFilterColumns`. Criteria require `autoFilter` to be enabled
+  and must be within the table width. List filters preserve selected strings
+  and optional blank inclusion; custom filters allow one or two comparisons
+  combined with `and` or `or`. Date grouping, top-10, dynamic, color/icon, and
+  other unmodeled filter kinds remain rejected. The pinned writer has no Table
+  filter-criteria API, so compilation writes modeled criteria into generated
+  table XML; reverse reads external table criteria without a manifest.
   Header cells must be unique, non-empty strings; explicit header-cell formats
   are preserved as ordinary `Cell` format properties independently of table style.
   `totalsRow?` enables the final row as a totals row (default false). Optional

@@ -36,7 +36,7 @@ and intentionally deferred lower-frequency features.
 | Feature | Build | Reverse external XLSX | Status |
 |---|---:|---:|---|
 | Worksheets and positional rows/cells | yes | yes | v1 |
-| Rectangular tables, totals rows, column totals, calculated columns, and formats | yes | yes | `Table` supports headered and headerless ranges (`headerRow={false}`); headerless `TableColumn` declarations preserve explicit OOXML column names. Columns also support totals/formulas and bold/italic/strikethrough/underline/script/theme font scheme/font name/size/family/charset/RGB/theme/solid and patterned fills/number-format/four-edge-border/alignment/wrap differential data formats; script, font metadata, and alignment are restored in the referenced DXF despite upstream writer omissions; `headerFormat` supports the full Cell-format subset and reverses as header `Cell` formatting; unsupported dxf properties are rejected |
+| Rectangular tables, totals rows, column totals, calculated columns, and formats | yes | yes | `Table` supports headered/headerless ranges, list-value and custom comparison auto-filter criteria, totals/formulas, accessibility metadata, differential formats, and header formatting; unsupported filter kinds and dxf properties are rejected |
 | Worksheet visibility | yes | yes | `visibility="hidden"` or `"veryHidden"`; first worksheet stays visible |
 | Active worksheet | yes | yes | `active={true}` selects one visible worksheet when opened; default is the first worksheet |
 | Workbook theme | yes | yes (supported preset) | `theme="excel2023"` selects the Excel 2023 Office/Aptos theme; unknown custom theme XML is rejected rather than silently replaced |

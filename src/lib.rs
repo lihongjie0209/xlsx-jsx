@@ -1657,39 +1657,49 @@ fn validate_auto_filter_columns(sheet: &Node, sheet_name: &str) -> Result<()> {
             "Worksheet.autoFilterColumns on `{sheet_name}` requires Worksheet.autoFilter; add autoFilter with the complete range"
         )));
     };
+    validate_filter_columns(columns, reference, "Worksheet", sheet_name)
+}
+
+fn validate_filter_columns(
+    columns: &Value,
+    reference: &str,
+    owner: &str,
+    owner_name: &str,
+) -> Result<()> {
     let (_, first_column, _, last_column) = parse_a1_range(reference).ok_or_else(|| {
         Error::Compile(format!(
-            "Worksheet.autoFilterColumns on `{sheet_name}` cannot use invalid Worksheet.autoFilter `{reference}`; repair the range first"
+            "{owner}.autoFilterColumns on `{owner_name}` cannot use invalid range `{reference}`; repair the range first"
         ))
     })?;
     let Value::Array(columns) = columns else {
         return Err(Error::Compile(format!(
-            "Worksheet.autoFilterColumns on `{sheet_name}` must be an array of filter objects; provide a JSON-compatible list"
+            "{owner}.autoFilterColumns on `{owner_name}` must be an array of filter objects; provide a JSON-compatible list"
         )));
     };
     if columns.is_empty() {
         return Err(Error::Compile(format!(
-            "Worksheet.autoFilterColumns on `{sheet_name}` must contain at least one column; remove the property or add criteria"
+            "{owner}.autoFilterColumns on `{owner_name}` must contain at least one column; remove the property or add criteria"
         )));
     }
     let mut seen_columns = std::collections::HashSet::new();
     let width = u64::from(last_column - first_column + 1);
     for (index, filter) in columns.iter().enumerate() {
-        validate_auto_filter_column(filter, index, width, &mut seen_columns, sheet_name)?;
+        validate_filter_column(filter, index, width, &mut seen_columns, owner, owner_name)?;
     }
     Ok(())
 }
 
-fn validate_auto_filter_column(
+fn validate_filter_column(
     filter: &Value,
     index: usize,
     width: u64,
     seen_columns: &mut std::collections::HashSet<u64>,
-    sheet_name: &str,
+    owner: &str,
+    owner_name: &str,
 ) -> Result<()> {
     let Some(object) = filter.as_object() else {
         return Err(Error::Compile(format!(
-            "Worksheet.autoFilterColumns[{index}] on `{sheet_name}` must be an object with column and filter criteria; repair this entry"
+            "{owner}.autoFilterColumns[{index}] on `{owner_name}` must be an object with column and filter criteria; repair this entry"
         )));
     };
     if object
@@ -1697,37 +1707,42 @@ fn validate_auto_filter_column(
         .any(|key| !["column", "values", "includeBlanks", "customFilters"].contains(&key.as_str()))
     {
         return Err(Error::Compile(format!(
-            "Worksheet.autoFilterColumns[{index}] on `{sheet_name}` has an unsupported property; use column, values, includeBlanks, and/or customFilters"
+            "{owner}.autoFilterColumns[{index}] on `{owner_name}` has an unsupported property; use column, values, includeBlanks, and/or customFilters"
         )));
     }
     let column = object.get("column").and_then(Value::as_u64).ok_or_else(|| {
         Error::Compile(format!(
-            "Worksheet.autoFilterColumns[{index}].column on `{sheet_name}` must be a zero-based integer; use a relative index such as 0"
+            "{owner}.autoFilterColumns[{index}].column on `{owner_name}` must be a zero-based integer; use a relative index such as 0"
         ))
     })?;
     if column >= width {
+        let range_label = if owner == "Worksheet" {
+            "autoFilter"
+        } else {
+            "filter"
+        };
         return Err(Error::Compile(format!(
-            "Worksheet.autoFilterColumns[{index}].column {column} is outside autoFilter width {width}; use an index from 0 to {}",
+            "{owner}.autoFilterColumns[{index}].column {column} is outside {range_label} width {width}; use an index from 0 to {}",
             width - 1
         )));
     }
     if !seen_columns.insert(column) {
         return Err(Error::Compile(format!(
-            "Worksheet.autoFilterColumns column {column} is repeated; combine criteria in one entry"
+            "{owner}.autoFilterColumns column {column} is repeated; combine criteria in one entry"
         )));
     }
     if let Some(include_blanks) = object.get("includeBlanks")
         && include_blanks.as_bool().is_none()
     {
         return Err(Error::Compile(format!(
-            "Worksheet.autoFilterColumns[{index}].includeBlanks must be boolean; use true when blank cells should match"
+            "{owner}.autoFilterColumns[{index}].includeBlanks must be boolean; use true when blank cells should match"
         )));
     }
     let has_custom = object.contains_key("customFilters");
     let has_list = object.contains_key("values") || object.contains_key("includeBlanks");
     if has_custom && has_list {
         return Err(Error::Compile(format!(
-            "Worksheet.autoFilterColumns[{index}] cannot combine customFilters with values or includeBlanks; use exactly one filter kind"
+            "{owner}.autoFilterColumns[{index}] cannot combine customFilters with values or includeBlanks; use exactly one filter kind"
         )));
     }
     if let Some(values) = object.get("values") {
@@ -1740,7 +1755,7 @@ fn validate_auto_filter_column(
         || object.get("includeBlanks").and_then(Value::as_bool) == Some(true);
     if !has_list_criteria && !has_custom {
         return Err(Error::Compile(format!(
-            "Worksheet.autoFilterColumns[{index}] must have list criteria or customFilters; provide selected values, includeBlanks=true, or custom conditions"
+            "{owner}.autoFilterColumns[{index}] must have list criteria or customFilters; provide selected values, includeBlanks=true, or custom conditions"
         )));
     }
     Ok(())
@@ -9796,6 +9811,7 @@ fn validate_table(
             "totalsRow",
             "altText",
             "altTextTitle",
+            "autoFilterColumns",
         ],
         "Table",
     )?;
@@ -9856,6 +9872,15 @@ fn validate_table(
     }
     validate_table_flags(table)?;
     validate_table_accessibility_text(table)?;
+    if let Some(columns) = table.props.get("autoFilterColumns") {
+        if table.props.get("autoFilter").and_then(Value::as_bool) == Some(false) {
+            return Err(Error::Compile(
+                "Table.autoFilterColumns requires Table.autoFilter to be enabled; remove the criteria or enable the table filter"
+                    .into(),
+            ));
+        }
+        validate_filter_columns(columns, range_text, "Table", name)?;
+    }
     let width = usize::from(range.3 - range.1 + 1);
     if !table.children.is_empty() && table.children.len() != width {
         return Err(Error::Compile(format!(
@@ -16085,6 +16110,70 @@ mod tests {
         })]);
 
         assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn accepts_table_autofilter_criteria_with_relative_columns() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"A1:B3","name":"SalesTable","autoFilterColumns":[
+                    {"column":0,"values":["Tea","Coffee"]},
+                    {"column":1,"customFilters":{"logic":"and","conditions":[
+                        {"operator":"greaterThanOrEqual","value":"10"},
+                        {"operator":"lessThan","value":"20"}
+                    ]}}
+                ]},"children":[]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Product"]},{"type":"Cell","props":{},"children":["Amount"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Tea"]},{"type":"Cell","props":{},"children":[12]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Coffee"]},{"type":"Cell","props":{},"children":[18]}]}
+            ]
+        })]);
+
+        assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn rejects_table_autofilter_criteria_when_filter_is_disabled() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"A1:B3","name":"SalesTable","autoFilter":false,"autoFilterColumns":[{"column":0,"values":["Tea"]}]},"children":[]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Product"]},{"type":"Cell","props":{},"children":["Amount"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Tea"]},{"type":"Cell","props":{},"children":[12]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Coffee"]},{"type":"Cell","props":{},"children":[18]}]}
+            ]
+        })]);
+
+        let error = input
+            .validate()
+            .expect_err("table filter criteria require an enabled filter");
+        assert!(
+            error
+                .to_string()
+                .contains("Table.autoFilterColumns requires Table.autoFilter")
+        );
+        assert!(error.to_string().contains("enable the table filter"));
+    }
+
+    #[test]
+    fn rejects_table_autofilter_criteria_outside_table_width() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"B1:C3","name":"SalesTable","autoFilterColumns":[{"column":2,"values":["Tea"]}]},"children":[]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Product"]},{"type":"Cell","props":{},"children":["Amount"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Tea"]},{"type":"Cell","props":{},"children":[12]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Coffee"]},{"type":"Cell","props":{},"children":[18]}]}
+            ]
+        })]);
+
+        let error = input
+            .validate()
+            .expect_err("table filter column must fit the table width");
+        assert!(
+            error
+                .to_string()
+                .contains("Table.autoFilterColumns[0].column 2")
+        );
+        assert!(error.to_string().contains("outside filter width 2"));
     }
 
     #[test]

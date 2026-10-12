@@ -390,6 +390,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("xlsx-jsx IR v1"))
         .stdout(predicate::str::contains("fillColor"))
         .stdout(predicate::str::contains("autoFit"))
+        .stdout(predicate::str::contains("autoFilterColumns"))
+        .stdout(predicate::str::contains("autoFilterColumn"))
         .stdout(predicate::str::contains("fillPattern"))
         .stdout(predicate::str::contains("fillForegroundColor"))
         .stdout(predicate::str::contains("fillBackgroundColor"))
@@ -17098,6 +17100,78 @@ fn external_tables_survive_reverse_and_recompile() {
         std::fs::read_to_string(second_reverse).expect("second reverse output exists"),
         source
     );
+}
+
+#[test]
+fn table_autofilter_criteria_reverse_and_recompile_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("table-filter.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_row(0, 0, ["Product", "Amount"])
+        .expect("headers write");
+    worksheet
+        .write_row(1, 0, ["Tea", "12"])
+        .expect("first row writes");
+    worksheet
+        .write_row(2, 0, ["Coffee", "18"])
+        .expect("second row writes");
+    let columns = [
+        rust_xlsxwriter::TableColumn::new().set_header("Product"),
+        rust_xlsxwriter::TableColumn::new().set_header("Amount"),
+    ];
+    worksheet
+        .add_table(
+            0,
+            0,
+            2,
+            1,
+            &rust_xlsxwriter::Table::new()
+                .set_name("SalesTable")
+                .set_columns(&columns),
+        )
+        .expect("table adds");
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/tables/table1.xml", |xml| {
+        xml.replace(
+            "<autoFilter ref=\"A1:B3\"/>",
+            "<autoFilter ref=\"A1:B3\"><filterColumn colId=\"0\"><filters><filter val=\"Tea\"/><filter val=\"Coffee\"/></filters></filterColumn><filterColumn colId=\"1\"><customFilters and=\"1\"><customFilter operator=\"greaterThanOrEqual\" val=\"10\"/><customFilter operator=\"lessThan\" val=\"20\"/></customFilters></filterColumn></autoFilter>",
+        )
+    });
+
+    let reversed = directory.path().join("table-filter.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains(
+        "autoFilterColumns={[{\"column\":0,\"values\":[\"Tea\",\"Coffee\"]},{\"column\":1,\"customFilters\":{\"logic\":\"and\",\"conditions\":[{\"operator\":\"greaterThanOrEqual\",\"value\":\"10\"},{\"operator\":\"lessThan\",\"value\":\"20\"}]}}]}"
+    ), "{source}");
+
+    let rebuilt = directory.path().join("table-filter-roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+    let mut archive = ZipArchive::new(std::fs::File::open(rebuilt).expect("rebuilt XLSX opens"))
+        .expect("rebuilt XLSX is zipped");
+    let mut table_xml = String::new();
+    archive
+        .by_name("xl/tables/table1.xml")
+        .expect("rebuilt table part exists")
+        .read_to_string(&mut table_xml)
+        .expect("rebuilt table XML reads");
+    assert!(table_xml.contains(
+        "<filterColumn colId=\"0\"><filters><filter val=\"Tea\"/><filter val=\"Coffee\"/></filters></filterColumn><filterColumn colId=\"1\"><customFilters and=\"1\"><customFilter operator=\"greaterThanOrEqual\" val=\"10\"/><customFilter operator=\"lessThan\" val=\"20\"/></customFilters></filterColumn>"
+    ), "{table_xml}");
 }
 
 #[test]

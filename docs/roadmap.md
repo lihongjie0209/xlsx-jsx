@@ -18,6 +18,10 @@ completed batch; they do not block work on the next batch.
 
 ## Recently delivered
 
+- Excel table autofilter criteria now support list-value filters and one/two
+  custom comparisons with `and`/`or`; table-relative column indices are
+  validated and reverse without a manifest. Date grouping, top-10, dynamic,
+  color/icon, and other filter kinds remain deferred.
 - The Excel 2023 Office/Aptos workbook theme now has an explicit preset and
   external reverse recognition; arbitrary custom theme payloads remain deferred
   because they also need matching default-format metadata.

@@ -591,6 +591,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     })?;
     let x14_icon_normalization = collect_x14_icon_normalization_targets(ir)?;
     let table_dxf_targets = collect_table_dxf_targets(ir)?;
+    let table_filter_targets = collect_table_filter_targets(ir)?;
     let literal_error_count = count_literal_error_cells(ir);
     let strip_autofit_flags = ir.workbook.children.iter().any(|child| {
         child
@@ -601,6 +602,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     });
     if !x14_icon_normalization.is_empty()
         || !table_dxf_targets.is_empty()
+        || !table_filter_targets.is_empty()
         || literal_error_count > 0
         || strip_autofit_flags
     {
@@ -609,10 +611,131 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             &x14_icon_normalization,
             literal_error_count,
             &table_dxf_targets,
+            &table_filter_targets,
             strip_autofit_flags,
         )?;
     }
     Ok(())
+}
+
+fn collect_table_filter_targets(
+    ir: &IrEnvelope,
+) -> xlsx_jsx::Result<HashMap<String, Vec<WorksheetFilterColumn>>> {
+    let mut targets = HashMap::new();
+    for worksheet_value in &ir.workbook.children {
+        let worksheet: Node = serde_json::from_value(worksheet_value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if worksheet.r#type != "Worksheet" {
+            continue;
+        }
+        for table_value in &worksheet.children {
+            let table: Node = serde_json::from_value(table_value.clone())
+                .map_err(|error| Error::Compile(error.to_string()))?;
+            if table.r#type != "Table" {
+                continue;
+            }
+            let Some(filters) = table.props.get("autoFilterColumns") else {
+                continue;
+            };
+            let name = table
+                .props
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::Compile("Table.name is required".into()))?;
+            let filters: Vec<WorksheetFilterColumn> = serde_json::from_value(filters.clone())
+                .map_err(|error| {
+                    Error::Compile(format!(
+                        "invalid Table.autoFilterColumns on `{name}`: {error}"
+                    ))
+                })?;
+            targets.insert(name.to_owned(), filters);
+        }
+    }
+    Ok(targets)
+}
+
+fn patch_table_auto_filter_criteria(
+    xml: &str,
+    part: &str,
+    targets: &HashMap<String, Vec<WorksheetFilterColumn>>,
+) -> xlsx_jsx::Result<(String, Vec<String>)> {
+    let mut output = xml.to_owned();
+    let mut patched = Vec::new();
+    for (table_name, filters) in targets {
+        let marker = format!("displayName=\"{table_name}\"");
+        let Some(table_start) = output.find(&marker) else {
+            continue;
+        };
+        if output[table_start + marker.len()..].contains(&marker) {
+            return Err(Error::Compile(format!(
+                "generated table part `{part}` repeats displayName `{table_name}`; repair table naming before compiling filter criteria"
+            )));
+        }
+        let start = output[..table_start]
+            .rfind("<autoFilter")
+            .filter(|start| output[*start..table_start].find("</autoFilter>").is_none())
+            .or_else(|| output[table_start..].find("<autoFilter").map(|offset| table_start + offset))
+            .ok_or_else(|| {
+                Error::Compile(format!(
+                    "generated table `{table_name}` has filter criteria but no autoFilter element; keep Table.autoFilter enabled"
+                ))
+            })?;
+        let end = output[start..]
+            .find("/>")
+            .map(|offset| start + offset + 2)
+            .ok_or_else(|| {
+                Error::Compile(format!(
+                    "generated table `{table_name}` autoFilter is not the expected empty writer element in `{part}`"
+                ))
+            })?;
+        let start_tag = &output[start..end];
+        let opening = start_tag.strip_suffix("/>").ok_or_else(|| {
+            Error::Compile(format!(
+                "generated table `{table_name}` autoFilter is not self-closing in `{part}`"
+            ))
+        })?;
+        let criteria = render_table_filter_criteria(filters);
+        output.replace_range(start..end, &format!("{opening}>{criteria}</autoFilter>"));
+        patched.push(table_name.clone());
+    }
+    Ok((output, patched))
+}
+
+fn render_table_filter_criteria(filters: &[WorksheetFilterColumn]) -> String {
+    let mut xml = String::new();
+    for filter in filters {
+        let _ = write!(xml, "<filterColumn colId=\"{}\">", filter.column);
+        if let Some(custom) = &filter.custom_filters {
+            let and = custom.logic == "and";
+            let _ = write!(
+                xml,
+                "<customFilters{}>",
+                if and { " and=\"1\"" } else { "" }
+            );
+            for condition in &custom.conditions {
+                let operator = condition
+                    .operator
+                    .as_deref()
+                    .map(|value| format!(" operator=\"{value}\""))
+                    .unwrap_or_default();
+                let value = quick_xml::escape::escape(&condition.value);
+                let _ = write!(xml, "<customFilter{operator} val=\"{value}\"/>");
+            }
+            xml.push_str("</customFilters>");
+        } else {
+            let blank = filter.include_blanks == Some(true);
+            let _ = write!(xml, "<filters{}>", if blank { " blank=\"1\"" } else { "" });
+            if let Some(values) = &filter.values {
+                for value in values {
+                    let value = quick_xml::escape::escape(value);
+                    let _ = write!(xml, "<filter val=\"{value}\"/>");
+                }
+            }
+            xml.push_str("</filters>");
+        }
+        xml.push_str("</filterColumn>");
+    }
+    xml
 }
 
 fn preapply_image_cell_dimensions(
@@ -1046,6 +1169,7 @@ fn normalize_generated_xlsx(
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
     table_dxf_targets: &HashMap<String, BTreeMap<usize, TableDxfMetadata>>,
+    table_filter_targets: &HashMap<String, Vec<WorksheetFilterColumn>>,
     strip_autofit_flags: bool,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
@@ -1075,6 +1199,7 @@ fn normalize_generated_xlsx(
         targets_by_part,
         literal_error_count,
         table_dxf_targets,
+        table_filter_targets,
         strip_autofit_flags,
     );
     if let Err(error) = rewrite_result {
@@ -1097,12 +1222,17 @@ fn normalize_generated_xlsx(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Package normalization preserves ordered ZIP metadata while applying several independent, audited XML repairs."
+)]
 fn rewrite_generated_xlsx(
     path: &std::path::Path,
     temporary_file: std::fs::File,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
     table_dxf_targets: &HashMap<String, BTreeMap<usize, TableDxfMetadata>>,
+    table_filter_targets: &HashMap<String, Vec<WorksheetFilterColumn>>,
     strip_autofit_flags: bool,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
@@ -1114,6 +1244,7 @@ fn rewrite_generated_xlsx(
     let dxf_metadata = collect_table_dxf_indices(&mut archive, table_dxf_targets)?;
     let mut writer = ZipWriter::new(temporary_file);
     let mut patched_parts = std::collections::HashSet::new();
+    let mut patched_table_filters = std::collections::HashSet::new();
     let mut patched_error_cells = 0_usize;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| {
@@ -1160,6 +1291,21 @@ fn rewrite_generated_xlsx(
                 Error::Compile(format!("generated styles part is not UTF-8 XML: {error}"))
             })?;
             bytes = patch_table_dxfs(&xml, &dxf_metadata)?.into_bytes();
+        } else if !table_filter_targets.is_empty()
+            && name.starts_with("xl/tables/table")
+            && std::path::Path::new(&name)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"))
+        {
+            let xml = String::from_utf8(bytes).map_err(|error| {
+                Error::Compile(format!(
+                    "generated table `{name}` is not UTF-8 XML: {error}"
+                ))
+            })?;
+            let (xml, patched_names) =
+                patch_table_auto_filter_criteria(&xml, &name, table_filter_targets)?;
+            patched_table_filters.extend(patched_names);
+            bytes = xml.into_bytes();
         }
         writer
             .start_file(
@@ -1193,6 +1339,16 @@ fn rewrite_generated_xlsx(
     if patched_error_cells != literal_error_count {
         return Err(Error::Compile(format!(
             "normalized {patched_error_cells} of {literal_error_count} literal error cells; repair the worksheet serialization before building"
+        )));
+    }
+    let missing_table_filters = table_filter_targets
+        .keys()
+        .filter(|name| !patched_table_filters.contains(*name))
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(name) = missing_table_filters.first() {
+        return Err(Error::Compile(format!(
+            "generated XLSX is missing a table part for Table `{name}` with filter criteria; preserve its table declaration and generated table relationship"
         )));
     }
     let output_file = writer.finish().map_err(|error| {
@@ -7455,7 +7611,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
             render_ignored_errors(&mut output, ignored_errors);
         }
         if let Some(tables) = sheet_metadata.map(|metadata| &metadata.tables) {
-            render_tables(&mut output, tables);
+            render_tables(&mut output, tables)?;
         }
         if let Some(notes) = sheet_metadata.map(|metadata| &metadata.notes) {
             render_notes(&mut output, notes);
@@ -7703,7 +7859,7 @@ fn render_worksheet_rows(
     Ok(())
 }
 
-fn render_tables(output: &mut String, tables: &[WorksheetTable]) {
+fn render_tables(output: &mut String, tables: &[WorksheetTable]) -> xlsx_jsx::Result<()> {
     for table in tables {
         let _ = write!(
             output,
@@ -7740,6 +7896,16 @@ fn render_tables(output: &mut String, tables: &[WorksheetTable]) {
         if let Some(value) = &table.alt_text_title {
             let _ = write!(output, " altTextTitle={{{value:?}}}");
         }
+        if !table.auto_filter_columns.is_empty() {
+            let serialized =
+                serde_json::to_string(&table.auto_filter_columns).map_err(|error| {
+                    Error::Reverse(format!(
+                        "cannot serialize table `{}` filter criteria: {error}",
+                        table.name
+                    ))
+                })?;
+            let _ = write!(output, " autoFilterColumns={{{serialized}}}");
+        }
         if table.header_row && table.columns.iter().all(WorksheetTableColumn::is_empty) {
             output.push_str(" />\n");
         } else {
@@ -7773,6 +7939,7 @@ fn render_tables(output: &mut String, tables: &[WorksheetTable]) {
             output.push_str("    </Table>\n");
         }
     }
+    Ok(())
 }
 
 fn render_notes(output: &mut String, notes: &[WorksheetNote]) {
@@ -11937,11 +12104,19 @@ fn parse_table_xml(
     let mut in_extension = false;
     let mut extension_has_table = false;
     let mut saw_accessibility_extension = false;
+    let mut auto_filter_range = None;
+    let mut auto_filter_audit = AutoFilterAuditState::default();
     loop {
         match reader.read_event() {
             Ok(Event::Start(event) | Event::Empty(event)) => {
                 let tag = event.local_name();
                 let tag = tag.as_ref();
+                auto_filter_audit.start(
+                    &event,
+                    String::from_utf8_lossy(tag).as_ref(),
+                    part,
+                    reader.decoder(),
+                )?;
                 let mut attrs = HashMap::new();
                 for attribute in event.attributes().with_checks(false) {
                     let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
@@ -12143,7 +12318,13 @@ fn parse_table_xml(
                     b"autoFilter" => {
                         if attrs.keys().any(|key| key != "ref") {
                             return Err(Error::Reverse(format!(
-                                "table `{}` has filter criteria that are not supported; remove the table filter criteria or add explicit DSL support",
+                                "table `{}` autoFilter has unsupported attributes; preserve only ref and supported list/custom criteria",
+                                table.name
+                            )));
+                        }
+                        if auto_filter_range.is_some() {
+                            return Err(Error::Reverse(format!(
+                                "table `{}` contains multiple autoFilter elements; retain one table filter",
                                 table.name
                             )));
                         }
@@ -12169,8 +12350,18 @@ fn parse_table_xml(
                                 table.name
                             )));
                         }
+                        auto_filter_range = attrs.get("ref").cloned();
+                        if auto_filter_range.is_none() {
+                            return Err(Error::Reverse(format!(
+                                "table `{}` autoFilter is missing its ref range; repair the table XML",
+                                table.name
+                            )));
+                        }
                         table.auto_filter = true;
                     }
+                    b"filterColumn" | b"filters" | b"filter" | b"customFilters"
+                    | b"customFilter"
+                        if auto_filter_range.is_some() => {}
                     b"tableStyleInfo" => {
                         saw_style_info = true;
                         if attrs.keys().any(|key| {
@@ -12209,38 +12400,35 @@ fn parse_table_xml(
                     }
                 }
             }
-            Ok(Event::End(event)) if event.local_name().as_ref() == b"ext" => {
-                if !in_extension {
-                    return Err(Error::Reverse(format!(
-                        "table part `{part}` has an unmatched extension end tag"
-                    )));
+            Ok(Event::End(event)) => {
+                auto_filter_audit.end(&event, part, &mut table.auto_filter_columns)?;
+                match event.local_name().as_ref() {
+                    b"ext" => {
+                        if !in_extension {
+                            return Err(Error::Reverse(format!(
+                                "table part `{part}` has an unmatched extension end tag"
+                            )));
+                        }
+                        if !extension_has_table {
+                            return Err(Error::Reverse(format!(
+                                "table part `{part}` contains an empty extension; remove it or add supported x14 accessibility metadata"
+                            )));
+                        }
+                        in_extension = false;
+                    }
+                    b"extLst" => {
+                        if !in_extension_list || in_extension {
+                            return Err(Error::Reverse(format!(
+                                "table part `{part}` has malformed extension nesting"
+                            )));
+                        }
+                        in_extension_list = false;
+                    }
+                    b"tableColumns" => in_columns = false,
+                    b"tableColumn" => current_column = None,
+                    b"calculatedColumnFormula" | b"totalsRowFormula" => formula_element = None,
+                    _ => {}
                 }
-                if !extension_has_table {
-                    return Err(Error::Reverse(format!(
-                        "table part `{part}` contains an empty extension; remove it or add supported x14 accessibility metadata"
-                    )));
-                }
-                in_extension = false;
-            }
-            Ok(Event::End(event)) if event.local_name().as_ref() == b"extLst" => {
-                if !in_extension_list || in_extension {
-                    return Err(Error::Reverse(format!(
-                        "table part `{part}` has malformed extension nesting"
-                    )));
-                }
-                in_extension_list = false;
-            }
-            Ok(Event::End(event)) if event.local_name().as_ref() == b"tableColumns" => {
-                in_columns = false;
-            }
-            Ok(Event::End(event)) if event.local_name().as_ref() == b"tableColumn" => {
-                current_column = None;
-            }
-            Ok(Event::End(event))
-                if event.local_name().as_ref() == b"calculatedColumnFormula"
-                    || event.local_name().as_ref() == b"totalsRowFormula" =>
-            {
-                formula_element = None;
             }
             Ok(Event::Text(event)) if formula_element.is_some() => {
                 let value = event
@@ -12273,6 +12461,11 @@ fn parse_table_xml(
             "table part `{part}` has incomplete extension nesting; repair the x14 accessibility metadata"
         )));
     }
+    auto_filter_audit.finish_table(
+        part,
+        auto_filter_range.as_deref(),
+        &table.auto_filter_columns,
+    )?;
     if !saw_root || table.headers.is_empty() {
         return Err(Error::Reverse(format!(
             "table part `{part}` is missing its root or columns"
@@ -30216,6 +30409,7 @@ struct WorksheetTable {
     name: String,
     style: String,
     auto_filter: bool,
+    auto_filter_columns: Vec<WorksheetFilterColumn>,
     banded_rows: bool,
     banded_columns: bool,
     first_column: bool,
@@ -30316,7 +30510,7 @@ struct ColorScaleThreshold {
     color: String,
 }
 
-#[derive(Default, serde::Serialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct WorksheetFilterColumn {
     column: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -30327,13 +30521,13 @@ struct WorksheetFilterColumn {
     custom_filters: Option<WorksheetCustomFilters>,
 }
 
-#[derive(Default, serde::Serialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 struct WorksheetCustomFilters {
     logic: String,
     conditions: Vec<WorksheetCustomFilterCondition>,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct WorksheetCustomFilterCondition {
     #[serde(skip_serializing_if = "Option::is_none")]
     operator: Option<String>,
@@ -30591,7 +30785,7 @@ impl AutoFilterAuditState {
         &mut self,
         event: &quick_xml::events::BytesEnd<'_>,
         part: &str,
-        metadata: &mut WorksheetMetadata,
+        filters: &mut Vec<WorksheetFilterColumn>,
     ) -> xlsx_jsx::Result<()> {
         match event.local_name().as_ref() {
             b"filters" => self.in_filters = false,
@@ -30617,7 +30811,7 @@ impl AutoFilterAuditState {
                         "worksheet `{part}` filterColumn must contain exactly one supported list or custom filter; repair its criteria"
                     )));
                 }
-                metadata.auto_filter_columns.push(filter);
+                filters.push(filter);
             }
             _ => {}
         }
@@ -30673,6 +30867,49 @@ impl AutoFilterAuditState {
             return Err(Error::Reverse(format!(
                 "worksheet `{part}` declares filterMode=true without filter criteria; remove filterMode or add filterColumn criteria"
             )));
+        }
+        Ok(())
+    }
+
+    fn finish_table(
+        &self,
+        part: &str,
+        reference: Option<&str>,
+        filters: &[WorksheetFilterColumn],
+    ) -> xlsx_jsx::Result<()> {
+        if self.current.is_some() || self.in_filters || self.in_custom_filters {
+            return Err(Error::Reverse(format!(
+                "table `{part}` has incomplete autoFilter criteria; repair filterColumn/filters nesting"
+            )));
+        }
+        let Some(reference) = reference else {
+            if filters.is_empty() {
+                return Ok(());
+            }
+            return Err(Error::Reverse(format!(
+                "table `{part}` contains filter criteria without an autoFilter range; repair the table metadata"
+            )));
+        };
+        let (_, first_column, _, last_column) = parse_a1_range(reference).ok_or_else(|| {
+            Error::Reverse(format!(
+                "table `{part}` has invalid autoFilter range `{reference}`; repair the table XML"
+            ))
+        })?;
+        let width = last_column - first_column + 1;
+        let mut seen = std::collections::HashSet::new();
+        for filter in filters {
+            if filter.column >= width {
+                return Err(Error::Reverse(format!(
+                    "table `{part}` filterColumn colId {} is outside autoFilter width {width}; repair the range or column index",
+                    filter.column
+                )));
+            }
+            if !seen.insert(filter.column) {
+                return Err(Error::Reverse(format!(
+                    "table `{part}` contains duplicate filterColumn colId {}; combine its values",
+                    filter.column
+                )));
+            }
         }
         Ok(())
     }
@@ -31250,7 +31487,7 @@ fn audit_worksheet_xml(
                     in_inline_string = false;
                 }
                 validation_audit.end(&event, part, &mut metadata)?;
-                auto_filter_audit.end(&event, part, &mut metadata)?;
+                auto_filter_audit.end(&event, part, &mut metadata.auto_filter_columns)?;
             }
             Ok(Event::Eof) => break,
             Ok(_) => {}
