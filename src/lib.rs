@@ -12062,6 +12062,7 @@ fn validate_column(column: &Node, column_index: usize) -> Result<()> {
         "min",
         "max",
         "widthPixels",
+        "autoFitWidthPixels",
         "hidden",
         "outlineLevel",
         "collapsed",
@@ -12090,19 +12091,14 @@ fn validate_column(column: &Node, column_index: usize) -> Result<()> {
             column_index + 1
         )));
     }
-    if let Some(width) = column.props.get("widthPixels") {
-        let Some(width) = width.as_u64() else {
-            return Err(Error::Compile(format!(
-                "Column.widthPixels at declaration {} must be an integer from 1 to 1790; use pixel units",
-                column_index + 1
-            )));
-        };
-        if !(1..=1790).contains(&width) {
-            return Err(Error::Compile(format!(
-                "Column.widthPixels at declaration {} must be from 1 to 1790; use a representable pixel width",
-                column_index + 1
-            )));
-        }
+    for property in ["widthPixels", "autoFitWidthPixels"] {
+        validate_column_width(column, column_index, property)?;
+    }
+    if column.props.contains_key("autoFitWidthPixels") && column.props.contains_key("widthPixels") {
+        return Err(Error::Compile(format!(
+            "Column.widthPixels and Column.autoFitWidthPixels are mutually exclusive at declaration {}; keep one width property",
+            column_index + 1
+        )));
     }
     if let Some(hidden) = column.props.get("hidden")
         && hidden.as_bool().is_none()
@@ -12141,6 +12137,25 @@ fn validate_column(column: &Node, column_index: usize) -> Result<()> {
     if !column.children.is_empty() {
         return Err(Error::Compile(format!(
             "Column at declaration {} cannot have children; move cell data into Row components",
+            column_index + 1
+        )));
+    }
+    Ok(())
+}
+
+fn validate_column_width(column: &Node, column_index: usize, property: &str) -> Result<()> {
+    let Some(width) = column.props.get(property) else {
+        return Ok(());
+    };
+    let Some(width) = width.as_u64() else {
+        return Err(Error::Compile(format!(
+            "Column.{property} at declaration {} must be an integer from 1 to 1790; use pixel units",
+            column_index + 1
+        )));
+    };
+    if !(1..=1790).contains(&width) {
+        return Err(Error::Compile(format!(
+            "Column.{property} at declaration {} must be from 1 to 1790; use a representable pixel width",
             column_index + 1
         )));
     }
@@ -16727,6 +16742,27 @@ mod tests {
             ]
         })]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_per_column_autofit_width() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet",
+            "props":{"name":"Columns"},
+            "children":[{"type":"Column","props":{"min":2,"max":3,"autoFitWidthPixels":160},"children":[]}]
+        })]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_conflicting_per_column_autofit_properties_with_repair() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Columns"},
+            "children":[{"type":"Column","props":{"min":1,"max":1,"widthPixels":100,"autoFitWidthPixels":100},"children":[]}]
+        })]);
+        let error = input.validate().expect_err("column properties conflict");
+        assert!(error.to_string().contains("autoFitWidthPixels"));
+        assert!(error.to_string().contains("keep one width"));
     }
 
     #[test]

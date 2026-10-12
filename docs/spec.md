@@ -1148,11 +1148,10 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   reverse emits canonical explicit `Column.widthPixels` values and does not
   reconstruct `autoFit`. It cannot be combined with `Image.fit`, because the
   writer changes column geometry after image-fit dimensions have been resolved;
-  omit image fitting or use explicit image dimensions. External `bestFit`
-  metadata remains unsupported. The pinned writer sets `bestFit="1"` on
-  columns it grows; the compiler removes that transient marker after saving so
-  the output represents the final explicit widths, not a future auto-fit
-  instruction.
+  omit image fitting or use explicit image dimensions. The pinned writer sets
+  `bestFit="1"` on columns it grows; the compiler removes those transient
+  markers after saving, except explicit `Column.autoFitWidthPixels` markers,
+  which are preserved as future Excel best-fit behavior.
 - `hideUnusedRows?: boolean` hides rows without explicit row data using
   `sheetFormatPr@zeroHeight`; it defaults to false and is omitted by reverse.
   It does not replace per-row `hidden` metadata on rows that contain data.
@@ -1645,6 +1644,13 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 - `widthPixels?: integer` sets a column's width in pixels, from 1 through 1,790.
   Pixel units match `rust_xlsxwriter::Worksheet::set_column_width_pixels()`;
   Excel's character-width serialization is quantized by the writer.
+- `autoFitWidthPixels?: integer` sets an explicit pixel width and preserves the
+  OOXML `bestFit="1"` marker using
+  `Worksheet::set_column_autofit_width()`. This is not content measurement or
+  one-shot autofit: Excel may grow the column later as values change. Its width
+  must be 1–1,790 and it cannot be combined with `widthPixels`.
+  When `Worksheet.autoFit` is also enabled, the worksheet calculation runs
+  first and the explicit per-column width/marker is applied afterward.
 - `hidden?: boolean` hides the columns in the inclusive range. `false` is the
   default and is omitted by reverse. A hidden column with no explicit width
   uses the worksheet's default width when unhidden.
@@ -1659,8 +1665,10 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   format for unformatted cells in the inclusive column range;
   explicit cell formats override them. Reverse preserves supported OOXML
   `<col style>` values as these attributes. Column ranges must not overlap.
-- Best-fit metadata is rejected: `rust_xlsxwriter` computes widths for autofit
-  rather than serializing an equivalent OOXML `bestFit` setting.
+- External `bestFit="1"` is supported only with an explicit, exactly
+  representable width; reverse emits `autoFitWidthPixels`. A marker without a
+  width, false/noncanonical values, or a width outside the supported pixel
+  range is rejected rather than guessed.
 - External `<col>` ranges are expanded and re-coalesced only when adjacent
   columns have identical supported properties. Widths that cannot be mapped
   exactly to the writer's integer-pixel representation and unsupported

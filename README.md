@@ -45,7 +45,7 @@ and intentionally deferred lower-frequency features.
 | In-cell checkboxes | yes | yes | `Cell value={true} checkbox={true}` writes Excel 2024 checkbox metadata; boolean values stay usable in formulas and older Excel versions display TRUE/FALSE |
 | Worksheet tab color | yes | yes | `tabColor="#4472C4"` or `tabColor={{theme: 4, shade: 2}}` preserves opaque RGB or a writer-supported theme shade; indexed/automatic colors and arbitrary tints are rejected |
 | Default row height | yes | yes | `defaultRowHeightPixels` uses integer pixels; non-representable external point values are rejected |
-| Autofit worksheet columns | yes | canonical explicit widths | `Worksheet autoFit={true}` calculates approximate final widths at build time using the pinned writer's Calibri 11 metrics; the intent is not stored in OOXML, and external `bestFit` flags remain unsupported |
+| Autofit worksheet columns | yes | canonical explicit widths | `Worksheet autoFit={true}` calculates approximate final widths at build time using the pinned writer's Calibri 11 metrics; the intent is not stored in OOXML. Per-column `Column.autoFitWidthPixels` preserves explicit width plus `bestFit="1"` metadata |
 | Hide unused worksheet rows | yes | yes | `hideUnusedRows` hides rows without explicit content |
 | Screen gridlines | yes | yes | `showGridlines={false}` hides on-screen worksheet gridlines; print settings are separate |
 | Worksheet view mode | yes | yes | `view="pageLayout"` or `view="pageBreakPreview"`; `zoom` follows the active view |
@@ -75,7 +75,7 @@ and intentionally deferred lower-frequency features.
 | Cell borders | yes | yes | Four independent edge styles, diagonal style/direction, and RGB/theme colors; indexed/automatic colors and non-writer tint values remain rejected |
 | Date and local datetime | yes | yes | ISO `date` property; time zones and 1904-epoch workbooks are rejected |
 | Row height, hidden state, outline levels and default format | yes | yes | `outlineLevel` supports levels 1–7; `collapsed={true}` marks a summary row; row format properties provide defaults for cells without explicit format |
-| Column width, hidden state, outline levels and default format | yes | yes | `Column` ranges use 1-based indices and pixel widths; `collapsed={true}` marks a one-column summary; format properties provide defaults for cells without explicit format; external best-fit flags are rejected |
+| Column width, hidden state, outline levels and default format | yes | yes | `Column` ranges use 1-based indices and pixel widths; `autoFitWidthPixels={144}` preserves an explicit width with OOXML `bestFit="1"`; `collapsed={true}` marks a one-column summary; format properties provide defaults for cells without explicit format |
 | Alignment, rotation, reading direction, quote prefix, wrapping, indentation and shrink-to-fit | yes | yes | `horizontalAlign`, `verticalAlign`, `textRotation`, `readingDirection`, `quotePrefix`, `wrapText`, `indent`, `shrinkToFit`; unsupported combinations are rejected |
 | Auto-filter range, list, blank and custom criteria | yes | yes | `autoFilterColumns` uses zero-based relative columns; unsupported date-group filters are rejected |
 | Frozen panes | yes | yes | `freezeRows`, `freezeColumns`, optional `freezeTopLeftCell`, and supported active-pane selection; custom split panes remain rejected |

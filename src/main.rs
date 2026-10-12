@@ -431,6 +431,15 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
                 let width_pixels = width.map(u32::try_from).transpose().map_err(|error| {
                     Error::Compile(format!("invalid Column.widthPixels: {error}"))
                 })?;
+                let auto_fit_width = child
+                    .props
+                    .get("autoFitWidthPixels")
+                    .and_then(Value::as_u64)
+                    .map(u32::try_from)
+                    .transpose()
+                    .map_err(|error| {
+                        Error::Compile(format!("invalid Column.autoFitWidthPixels: {error}"))
+                    })?;
                 let hidden = child.props.get("hidden").and_then(Value::as_bool) == Some(true);
                 let outline_level = child
                     .props
@@ -442,6 +451,11 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
                     if let Some(width_pixels) = width_pixels {
                         worksheet
                             .set_column_width_pixels(col, width_pixels)
+                            .map_err(|error| Error::Compile(error.to_string()))?;
+                    }
+                    if let Some(width_pixels) = auto_fit_width {
+                        worksheet
+                            .set_column_autofit_width(col, width_pixels)
                             .map_err(|error| Error::Compile(error.to_string()))?;
                     }
                     if hidden {
@@ -458,7 +472,8 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
                     column_outline.insert(
                         col,
                         ColumnProperties {
-                            width_pixels,
+                            width_pixels: auto_fit_width.or(width_pixels),
+                            auto_fit_width: auto_fit_width.is_some(),
                             hidden,
                             outline_level: u8::try_from(outline_level).unwrap_or_default(),
                             collapsed: child.props.get("collapsed").and_then(Value::as_bool)
@@ -578,6 +593,9 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         if sheet.props.get("autoFit").and_then(Value::as_bool) == Some(true) {
             worksheet.autofit();
         }
+        // Preserve explicitly authored per-column width/`bestFit` after the
+        // worksheet-wide content measurement has run.
+        reapply_column_autofit_widths(worksheet, &sheet)?;
     }
     for (sheet_name, name, formula) in local_defined_names {
         let quoted_sheet = sheet_name.replace('\'', "''");
@@ -600,6 +618,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             .and_then(Value::as_bool)
             == Some(true)
     });
+    let column_autofit_targets = collect_column_autofit_targets(ir);
     if !x14_icon_normalization.is_empty()
         || !table_dxf_targets.is_empty()
         || !table_filter_targets.is_empty()
@@ -613,6 +632,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             &table_dxf_targets,
             &table_filter_targets,
             strip_autofit_flags,
+            &column_autofit_targets,
         )?;
     }
     Ok(())
@@ -767,6 +787,20 @@ fn preapply_image_cell_dimensions(
                         .map_err(|error| Error::Compile(error.to_string()))?;
                 }
             }
+            if let Some(width) = child
+                .props
+                .get("autoFitWidthPixels")
+                .and_then(Value::as_u64)
+            {
+                let width = u32::try_from(width).map_err(|error| {
+                    Error::Compile(format!("invalid Column.autoFitWidthPixels: {error}"))
+                })?;
+                for column in min..=max {
+                    worksheet
+                        .set_column_autofit_width(column, width)
+                        .map_err(|error| Error::Compile(error.to_string()))?;
+                }
+            }
             if child.props.get("hidden").and_then(Value::as_bool) == Some(true) {
                 for column in min..=max {
                     worksheet
@@ -791,13 +825,18 @@ fn preapply_image_cell_dimensions(
     Ok(())
 }
 
-fn strip_best_fit_column_flags(xml: &str, part: &str) -> xlsx_jsx::Result<String> {
+fn strip_best_fit_column_flags(
+    xml: &str,
+    part: &str,
+    preserved_columns: &BTreeSet<u16>,
+) -> xlsx_jsx::Result<String> {
     let mut reader = XmlReader::from_str(xml);
     let mut writer = XmlWriter::new(Vec::new());
     loop {
         match reader.read_event() {
             Ok(Event::Start(ref start)) if start.local_name().as_ref() == b"col" => {
-                let normalized = without_best_fit_attribute(start, reader.decoder(), part)?;
+                let normalized =
+                    without_best_fit_attribute(start, reader.decoder(), part, preserved_columns)?;
                 writer
                     .write_event(Event::Start(normalized))
                     .map_err(|error| {
@@ -807,7 +846,8 @@ fn strip_best_fit_column_flags(xml: &str, part: &str) -> xlsx_jsx::Result<String
                     })?;
             }
             Ok(Event::Empty(ref start)) if start.local_name().as_ref() == b"col" => {
-                let normalized = without_best_fit_attribute(start, reader.decoder(), part)?;
+                let normalized =
+                    without_best_fit_attribute(start, reader.decoder(), part, preserved_columns)?;
                 writer
                     .write_event(Event::Empty(normalized))
                     .map_err(|error| {
@@ -838,6 +878,7 @@ fn without_best_fit_attribute(
     start: &BytesStart<'_>,
     decoder: quick_xml::encoding::Decoder,
     part: &str,
+    preserved_columns: &BTreeSet<u16>,
 ) -> xlsx_jsx::Result<BytesStart<'static>> {
     let attributes = start
         .attributes()
@@ -854,6 +895,46 @@ fn without_best_fit_attribute(
         attribute.key.local_name().as_ref() == b"bestFit" && attribute.value.as_ref() == b"1"
     }) {
         return Ok(start.to_owned());
+    }
+    let column_bound = |name: &[u8]| -> xlsx_jsx::Result<Option<u16>> {
+        attributes
+            .iter()
+            .find(|attribute| attribute.key.local_name().as_ref() == name)
+            .map(|attribute| {
+                std::str::from_utf8(attribute.value.as_ref())
+                    .map_err(|error| {
+                        Error::Compile(format!(
+                            "generated column bound in `{part}` is not UTF-8: {error}"
+                        ))
+                    })?
+                    .parse::<u16>()
+                    .map_err(|error| {
+                        Error::Compile(format!(
+                            "generated column bound in `{part}` is invalid: {error}"
+                        ))
+                    })
+            })
+            .transpose()
+    };
+    let min = column_bound(b"min")?;
+    let max = column_bound(b"max")?;
+    if let (Some(min), Some(max)) = (min, max) {
+        let range = min..=max;
+        let overlaps_preserved = range
+            .clone()
+            .any(|column| preserved_columns.contains(&(column - 1)));
+        if overlaps_preserved
+            && range
+                .clone()
+                .all(|column| preserved_columns.contains(&(column - 1)))
+        {
+            return Ok(start.to_owned());
+        }
+        if overlaps_preserved {
+            return Err(Error::Compile(format!(
+                "generated column range {min}–{max} in `{part}` combines explicit and calculated best-fit metadata; split the Column ranges so authored widths remain distinct"
+            )));
+        }
     }
     let mut content = String::from_utf8(start.name().as_ref().to_vec()).map_err(|error| {
         Error::Compile(format!(
@@ -1164,6 +1245,92 @@ fn collect_table_dxf_targets(
     Ok(targets)
 }
 
+fn collect_column_autofit_targets(ir: &IrEnvelope) -> HashMap<String, BTreeSet<u16>> {
+    let mut targets = HashMap::new();
+    let mut worksheet_index = 0_usize;
+    for sheet_value in &ir.workbook.children {
+        let Some(sheet_object) = sheet_value.as_object() else {
+            continue;
+        };
+        if sheet_object.get("type").and_then(Value::as_str) != Some("Worksheet") {
+            continue;
+        }
+        worksheet_index += 1;
+        let Some(children) = sheet_object.get("children").and_then(Value::as_array) else {
+            continue;
+        };
+        let mut columns = BTreeSet::new();
+        for child in children {
+            if child.get("type").and_then(Value::as_str) != Some("Column") {
+                continue;
+            }
+            let Some(props) = child.get("props").and_then(Value::as_object) else {
+                continue;
+            };
+            if props
+                .get("autoFitWidthPixels")
+                .and_then(Value::as_u64)
+                .is_none()
+            {
+                continue;
+            }
+            let min = props.get("min").and_then(Value::as_u64).unwrap_or(1);
+            let max = props.get("max").and_then(Value::as_u64).unwrap_or(min);
+            if min == 0 || min > max || max > 16_384 {
+                continue;
+            }
+            for column in min..=max {
+                if let Ok(column) = u16::try_from(column - 1) {
+                    columns.insert(column);
+                }
+            }
+        }
+        if !columns.is_empty() {
+            targets.insert(format!("xl/worksheets/sheet{worksheet_index}.xml"), columns);
+        }
+    }
+    targets
+}
+
+fn reapply_column_autofit_widths(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    sheet: &Node,
+) -> xlsx_jsx::Result<()> {
+    for child_value in &sheet.children {
+        let child: Node = serde_json::from_value(child_value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if child.r#type != "Column" {
+            continue;
+        }
+        let Some(width) = child
+            .props
+            .get("autoFitWidthPixels")
+            .and_then(Value::as_u64)
+        else {
+            continue;
+        };
+        let width = u32::try_from(width).map_err(|error| {
+            Error::Compile(format!("invalid Column.autoFitWidthPixels: {error}"))
+        })?;
+        let min_number = child.props.get("min").and_then(Value::as_u64).unwrap_or(1);
+        let max_number = child
+            .props
+            .get("max")
+            .and_then(Value::as_u64)
+            .unwrap_or(min_number);
+        let min = u16::try_from(min_number - 1)
+            .map_err(|error| Error::Compile(format!("invalid Column.min: {error}")))?;
+        let max = u16::try_from(max_number - 1)
+            .map_err(|error| Error::Compile(format!("invalid Column.max: {error}")))?;
+        for column in min..=max {
+            worksheet
+                .set_column_autofit_width(column, width)
+                .map_err(|error| Error::Compile(error.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
 fn normalize_generated_xlsx(
     path: &std::path::Path,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
@@ -1171,6 +1338,7 @@ fn normalize_generated_xlsx(
     table_dxf_targets: &HashMap<String, BTreeMap<usize, TableDxfMetadata>>,
     table_filter_targets: &HashMap<String, Vec<WorksheetFilterColumn>>,
     strip_autofit_flags: bool,
+    column_autofit_targets: &HashMap<String, BTreeSet<u16>>,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -1201,6 +1369,7 @@ fn normalize_generated_xlsx(
         table_dxf_targets,
         table_filter_targets,
         strip_autofit_flags,
+        column_autofit_targets,
     );
     if let Err(error) = rewrite_result {
         let _ = std::fs::remove_file(&temporary_path);
@@ -1226,6 +1395,10 @@ fn normalize_generated_xlsx(
     clippy::too_many_lines,
     reason = "Package normalization preserves ordered ZIP metadata while applying several independent, audited XML repairs."
 )]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each normalization target comes from an independent package feature and must remain explicit at the ZIP rewrite boundary."
+)]
 fn rewrite_generated_xlsx(
     path: &std::path::Path,
     temporary_file: std::fs::File,
@@ -1234,6 +1407,7 @@ fn rewrite_generated_xlsx(
     table_dxf_targets: &HashMap<String, BTreeMap<usize, TableDxfMetadata>>,
     table_filter_targets: &HashMap<String, Vec<WorksheetFilterColumn>>,
     strip_autofit_flags: bool,
+    column_autofit_targets: &HashMap<String, BTreeSet<u16>>,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -1281,7 +1455,13 @@ fn rewrite_generated_xlsx(
             let (xml, patched_count) = patch_literal_error_cells(&xml, &name)?;
             patched_error_cells += patched_count;
             let xml = if strip_autofit_flags {
-                strip_best_fit_column_flags(&xml, &name)?
+                strip_best_fit_column_flags(
+                    &xml,
+                    &name,
+                    column_autofit_targets
+                        .get(&name)
+                        .unwrap_or(&BTreeSet::new()),
+                )?
             } else {
                 xml
             };
@@ -10359,7 +10539,11 @@ fn write_column(
         u32::from(first) + 1,
         u32::from(last) + 1
     );
-    if let Some(width_pixels) = properties.width_pixels {
+    if properties.auto_fit_width {
+        if let Some(width_pixels) = properties.width_pixels {
+            let _ = write!(output, " autoFitWidthPixels={{{width_pixels}}}");
+        }
+    } else if let Some(width_pixels) = properties.width_pixels {
         let _ = write!(output, " widthPixels={{{width_pixels}}}");
     }
     if let Some(style) = properties.style_index.and_then(|index| formats.get(index)) {
@@ -31115,6 +31299,7 @@ struct WorksheetSelection {
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct ColumnProperties {
     width_pixels: Option<u32>,
+    auto_fit_width: bool,
     hidden: bool,
     outline_level: u8,
     collapsed: bool,
@@ -35326,6 +35511,7 @@ fn audit_column_attributes(
     let mut min = None;
     let mut max = None;
     let mut width = None;
+    let mut auto_fit = false;
     let mut hidden = false;
     let mut outline_level = 0_u8;
     let mut collapsed = false;
@@ -35346,6 +35532,14 @@ fn audit_column_attributes(
                         "worksheet `{part}` has invalid column width `{value}`: {error}"
                     ))
                 })?);
+            }
+            b"bestFit" => {
+                if value != "1" {
+                    return Err(Error::Reverse(format!(
+                        "worksheet `{part}` column range has noncanonical bestFit value `{value}`; preserve only bestFit=\"1\" or remove best-fit metadata"
+                    )));
+                }
+                auto_fit = true;
             }
             b"hidden" => hidden = parse_xml_bool(&value, part, "hidden")?,
             b"collapsed" => {
@@ -35411,6 +35605,11 @@ fn audit_column_attributes(
         )));
     }
     let width_pixels = match width {
+        None if auto_fit => {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` column range {min}–{max} has bestFit=\"1\" without an explicit width; add a fixed width or remove the bestFit marker"
+            )));
+        }
         None if hidden => None,
         None => None,
         Some(width) if !width.is_finite() || !(0.0..=256.0).contains(&width) => {
@@ -35436,8 +35635,14 @@ fn audit_column_attributes(
             Some(pixels)
         }
     };
+    if auto_fit && width_pixels.is_none() {
+        return Err(Error::Reverse(format!(
+            "worksheet `{part}` column range {min}–{max} has bestFit=\"1\" without a representable positive width; set a width in integer pixels from 1 to 1790 or remove bestFit"
+        )));
+    }
     let properties = ColumnProperties {
         width_pixels,
+        auto_fit_width: auto_fit,
         hidden,
         outline_level,
         collapsed,

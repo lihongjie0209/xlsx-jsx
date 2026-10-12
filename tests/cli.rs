@@ -538,6 +538,10 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
 fn agent_json_spec_is_valid_json_and_describes_sparkline_options() {
     let schema: serde_json::Value = serde_json::from_str(include_str!("../spec/ir-v1.schema.json"))
         .expect("the published IR JSON schema must be valid JSON");
+    assert_eq!(
+        schema["$defs"]["column"]["properties"]["props"]["properties"]["autoFitWidthPixels"]["minimum"],
+        1
+    );
     let group = &schema["$defs"]["sparklineGroup"]["properties"]["props"]["properties"];
     assert_eq!(group["showMarkers"]["type"], "boolean");
     assert_eq!(group["showEmptyCellsAs"]["enum"][2], "span");
@@ -919,6 +923,83 @@ export default <Workbook><Worksheet name="Widths" autoFit={true}><Row><Cell>Shor
         .success();
     let rebuilt_xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
     assert!(rebuilt_xml.contains("<cols>"), "{rebuilt_xml}");
+}
+
+#[test]
+fn per_column_autofit_width_round_trips_external_xlsx_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("external-column-autofit.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook
+        .add_worksheet()
+        .set_name("Data")
+        .expect("name valid");
+    worksheet
+        .set_column_autofit_width(1, 144)
+        .expect("column best-fit width is valid");
+    worksheet.write_string(0, 1, "value").expect("cell writes");
+    workbook.save(&external).expect("external XLSX saves");
+
+    let reversed = directory.path().join("reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("autoFitWidthPixels={144}"), "{source}");
+
+    let rebuilt = directory.path().join("rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    assert!(xml.contains("min=\"2\" max=\"2\""), "{xml}");
+    assert!(xml.contains("bestFit=\"1\""), "{xml}");
+}
+
+#[test]
+fn column_autofit_marker_survives_worksheet_autofit_normalization() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("combined-autofit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Column, Row, Cell } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Data" autoFit={true}><Column min={2} max={2} autoFitWidthPixels={144} /><Row><Cell>A very long value that should grow its column</Cell><Cell>Explicit</Cell></Row></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    let built = directory.path().join("combined-autofit.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&built)
+        .assert()
+        .success();
+
+    let xml = read_zip_part_for_test(&built, "xl/worksheets/sheet1.xml");
+    assert!(xml.contains("min=\"2\" max=\"2\""), "{xml}");
+    assert!(xml.contains("bestFit=\"1\""), "{xml}");
+    let reversed = directory.path().join("combined-autofit-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&built)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("autoFitWidthPixels={144}"), "{source}");
 }
 
 #[test]
@@ -20073,7 +20154,7 @@ fn reverse_rejects_column_metadata_outside_the_lossless_subset() {
         .expect("cell data writes");
     workbook.save(&input).expect("workbook writes");
     rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
-        xml.replace("customWidth=\"1\"", "customWidth=\"1\" bestFit=\"1\"")
+        xml.replace("customWidth=\"1\"", "customWidth=\"1\" bestFit=\"0\"")
     });
 
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
@@ -20081,7 +20162,40 @@ fn reverse_rejects_column_metadata_outside_the_lossless_subset() {
     command
         .assert()
         .failure()
-        .stderr(predicate::str::contains("unsupported `bestFit` metadata"))
+        .stderr(predicate::str::contains("noncanonical bestFit value"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn reverse_rejects_best_fit_without_explicit_column_width() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("missing-best-fit-width.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .set_column_width_pixels(0, 60)
+        .expect("column width is valid");
+    worksheet.write_string(0, 0, "value").expect("cell writes");
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |mut xml| {
+        let start = xml.find("<cols>").expect("column metadata exists");
+        let end = xml[start..].find("</cols>").expect("columns close") + start + 7;
+        xml.replace_range(
+            start..end,
+            "<cols><col min=\"1\" max=\"1\" bestFit=\"1\"/></cols>",
+        );
+        xml
+    });
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "bestFit=\"1\" without an explicit width",
+        ))
         .stderr(predicate::str::contains("suggestion:"));
 }
 

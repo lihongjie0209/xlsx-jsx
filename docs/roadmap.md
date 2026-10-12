@@ -34,8 +34,12 @@ completed batch; they do not block work on the next batch.
 - Worksheet `autoFit={true}` calculates final column widths from cell contents;
   the compiler removes the writer's transient `bestFit` marker and external
   reverse canonicalizes the resulting widths as explicit `Column` values.
-  Arbitrary external `bestFit` flags remain unsupported, and `autoFit` cannot
-  be combined with `Image.fit` because their geometry calculations conflict.
+  External best-fit markers without supported explicit widths remain
+  unsupported, and `autoFit` cannot be combined with `Image.fit` because
+  their geometry calculations conflict.
+- Per-column `Column.autoFitWidthPixels` preserves an explicit width together
+  with external `bestFit="1"`; it is distinct from content-measuring autofit.
+  Reverse accepts only positive widths exactly representable as integer pixels.
 - External picture reverse now handles anchors crossing mixed custom/default
   row heights and column widths; exact whole-pixel anchor/transform agreement
   is still required.
@@ -59,6 +63,5 @@ forward/reverse batch.
 
 - Chartsheet `zoomToFit`: the pinned `Worksheet::set_zoom_to_fit()` API only
   affects chartsheets, so this is lower priority than worksheet/table authoring.
-- External column `bestFit` metadata remains rejected: replaying it may produce
-  different widths. The supported one-shot `Worksheet.autoFit` operation is
-  documented above and reverses to explicit final widths.
+- External column `bestFit` metadata without a positive, exactly representable
+  width remains rejected with a repair diagnostic.
