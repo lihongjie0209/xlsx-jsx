@@ -24984,33 +24984,6 @@ fn validate_image_anchor(
             "picture in `{part}` measures {width}×{height} pixels outside the supported 1–1790 range; resize it or extend Image dimensions"
         )));
     }
-    let intersects_custom_geometry = metadata
-        .default_row_height_pixels
-        .is_some_and(|value| value != 20)
-        || metadata.rows.iter().any(|(row, properties)| {
-            *row >= from_row
-                && *row <= to_row
-                && (properties
-                    .height
-                    .is_some_and(|value| (value - 15.0).abs() > f64::EPSILON)
-                    || properties.hidden)
-        })
-        || metadata
-            .columns
-            .range(
-                u16::try_from(from_column).expect("validated Excel column bounds")
-                    ..=u16::try_from(to_column).expect("validated Excel column bounds"),
-            )
-            .any(|(_, properties)| {
-                properties.width_pixels.is_some_and(|value| value != 64) || properties.hidden
-            });
-    if intersects_custom_geometry
-        && (from_x + width > start_column_width || from_y + height > start_row_height)
-    {
-        return Err(Error::Reverse(format!(
-            "picture in `{part}` spans custom row/column dimensions; keep it wholly inside one resized cell or use standard-size cells for the full image"
-        )));
-    }
     let expected_x = start_x * PX_EMU;
     let expected_y = start_y * PX_EMU;
     if anchor.absolute_x != Some(expected_x)

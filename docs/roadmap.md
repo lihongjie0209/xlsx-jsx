@@ -8,15 +8,12 @@ completed batch; they do not block work on the next batch.
 
 ## Next priorities
 
-1. Audit remaining commonly used cell/table formatting gaps against the pinned
-   `rust_xlsxwriter` serializer and reverse reader, then implement the next
-   common lossless subset.
-2. Broaden external image reverse to pictures that span arbitrary combinations
-   of custom and default row/column dimensions, beyond the current exact-cell
-   geometry subset.
-3. Improve diagnostics and integration fixtures where current feature coverage
+1. Improve diagnostics and integration fixtures where current feature coverage
    exposes ambiguous or lossy external workbook structures.
-4. Re-audit public writer APIs as batches land; full upstream API coverage is
+2. Continue auditing public `rust_xlsxwriter` writer APIs, prioritizing common
+   cell/table behavior; the recent audit found remaining table-format gaps are
+   lower-frequency or missing an upstream serialization path.
+3. Re-audit public writer APIs as batches land; full upstream API coverage is
    not claimed.
 
 ## Recently delivered
@@ -30,6 +27,9 @@ completed batch; they do not block work on the next batch.
   reverse canonicalizes the resulting widths as explicit `Column` values.
   Arbitrary external `bestFit` flags remain unsupported, and `autoFit` cannot
   be combined with `Image.fit` because their geometry calculations conflict.
+- External picture reverse now handles anchors crossing mixed custom/default
+  row heights and column widths; exact whole-pixel anchor/transform agreement
+  is still required.
 
 ## Deferred lower-frequency table differential formats
 

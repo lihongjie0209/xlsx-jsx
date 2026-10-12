@@ -2245,8 +2245,6 @@ fn validate_worksheet_children(
         sheet_name,
     )?;
     let image_geometry = ImageGeometryContext {
-        custom_width_ranges: &chart_custom_width_ranges,
-        custom_height_rows: &chart_custom_height_rows,
         column_width_pixels: &image_column_width_pixels,
         row_heights_points: &image_row_heights_points,
         hidden_columns: &image_hidden_columns,
@@ -8809,8 +8807,6 @@ fn validate_background_image(image: &Node, index: usize) -> Result<()> {
 }
 
 struct ImageGeometryContext<'a> {
-    custom_width_ranges: &'a [(u64, u64)],
-    custom_height_rows: &'a std::collections::HashSet<usize>,
     column_width_pixels: &'a std::collections::BTreeMap<u64, u64>,
     row_heights_points: &'a std::collections::HashMap<usize, f64>,
     hidden_columns: &'a std::collections::HashSet<u64>,
@@ -8877,37 +8873,74 @@ fn validate_image_layouts(
                 "Image.{property} at {cell} on Worksheet `{sheet_name}` is outside its {target_column_width}×{target_row_height}-pixel target cell; reduce the offset or move the image"
             )));
         }
-        let contained_in_target_cell =
-            offset_x + width <= target_column_width && offset_y + height <= target_row_height;
-        let width_with_offset = offset_x + width;
-        let height_with_offset = offset_y + height;
-        let last_column = first_column + (width_with_offset - 1) / 64;
-        let last_row =
-            first_row + usize::try_from((height_with_offset - 1) / 20).unwrap_or_default();
-        if last_column >= 16_384 || last_row >= 1_048_576 {
+        let last_column = image_last_column(first_column, offset_x, width, geometry);
+        let last_row = image_last_row(first_row, offset_y, height, geometry, sheet_name)?;
+        if last_column.is_none() || last_row.is_none() {
             return Err(Error::Compile(format!(
                 "Image at {cell} on Worksheet `{sheet_name}` extends beyond Excel's worksheet grid; move it up/left or reduce its pixel dimensions"
             )));
         }
-        let crosses_custom_width = geometry
-            .custom_width_ranges
-            .iter()
-            .any(|(first, last)| *first <= last_column + 1 && *last > first_column);
-        let crosses_custom_height = geometry
-            .custom_height_rows
-            .iter()
-            .any(|row| *row >= first_row && *row <= last_row);
-        if (crosses_custom_width
-            || crosses_custom_height
-            || geometry.default_row_height_pixels != 20)
-            && !contained_in_target_cell
-        {
-            return Err(Error::Compile(format!(
-                "Image at {cell} on Worksheet `{sheet_name}` crosses custom row/column dimensions; keep it within the target cell or move it so its geometry does not cross resized cells"
-            )));
-        }
     }
     Ok(())
+}
+
+fn image_last_column(
+    first_column: u64,
+    offset_x: u64,
+    width: u64,
+    geometry: &ImageGeometryContext<'_>,
+) -> Option<u64> {
+    let mut remaining = offset_x.checked_add(width)?;
+    let mut column = first_column;
+    while column < 16_384 {
+        let cell_width = if geometry.hidden_columns.contains(&column) {
+            0
+        } else {
+            geometry
+                .column_width_pixels
+                .get(&column)
+                .copied()
+                .unwrap_or(64)
+        };
+        if cell_width > remaining {
+            return Some(column);
+        }
+        remaining -= cell_width;
+        column += 1;
+    }
+    None
+}
+
+fn image_last_row(
+    first_row: usize,
+    offset_y: u64,
+    height: u64,
+    geometry: &ImageGeometryContext<'_>,
+    sheet_name: &str,
+) -> Result<Option<usize>> {
+    let mut remaining = offset_y.checked_add(height);
+    let mut row = first_row;
+    while row < 1_048_576 {
+        let Some(remaining_pixels) = remaining else {
+            return Ok(None);
+        };
+        let row_height = if geometry.hidden_rows.contains(&row) {
+            0
+        } else {
+            geometry
+                .row_heights_points
+                .get(&row)
+                .map(|height| image_row_height_pixels(*height, sheet_name))
+                .transpose()?
+                .unwrap_or(geometry.default_row_height_pixels)
+        };
+        if row_height > remaining_pixels {
+            return Ok(Some(row));
+        }
+        remaining = Some(remaining_pixels - row_height);
+        row += 1;
+    }
+    Ok(None)
 }
 
 fn image_row_height_pixels(height_points: f64, sheet_name: &str) -> Result<u64> {

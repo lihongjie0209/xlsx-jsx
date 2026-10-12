@@ -57,11 +57,12 @@ relationships and drawing anchors without relying on a private manifest.
   `Image::new_from_buffer()`. These map to the OOXML two-cell anchor's default,
   `editAs="oneCell"`, and `editAs="absolute"` modes respectively.
 - Images are direct worksheet children before rows. Reverse computes anchors
-  from effective row heights and column widths; when an image touches custom
-  dimensions it must fit wholly inside one cell. Images spanning multiple
-  custom-sized cells, fractional-pixel dimensions, unsupported crops,
-  transforms/effects, drawing shapes, or other geometry that cannot be
-  represented exactly fail with guidance.
+  from effective row heights and column widths and supports images spanning any
+  combination of default and custom-sized cells when all intersected cell
+  dimensions and anchor/transform geometry are exactly representable in whole
+  pixels. Fractional-pixel dimensions, hidden or zero-sized anchor cells,
+  unsupported crops, transforms/effects, drawing shapes, or other geometry
+  that cannot be represented exactly fail with guidance.
 - Data URIs make reverse output self-contained and recompilable; authored file
   paths and remote fetches are not part of this interface.
 

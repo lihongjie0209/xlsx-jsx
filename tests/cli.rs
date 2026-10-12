@@ -1558,6 +1558,47 @@ export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} hei
 }
 
 #[test]
+fn validate_rejects_images_that_extend_past_the_last_custom_sized_column() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("image-past-last-column.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Column, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Column min={16384} max={16384} widthPixels={1} /><Image cell="XFD1" width={64} height={20} data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "extends beyond Excel's worksheet grid",
+        ))
+        .stderr(predicate::str::contains("reduce its pixel dimensions"));
+}
+
+#[test]
+fn validate_accepts_images_that_fit_inside_a_wide_last_column() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("image-inside-last-column.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Column, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Column min={16384} max={16384} widthPixels={200} /><Image cell="XFD1" width={190} height={20} data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("valid"));
+}
+
+#[test]
 #[expect(
     clippy::too_many_lines,
     reason = "This end-to-end test checks media bytes and picture/chart semantics across reverse, rebuild, and a second reverse."
@@ -1832,6 +1873,124 @@ fn reverses_fitted_images_in_custom_sized_cells_without_geometry_loss() {
     );
     assert!(
         roundtrip_source.contains("offsetX={77}"),
+        "{roundtrip_source}"
+    );
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The external image round-trip test verifies mixed geometry through reverse, rebuild, and reverse again."
+)]
+fn reverses_images_across_mixed_custom_and_default_cell_dimensions() {
+    let image_bytes = BASE64_STANDARD
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==")
+        .expect("PNG fixture decodes");
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("mixed-dimension-images.xlsx");
+    let image = XlsxImage::new_from_buffer(&image_bytes)
+        .expect("PNG bytes are valid")
+        .set_width(190)
+        .set_height(80);
+    let second_image = XlsxImage::new_from_buffer(&image_bytes)
+        .expect("PNG bytes are valid")
+        .set_width(140)
+        .set_height(55);
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook
+        .add_worksheet()
+        .set_name("Images")
+        .expect("sheet name is valid");
+    worksheet
+        .set_column_width_pixels(0, 100)
+        .expect("first column width is valid");
+    worksheet
+        .set_column_width_pixels(2, 120)
+        .expect("third column width is valid");
+    worksheet
+        .set_row_height_pixels(0, 30)
+        .expect("first row height is valid");
+    worksheet
+        .set_row_height_pixels(2, 40)
+        .expect("third row height is valid");
+    worksheet
+        .insert_image_with_offset(0, 0, &image, 10, 5)
+        .expect("picture crosses mixed-size rows and columns");
+    worksheet
+        .insert_image_with_offset(1, 1, &second_image, 4, 3)
+        .expect("picture starts in default cells and crosses into custom cells");
+    workbook.save(&external).expect("external workbook saves");
+
+    let reversed = directory.path().join("mixed-dimension-images.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(
+        source.contains("cell={\"A1\"} width={190} height={80}"),
+        "{source}"
+    );
+    assert!(source.contains("offsetX={10}"), "{source}");
+    assert!(source.contains("offsetY={5}"), "{source}");
+    assert!(
+        source.contains("cell={\"B2\"} width={140} height={55}"),
+        "{source}"
+    );
+    assert!(source.contains("offsetX={4}"), "{source}");
+    assert!(source.contains("offsetY={3}"), "{source}");
+    assert!(source.contains("widthPixels={100}"), "{source}");
+    assert!(source.contains("widthPixels={120}"), "{source}");
+    assert!(source.contains("height={22.5}"), "{source}");
+    assert!(source.contains("height={30}"), "{source}");
+
+    let rebuilt = directory.path().join("mixed-dimension-images-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let roundtrip = directory
+        .path()
+        .join("mixed-dimension-images-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&roundtrip)
+        .assert()
+        .success();
+    let roundtrip_source = std::fs::read_to_string(roundtrip).expect("roundtrip JSX exists");
+    assert!(
+        roundtrip_source.contains("cell={\"A1\"} width={190} height={80}"),
+        "{roundtrip_source}"
+    );
+    assert!(
+        roundtrip_source.contains("offsetX={10}"),
+        "{roundtrip_source}"
+    );
+    assert!(
+        roundtrip_source.contains("offsetY={5}"),
+        "{roundtrip_source}"
+    );
+    assert!(
+        roundtrip_source.contains("cell={\"B2\"} width={140} height={55}"),
+        "{roundtrip_source}"
+    );
+    assert!(
+        roundtrip_source.contains("offsetX={4}"),
+        "{roundtrip_source}"
+    );
+    assert!(
+        roundtrip_source.contains("offsetY={3}"),
         "{roundtrip_source}"
     );
 }
