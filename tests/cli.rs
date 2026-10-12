@@ -17007,6 +17007,79 @@ export default <Workbook><Worksheet name="Sales">
 }
 
 #[test]
+fn table_column_font_metadata_survives_compile_reverse_and_rebuild() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source_path = directory.path().join("table-font-metadata.tsx");
+    std::fs::write(
+        &source_path,
+        r#"import { Workbook, Worksheet, Table, TableColumn, Row, Cell } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Fonts">
+  <Table range="A1:A2" name="FontTable">
+    <TableColumn format={{fontName:"Aptos & Serif",fontSize:12.5,fontFamily:3,fontCharset:128}} />
+  </Table>
+  <Row><Cell>Value</Cell></Row><Row><Cell value={42} /></Row>
+</Worksheet></Workbook>;
+"#,
+    )
+    .expect("temporary JSX source writes");
+    let output = directory.path().join("table-font-metadata.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&output)
+        .assert()
+        .success();
+
+    let styles = read_zip_part_for_test(&output, "xl/styles.xml");
+    for expected in [
+        "<name val=\"Aptos &amp; Serif\"/>",
+        "<sz val=\"12.5\"/>",
+        "<family val=\"3\"/>",
+        "<charset val=\"128\"/>",
+    ] {
+        assert!(styles.contains(expected), "missing {expected} in {styles}");
+    }
+
+    let reversed = directory.path().join("table-font-metadata-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    for expected in ["Aptos & Serif", "fontSize", "fontFamily", "fontCharset"] {
+        assert!(source.contains(expected), "missing {expected} in {source}");
+    }
+
+    let rebuilt = directory.path().join("table-font-metadata-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_styles = read_zip_part_for_test(&rebuilt, "xl/styles.xml");
+    for expected in [
+        "<name val=\"Aptos &amp; Serif\"/>",
+        "<sz val=\"12.5\"/>",
+        "<family val=\"3\"/>",
+        "<charset val=\"128\"/>",
+    ] {
+        assert!(
+            rebuilt_styles.contains(expected),
+            "missing {expected} in {rebuilt_styles}"
+        );
+    }
+}
+
+#[test]
 fn jsx_table_column_header_format_compiles_and_reverses_as_cell_format() {
     let directory = tempdir().expect("temporary directory is available");
     let output = directory.path().join("table-header-format.xlsx");
@@ -17121,6 +17194,78 @@ fn external_table_column_strikethrough_and_underline_round_trip() {
         std::fs::read_to_string(second_reverse).expect("second reverse output exists"),
         source
     );
+}
+
+#[test]
+fn external_table_column_font_metadata_round_trips_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("table-font-metadata-external.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_string(0, 0, "Value")
+        .expect("header writes");
+    worksheet.write_number(1, 0, 42).expect("value writes");
+    let format = rust_xlsxwriter::Format::new()
+        .set_bold()
+        .set_font_name("Aptos & Serif")
+        .set_font_size(12.5)
+        .set_font_family(3)
+        .set_font_charset(128);
+    let columns = [rust_xlsxwriter::TableColumn::new()
+        .set_header("Value")
+        .set_format(format)];
+    let table = rust_xlsxwriter::Table::new()
+        .set_name("FontMetadata")
+        .set_columns(&columns);
+    worksheet.add_table(0, 0, 1, 0, &table).expect("table adds");
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/styles.xml", |xml| {
+        xml.replace(
+            "<dxf><font><b/></font></dxf>",
+            "<dxf><font><b/><sz val=\"12.5\"/><color rgb=\"FFFF0000\"/><name val=\"Aptos &amp; Serif\"/><family val=\"3\"/><charset val=\"128\"/></font></dxf>",
+        )
+    });
+    let external_styles = read_zip_part_for_test(&input, "xl/styles.xml");
+    assert!(external_styles.contains("<name val=\"Aptos &amp; Serif\"/>"));
+
+    let reversed = directory.path().join("table-font-metadata-external.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    for expected in ["Aptos & Serif", "fontSize", "fontFamily", "fontCharset"] {
+        assert!(source.contains(expected), "missing {expected} in {source}");
+    }
+
+    let rebuilt = directory
+        .path()
+        .join("table-font-metadata-external-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_styles = read_zip_part_for_test(&rebuilt, "xl/styles.xml");
+    for expected in [
+        "<name val=\"Aptos &amp; Serif\"/>",
+        "<sz val=\"12.5\"/>",
+        "<family val=\"3\"/>",
+        "<charset val=\"128\"/>",
+    ] {
+        assert!(
+            rebuilt_styles.contains(expected),
+            "missing {expected} in {rebuilt_styles}"
+        );
+    }
 }
 
 #[test]

@@ -10004,49 +10004,44 @@ fn validate_table_column_format_property(
 }
 
 fn validate_table_column_font_property(key: &str, value: &Value, property: &str) -> Result<()> {
-    if property != "headerFormat" {
-        return Err(Error::Compile(format!(
-            "TableColumn.format.{key} is not serialized by the pinned writer; move this font metadata to headerFormat or the header Cell"
-        )));
-    }
     match key {
         "fontName" => {
             let Some(font_name) = value.as_str() else {
-                return Err(Error::Compile(
-                    "TableColumn.headerFormat.fontName must be a string; use a literal font family name".into(),
-                ));
+                return Err(Error::Compile(format!(
+                    "TableColumn.{property}.fontName must be a string; use a literal font family name"
+                )));
             };
             if font_name.is_empty()
                 || font_name.chars().count() > 255
                 || !font_name.chars().all(is_valid_xml_character)
             {
-                return Err(Error::Compile(
-                    "TableColumn.headerFormat.fontName must contain 1 to 255 valid XML characters; shorten it or remove control characters".into(),
-                ));
+                return Err(Error::Compile(format!(
+                    "TableColumn.{property}.fontName must contain 1 to 255 valid XML characters; shorten it or remove control characters"
+                )));
             }
         }
         "fontSize" => {
             let Some(font_size) = value.as_f64() else {
-                return Err(Error::Compile(
-                    "TableColumn.headerFormat.fontSize must be a number in points from 1 through 409".into(),
-                ));
+                return Err(Error::Compile(format!(
+                    "TableColumn.{property}.fontSize must be a number in points from 1 through 409"
+                )));
             };
             if !(1.0..=409.0).contains(&font_size) {
-                return Err(Error::Compile(
-                    "TableColumn.headerFormat.fontSize must be from 1 through 409 points; choose an OOXML-compatible font size".into(),
-                ));
+                return Err(Error::Compile(format!(
+                    "TableColumn.{property}.fontSize must be from 1 through 409 points; choose an OOXML-compatible font size"
+                )));
             }
         }
         "fontFamily" => {
             let Some(font_family) = value.as_u64() else {
-                return Err(Error::Compile(
-                    "TableColumn.headerFormat.fontFamily must be an integer from 0 through 5; use an OOXML font family value".into(),
-                ));
+                return Err(Error::Compile(format!(
+                    "TableColumn.{property}.fontFamily must be an integer from 0 through 5; use an OOXML font family value"
+                )));
             };
             if font_family > 5 {
-                return Err(Error::Compile(
-                    "TableColumn.headerFormat.fontFamily must be from 0 through 5; use 0 (default), 1 (roman), 2 (swiss), 3 (modern), 4 (script), or 5 (decorative)".into(),
-                ));
+                return Err(Error::Compile(format!(
+                    "TableColumn.{property}.fontFamily must be from 0 through 5; use 0 (default), 1 (roman), 2 (swiss), 3 (modern), 4 (script), or 5 (decorative)"
+                )));
             }
         }
         "fontCharset" => {
@@ -10054,14 +10049,14 @@ fn validate_table_column_font_property(key: &str, value: &Value, property: &str)
                 .as_u64()
                 .is_none_or(|charset| u8::try_from(charset).is_err())
             {
-                return Err(Error::Compile(
-                    "TableColumn.headerFormat.fontCharset must be an integer byte from 0 through 255; choose an OOXML charset value".into(),
-                ));
+                return Err(Error::Compile(format!(
+                    "TableColumn.{property}.fontCharset must be an integer byte from 0 through 255; choose an OOXML charset value"
+                )));
             }
         }
         _ => {
             return Err(Error::Compile(format!(
-                "TableColumn.headerFormat.{key} is not a supported font metadata property"
+                "TableColumn.{property}.{key} is not a supported font metadata property"
             )));
         }
     }
@@ -15859,11 +15854,27 @@ mod tests {
     }
 
     #[test]
-    fn rejects_table_data_font_metadata_that_writer_drops_with_repair_guidance() {
+    fn accepts_table_data_font_metadata_that_compiler_restores() {
         let input = workbook(vec![serde_json::json!({
             "type":"Worksheet", "props":{"name":"Sales"}, "children":[
                 {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[
-                    {"type":"TableColumn","props":{"format":{"fontName":"Aptos"}},"children":[]}
+                    {"type":"TableColumn","props":{"format":{"fontName":"Aptos","fontSize":12.5,"fontFamily":3,"fontCharset":128}},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Amount"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":[12]}]}
+            ]
+        })]);
+        input
+            .validate()
+            .expect("the compiler restores font metadata in data differential styles");
+    }
+
+    #[test]
+    fn rejects_out_of_range_table_data_font_size_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[
+                    {"type":"TableColumn","props":{"format":{"fontSize":410}},"children":[]}
                 ]},
                 {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Amount"]}]},
                 {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":[12]}]}
@@ -15871,17 +15882,15 @@ mod tests {
         })]);
         let error = input
             .validate()
-            .expect_err("pinned writer omits font metadata from data differential styles");
+            .expect_err("font sizes outside OOXML limits must be rejected");
 
         assert!(
-            error
-                .to_string()
-                .contains("not serialized by the pinned writer")
+            error.to_string().contains("TableColumn.format.fontSize"),
+            "{error}"
         );
         assert!(
-            error
-                .to_string()
-                .contains("move this font metadata to headerFormat")
+            error.to_string().contains("1 through 409 points"),
+            "{error}"
         );
     }
 

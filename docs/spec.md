@@ -1245,7 +1245,8 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   these attributes and rejects unsupported column metadata or formula shapes.
   `format?` accepts `bold={true}`, `italic={true}`, `strikethrough={true}`,
   `underline` (`single`, `double`, `singleAccounting`, or `doubleAccounting`),
-  `script` (`superscript` or `subscript`), and `fontColor`,
+  `script` (`superscript` or `subscript`), `fontName`, `fontSize`,
+  `fontFamily`, `fontCharset`, and `fontColor`,
   `fillColor`, or differential/ordinary pattern-fill properties `fillPattern`,
   `fillForegroundColor`, and `fillBackgroundColor`, `numberFormat`, the four
   edge borders and their RGB colors, and `borderDiagonalType`; `format` applies a differential style to data
@@ -1255,11 +1256,14 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   including font name/size/family/charset, alignment, wrapping, rotation,
   protection flags, number format, fills, and borders. It is serialized as
   ordinary header-cell formatting and reverses canonically as `Cell` formatting.
-  The pinned writer does not serialize font name/size/family/charset in
-  data-cell differential formats, so `format` rejects them with a suggestion to
-  move them to `headerFormat` or the header `Cell`. Other table-specific format
-  properties (including theme `fontScheme`) are rejected until the
-  differential-style reader can preserve them losslessly.
+  The pinned writer omits font name/size/family/charset from data-cell
+  differential formats. The compiler restores these values in the referenced
+  `<dxf><font>` before returning the XLSX, and reverse preserves them from
+  external table styles. `fontName` is a literal typeface of 1–255 XML-valid
+  characters, `fontSize` is 1–409 points, `fontFamily` is 0–5, and
+  `fontCharset` is an unsigned byte. Other table-specific format properties
+  (including theme `fontScheme`) remain rejected until the differential-style
+  reader can preserve them losslessly.
   Differential styles cannot encode
   false overrides, so emphasis properties are additive and must be true.
   `fillColor` is the solid-fill shorthand and is mutually exclusive with pattern

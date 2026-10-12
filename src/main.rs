@@ -773,9 +773,28 @@ fn collect_x14_icon_normalization_targets(
     Ok(targets)
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct TableDxfFontMetadata {
+    script: Option<String>,
+    name: Option<String>,
+    size: Option<String>,
+    family: Option<String>,
+    charset: Option<String>,
+}
+
+impl TableDxfFontMetadata {
+    fn is_empty(&self) -> bool {
+        self.script.is_none()
+            && self.name.is_none()
+            && self.size.is_none()
+            && self.family.is_none()
+            && self.charset.is_none()
+    }
+}
+
 fn collect_table_script_targets(
     ir: &IrEnvelope,
-) -> xlsx_jsx::Result<HashMap<String, BTreeMap<usize, String>>> {
+) -> xlsx_jsx::Result<HashMap<String, BTreeMap<usize, TableDxfFontMetadata>>> {
     let mut targets = HashMap::new();
     for worksheet_value in &ir.workbook.children {
         let worksheet: Node = serde_json::from_value(worksheet_value.clone())
@@ -795,19 +814,29 @@ fn collect_table_script_targets(
             for (column_index, column_value) in table.children.iter().enumerate() {
                 let column: Node = serde_json::from_value(column_value.clone())
                     .map_err(|error| Error::Compile(error.to_string()))?;
-                let Some(script) = column
-                    .props
-                    .get("format")
-                    .and_then(Value::as_object)
-                    .and_then(|format| format.get("script"))
-                    .and_then(Value::as_str)
-                else {
+                let Some(format) = column.props.get("format").and_then(Value::as_object) else {
                     continue;
                 };
+                let metadata = TableDxfFontMetadata {
+                    script: format
+                        .get("script")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    name: format
+                        .get("fontName")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    size: format.get("fontSize").map(ToString::to_string),
+                    family: format.get("fontFamily").map(ToString::to_string),
+                    charset: format.get("fontCharset").map(ToString::to_string),
+                };
+                if metadata.is_empty() {
+                    continue;
+                }
                 targets
                     .entry(name.to_owned())
                     .or_insert_with(BTreeMap::new)
-                    .insert(column_index, script.to_owned());
+                    .insert(column_index, metadata);
             }
         }
     }
@@ -818,7 +847,7 @@ fn normalize_generated_xlsx(
     path: &std::path::Path,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
-    table_script_targets: &HashMap<String, BTreeMap<usize, String>>,
+    table_script_targets: &HashMap<String, BTreeMap<usize, TableDxfFontMetadata>>,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -873,7 +902,7 @@ fn rewrite_generated_xlsx(
     temporary_file: std::fs::File,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
-    table_script_targets: &HashMap<String, BTreeMap<usize, String>>,
+    table_script_targets: &HashMap<String, BTreeMap<usize, TableDxfFontMetadata>>,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -924,7 +953,7 @@ fn rewrite_generated_xlsx(
             let xml = String::from_utf8(bytes).map_err(|error| {
                 Error::Compile(format!("generated styles part is not UTF-8 XML: {error}"))
             })?;
-            bytes = patch_table_dxf_scripts(&xml, &dxf_scripts)?.into_bytes();
+            bytes = patch_table_dxf_fonts(&xml, &dxf_scripts)?.into_bytes();
         }
         writer
             .start_file(
@@ -974,8 +1003,8 @@ fn rewrite_generated_xlsx(
 
 fn collect_table_dxf_script_indices(
     archive: &mut ZipArchive<std::fs::File>,
-    requested: &HashMap<String, BTreeMap<usize, String>>,
-) -> xlsx_jsx::Result<BTreeMap<usize, String>> {
+    requested: &HashMap<String, BTreeMap<usize, TableDxfFontMetadata>>,
+) -> xlsx_jsx::Result<BTreeMap<usize, TableDxfFontMetadata>> {
     let mut resolved = BTreeMap::new();
     let mut found = BTreeSet::new();
     let part_names = archive
@@ -1012,14 +1041,14 @@ fn collect_table_dxf_script_indices(
                     } else if tag.as_ref() == b"tableColumn" {
                         let index = column_index;
                         column_index += 1;
-                        if let Some(script) = table_name
+                        if let Some(metadata) = table_name
                             .as_deref()
                             .and_then(|name| requested.get(name))
                             .and_then(|columns| columns.get(&index))
                         {
                             let dxf_id = chart_xml_attribute(&event, "dataDxfId", reader.decoder())?
                                 .ok_or_else(|| Error::Compile(format!(
-                                    "generated table `{}` column {} is missing dataDxfId required for its `{script}` script format",
+                                    "generated table `{}` column {} is missing dataDxfId required for its font format",
                                     table_name.as_deref().unwrap_or("<unnamed>"),
                                     index + 1
                                 )))?
@@ -1029,11 +1058,11 @@ fn collect_table_dxf_script_indices(
                                     table_name.as_deref().unwrap_or("<unnamed>"),
                                     index + 1
                                 )))?;
-                            if let Some(previous) = resolved.insert(dxf_id, script.clone())
-                                && previous != *script
+                            if let Some(previous) = resolved.insert(dxf_id, metadata.clone())
+                                && previous != *metadata
                             {
                                 return Err(Error::Compile(format!(
-                                    "generated DXF {dxf_id} is shared by conflicting table scripts `{previous}` and `{script}`; keep table column formats distinct"
+                                    "generated DXF {dxf_id} is shared by conflicting table font metadata; keep table column formats distinct"
                                 )));
                             }
                             if let Some(name) = table_name.as_deref() {
@@ -1065,9 +1094,9 @@ fn collect_table_dxf_script_indices(
     Ok(resolved)
 }
 
-fn patch_table_dxf_scripts(
+fn patch_table_dxf_fonts(
     xml: &str,
-    scripts: &BTreeMap<usize, String>,
+    scripts: &BTreeMap<usize, TableDxfFontMetadata>,
 ) -> xlsx_jsx::Result<String> {
     let mut reader = XmlReader::from_str(xml);
     let mut dxf_index = 0_usize;
@@ -1128,9 +1157,9 @@ fn patch_table_dxf_scripts(
     }
     let mut output = xml.to_owned();
     for (index, start, end) in fragments.into_iter().rev() {
-        let script = scripts.get(&index).ok_or_else(|| {
+        let metadata = scripts.get(&index).ok_or_else(|| {
             Error::Compile(format!(
-                "missing requested script for generated DXF {index}"
+                "missing requested font metadata for generated DXF {index}"
             ))
         })?;
         let fragment = output.get(start..end).ok_or_else(|| {
@@ -1138,7 +1167,7 @@ fn patch_table_dxf_scripts(
                 "generated DXF {index} has invalid XML byte boundaries"
             ))
         })?;
-        let replacement = patch_one_dxf_script(fragment, script, index)?;
+        let replacement = patch_one_dxf_font(fragment, metadata, index)?;
         output.replace_range(start..end, &replacement);
     }
     Ok(output)
@@ -1162,47 +1191,37 @@ fn find_last_xml_tag_start(xml: &str, end: usize, tag: &str) -> xlsx_jsx::Result
         .ok_or_else(|| Error::Compile(format!("generated XML is missing `<{tag}>`")))
 }
 
-fn patch_one_dxf_script(fragment: &str, script: &str, index: usize) -> xlsx_jsx::Result<String> {
-    let value = match script {
-        "superscript" => "superscript",
-        "subscript" => "subscript",
-        _ => {
-            return Err(Error::Compile(format!(
-                "generated table DXF {index} has unsupported script `{script}`"
-            )));
-        }
-    };
-    if let Some(start) = fragment.find("<vertAlign") {
-        let end = fragment[start..]
-            .find('>')
-            .map(|offset| start + offset + 1)
+fn patch_one_dxf_font(
+    fragment: &str,
+    metadata: &TableDxfFontMetadata,
+    index: usize,
+) -> xlsx_jsx::Result<String> {
+    let font = if let Some(font_start) = fragment.find("<font") {
+        let font_end = fragment[font_start..]
+            .find("</font>")
+            .map(|offset| font_start + offset + "</font>".len())
             .ok_or_else(|| {
-                Error::Compile(format!(
-                    "generated table DXF {index} has malformed vertAlign"
-                ))
+                Error::Compile(format!("generated table DXF {index} has an unclosed font"))
             })?;
-        let tag = &fragment[start..end];
-        if tag.contains(&format!("val=\"{value}\"")) {
-            return Ok(fragment.to_owned());
-        }
-        return Err(Error::Compile(format!(
-            "generated table DXF {index} contains a conflicting vertAlign; repair the writer output"
-        )));
-    }
-    let vert_align = format!("<vertAlign val=\"{value}\"/>");
+        fragment[font_start..font_end].to_owned()
+    } else {
+        "<font></font>".to_owned()
+    };
+    let font = append_dxf_font_metadata(font, metadata, index)?;
+
     if let Some(font_start) = fragment.find("<font") {
         let font_end = fragment[font_start..]
             .find("</font>")
-            .map(|offset| font_start + offset)
+            .map(|offset| font_start + offset + "</font>".len())
             .ok_or_else(|| {
                 Error::Compile(format!("generated table DXF {index} has an unclosed font"))
             })?;
         let mut output = fragment.to_owned();
-        output.insert_str(font_end, &vert_align);
+        output.replace_range(font_start..font_end, &font);
         return Ok(output);
     }
     if let Some(empty_end) = fragment.strip_suffix("/>") {
-        return Ok(format!("{empty_end}><font>{vert_align}</font></dxf>"));
+        return Ok(format!("{empty_end}>{font}</dxf>"));
     }
     let open_end = fragment.find('>').map(|offset| offset + 1).ok_or_else(|| {
         Error::Compile(format!(
@@ -1210,8 +1229,83 @@ fn patch_one_dxf_script(fragment: &str, script: &str, index: usize) -> xlsx_jsx:
         ))
     })?;
     let mut output = fragment.to_owned();
-    output.insert_str(open_end, &format!("<font>{vert_align}</font>"));
+    output.insert_str(open_end, &font);
     Ok(output)
+}
+
+fn append_dxf_font_metadata(
+    mut font: String,
+    metadata: &TableDxfFontMetadata,
+    index: usize,
+) -> xlsx_jsx::Result<String> {
+    if let Some(script) = &metadata.script {
+        if !["superscript", "subscript"].contains(&script.as_str()) {
+            return Err(Error::Compile(format!(
+                "generated table DXF {index} has unsupported script `{script}`"
+            )));
+        }
+        append_font_tag(
+            &mut font,
+            "vertAlign",
+            script,
+            &["sz", "color", "name", "family", "charset"],
+            index,
+        )?;
+    }
+    if let Some(size) = &metadata.size {
+        append_font_tag(
+            &mut font,
+            "sz",
+            size,
+            &["color", "name", "family", "charset"],
+            index,
+        )?;
+    }
+    if let Some(name) = &metadata.name {
+        append_font_tag(&mut font, "name", name, &["family", "charset"], index)?;
+    }
+    if let Some(family) = &metadata.family {
+        append_font_tag(&mut font, "family", family, &["charset"], index)?;
+    }
+    if let Some(charset) = &metadata.charset {
+        append_font_tag(&mut font, "charset", charset, &[], index)?;
+    }
+    Ok(font)
+}
+
+fn append_font_tag(
+    font: &mut String,
+    tag: &str,
+    value: &str,
+    anchors: &[&str],
+    index: usize,
+) -> xlsx_jsx::Result<()> {
+    let escaped = quick_xml::escape::escape(value);
+    let expected = format!("val=\"{escaped}\"");
+    if let Some(start) = font.find(&format!("<{tag}")) {
+        let end = font[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| {
+                Error::Compile(format!("generated table DXF {index} has malformed `{tag}`"))
+            })?;
+        if font[start..end].contains(&expected) {
+            return Ok(());
+        }
+        return Err(Error::Compile(format!(
+            "generated table DXF {index} contains conflicting `{tag}` metadata; repair the writer output"
+        )));
+    }
+    let insertion = anchors
+        .iter()
+        .filter_map(|anchor| font.find(&format!("<{anchor}")))
+        .min()
+        .or_else(|| font.find("</font>"))
+        .ok_or_else(|| {
+            Error::Compile(format!("generated table DXF {index} has an unclosed font"))
+        })?;
+    font.insert_str(insertion, &format!("<{tag} {expected}/>"));
+    Ok(())
 }
 
 fn patch_literal_error_cells(xml: &str, part: &str) -> xlsx_jsx::Result<(String, usize)> {
@@ -9126,6 +9220,20 @@ fn table_column_format_value(style: &CellFontStyle) -> Value {
     }
     if let Some(script) = &style.script {
         props.insert("script".into(), Value::String(script.clone()));
+    }
+    if let Some(font_name) = &style.font_name {
+        props.insert("fontName".into(), Value::String(font_name.clone()));
+    }
+    if let Some(font_size) = style.font_size
+        && let Some(value) = serde_json::Number::from_f64(font_size)
+    {
+        props.insert("fontSize".into(), Value::Number(value));
+    }
+    if let Some(font_family) = style.font_family {
+        props.insert("fontFamily".into(), Value::from(font_family));
+    }
+    if let Some(font_charset) = style.font_charset {
+        props.insert("fontCharset".into(), Value::from(font_charset));
     }
     if let Some(color) = &style.font_color {
         props.insert("fontColor".into(), Value::String(color.clone()));
@@ -38540,6 +38648,23 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                     b"color" if in_font => {
                         parse_font_color(&event, style, reader.decoder())?;
                     }
+                    b"name" | b"sz" if in_font => {
+                        parse_font_name_or_size(
+                            &event,
+                            tag.as_ref(),
+                            style,
+                            reader.decoder(),
+                            false,
+                        )?;
+                    }
+                    b"family" | b"charset" if in_font => {
+                        parse_font_family_or_charset(
+                            &event,
+                            tag.as_ref(),
+                            style,
+                            reader.decoder(),
+                        )?;
+                    }
                     b"numFmt" if in_dxf => {
                         if number_format_seen {
                             style.support = StyleSupport::Unsupported;
@@ -38606,6 +38731,10 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         || style.strikethrough == Some(true)
                         || style.underline.is_some()
                         || style.script.is_some()
+                        || style.font_name.is_some()
+                        || style.font_size.is_some()
+                        || style.font_family.is_some()
+                        || style.font_charset.is_some()
                         || style.font_color.is_some()
                         || style.fill_color.is_some()
                         || style.fill_pattern.is_some()

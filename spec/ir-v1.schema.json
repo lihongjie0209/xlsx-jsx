@@ -431,21 +431,7 @@
             "totalFunction": { "type": "string", "enum": ["none", "average", "count", "countNumbers", "max", "min", "sum", "stdDev", "var"] },
             "totalFormula": { "type": "string", "minLength": 1 },
             "formula": { "type": "string", "minLength": 1 },
-            "format": {
-              "allOf": [
-                { "$ref": "#/$defs/tableColumnFormat" },
-                {
-                  "not": {
-                    "anyOf": [
-                      { "required": ["fontName"] },
-                      { "required": ["fontSize"] },
-                      { "required": ["fontFamily"] },
-                      { "required": ["fontCharset"] }
-                    ]
-                  }
-                }
-              ]
-            },
+            "format": { "$ref": "#/$defs/tableColumnFormat" },
             "headerFormat": {
               "allOf": [{ "$ref": "#/$defs/formatProps" }],
               "minProperties": 1,
