@@ -23,6 +23,11 @@ xlsx-jsx reverse report.xlsx -o report.roundtrip.tsx
 xlsx-jsx spec --format json
 ```
 
+Errors include an explanation, a repair suggestion, and a pointer to the matching
+DSL contract. Reverse diagnostics distinguish unsupported formula cache cases;
+for example, scalar `formulaResult` applies to ordinary formulas, not legacy
+array-formula cached values.
+
 ## Feature matrix
 
 See [the development roadmap](docs/roadmap.md) for prioritized follow-up work

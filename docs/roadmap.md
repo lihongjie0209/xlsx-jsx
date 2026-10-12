@@ -18,6 +18,8 @@ completed batch; they do not block work on the next batch.
 
 ## Recently delivered
 
+- Reverse diagnostics now explain the legacy array-formula cache limitation and
+  distinguish it from scalar cached results on ordinary formulas.
 - Image fit modes: `stretch`, `contain`, and `containCenter` use the effective
   dimensions of the target cell. Reverse emits canonical explicit pixel
   dimensions/offsets because OOXML records picture geometry, not the author's

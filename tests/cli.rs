@@ -16171,6 +16171,9 @@ fn reverse_rejects_array_formula_cached_results_it_cannot_preserve() {
         .failure()
         .stderr(predicate::str::contains("array formula cached result"))
         .stderr(predicate::str::contains("only writer-default zero caches"))
+        .stderr(predicate::str::contains(
+            "scalar `formulaResult` applies to ordinary formulas, not legacy array caches",
+        ))
         .stderr(predicate::str::contains("suggestion:"));
 }
 

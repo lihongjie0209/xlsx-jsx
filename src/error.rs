@@ -92,6 +92,10 @@ impl Error {
                 "The source workbook contains rich-string features outside the lossless TextRun subset.",
                 "Remove phonetic annotations or unsupported run font metadata, or extend TextRun and its reverse parser together; supported rich-text runs already round-trip.",
             ),
+            Self::Reverse(message) if message.contains("array formula cached result") => (
+                "Legacy array-formula cached values cannot be represented independently from their formula range.",
+                "Keep only writer-default zero caches for legacy array formulas; scalar `formulaResult` applies to ordinary formulas, not legacy array caches.",
+            ),
             Self::Reverse(_) => (
                 "The XLSX file uses content outside the lossless v1 reverse subset.",
                 "Remove unsupported workbook features or convert values to supported scalar cells.",

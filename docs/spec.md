@@ -1911,6 +1911,10 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   but does not write an XLSX file.
 - `xlsx-jsx spec [--format json|markdown]` emits the machine-readable contract.
 - Errors identify the failing component/property and suggest a concrete repair.
+  Reverse errors explain the source structure that cannot be represented; for
+  legacy array-formula cached values, diagnostics state that only the writer's
+  default zero caches are supported and that scalar `formulaResult` applies to
+  ordinary formulas, not legacy array caches.
 
 ## Reverse contract
 
