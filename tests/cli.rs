@@ -8,7 +8,8 @@ use rust_xlsxwriter::{
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
     ChartLineDashType, ChartMarker, ChartMarkerType, ChartPatternFill, ChartPatternFillType,
     ChartPoint, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType,
-    Image as XlsxImage, ObjectMovement, Workbook as XlsxWorkbook,
+    Image as XlsxImage, ObjectMovement, Sparkline as XlsxSparkline, SparklineType,
+    Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
@@ -39,6 +40,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("fontSize"))
         .stdout(predicate::str::contains("fontFamily"))
         .stdout(predicate::str::contains("altText"))
+        .stdout(predicate::str::contains("sparklineType"))
         .stdout(predicate::str::contains("\"const\": \"Note\""))
         .stdout(predicate::str::contains("moveAndSizeAfter"))
         .stdout(predicate::str::contains("\"customLabels\""))
@@ -21417,4 +21419,166 @@ fn invalid_dsl_has_reason_and_repair_suggestion() {
         .stderr(predicate::str::contains("explanation:"))
         .stderr(predicate::str::contains("suggestion:"))
         .stderr(predicate::str::contains("Worksheet name"));
+}
+
+#[test]
+fn reverses_external_sparkline_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-sparkline.xlsx");
+    let source_path = directory.path().join("external-sparkline.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-sparkline.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook
+        .add_worksheet()
+        .set_name("Revenue & Growth")
+        .unwrap();
+    for (column, value) in [2.0, 5.0, 3.0].into_iter().enumerate() {
+        worksheet
+            .write_number(0, u16::try_from(column).unwrap(), value)
+            .unwrap();
+    }
+    worksheet.write_number(1, 0, 7.0).unwrap();
+    worksheet.write_number(2, 0, 9.0).unwrap();
+    let sparkline = XlsxSparkline::new()
+        .set_range(("Revenue & Growth", 0, 0, 0, 2))
+        .set_type(SparklineType::Column);
+    worksheet.add_sparkline(1, 3, &sparkline).unwrap();
+    let win_loss = XlsxSparkline::new()
+        .set_range(("Revenue & Growth", 0, 0, 0, 2))
+        .set_type(SparklineType::WinLose);
+    worksheet.add_sparkline(1, 4, &win_loss).unwrap();
+    worksheet
+        .add_sparkline(
+            1,
+            5,
+            &XlsxSparkline::new().set_range(("Revenue & Growth", 0, 0, 0, 2)),
+        )
+        .unwrap();
+    worksheet
+        .add_sparkline(
+            1,
+            6,
+            &XlsxSparkline::new().set_range(("Revenue & Growth", 0, 0, 2, 0)),
+        )
+        .unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(
+        source.contains(
+            "<Sparkline cell=\"D2\" range=\"'Revenue & Growth'!A1:C1\" sparklineType=\"column\" />"
+        ),
+        "{source}"
+    );
+    assert!(
+        source.contains(
+            "<Sparkline cell=\"E2\" range=\"'Revenue & Growth'!A1:C1\" sparklineType=\"winLoss\" />"
+        ),
+        "{source}"
+    );
+    assert!(
+        source.contains("<Sparkline cell=\"F2\" range=\"'Revenue & Growth'!A1:C1\" />"),
+        "{source}"
+    );
+    assert!(
+        source.contains("<Sparkline cell=\"G2\" range=\"'Revenue & Growth'!A1:A3\" />"),
+        "{source}"
+    );
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt_xml = read_zip_part_for_test(&rebuilt_path, "xl/worksheets/sheet1.xml");
+    assert!(
+        rebuilt_xml.contains("<x14:sparklineGroup type=\"column\""),
+        "{rebuilt_xml}"
+    );
+    assert!(
+        rebuilt_xml.contains("<xm:f>'Revenue &amp; Growth'!A1:C1</xm:f>"),
+        "{rebuilt_xml}"
+    );
+}
+
+#[test]
+fn rejects_external_sparkline_colors_that_the_dsl_cannot_represent() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("custom-sparkline-color.xlsx");
+    let output_path = directory.path().join("custom-sparkline-color.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_number(0, 0, 1).unwrap();
+    worksheet.write_number(0, 1, 2).unwrap();
+    worksheet
+        .add_sparkline(1, 3, &XlsxSparkline::new().set_range(("Data", 0, 0, 0, 1)))
+        .unwrap();
+    workbook.save(&workbook_path).unwrap();
+    rewrite_part(&workbook_path, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<x14:colorSeries theme=\"4\" tint=\"-0.499984740745262\"/>",
+            "<x14:colorSeries rgb=\"FF112233\"/>",
+        )
+    });
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(output_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("custom sparkline color"))
+        .stderr(predicate::str::contains("use the writer defaults"));
+}
+
+#[test]
+fn rejects_sparkline_source_ranges_that_are_not_one_dimensional() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-sparkline.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Sparkline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Sparkline cell="D2" range="Data!A1:B2" /></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("one-dimensional A1 range"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn rejects_sparkline_references_to_missing_worksheets() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("missing-sparkline-source.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Sparkline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Sparkline cell="D2" range="Missing!A1:C1" /></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "refers to missing worksheet `Missing`",
+        ))
+        .stderr(predicate::str::contains("add that Worksheet"));
 }

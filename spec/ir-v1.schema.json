@@ -255,6 +255,7 @@
               { "$ref": "#/$defs/ignoreError" },
               { "$ref": "#/$defs/table" },
               { "$ref": "#/$defs/note" },
+              { "$ref": "#/$defs/sparkline" },
               { "$ref": "#/$defs/image" },
               { "$ref": "#/$defs/chart" },
               { "$ref": "#/$defs/row" }
@@ -502,6 +503,25 @@
             "altText": { "type": "string", "maxLength": 255 },
             "hyperlink": { "type": "string", "minLength": 1, "maxLength": 2080 },
             "movement": { "const": "moveAndSizeAfter" }
+          },
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "sparkline": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "Sparkline" },
+        "props": {
+          "type": "object",
+          "required": ["cell", "range"],
+          "properties": {
+            "cell": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
+            "range": { "type": "string", "minLength": 3, "maxLength": 255 },
+            "sparklineType": { "enum": ["line", "column", "winLoss"] }
           },
           "additionalProperties": false
         },

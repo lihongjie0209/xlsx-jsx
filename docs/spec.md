@@ -1131,6 +1131,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `MoveWithCells`/`SizeWithCells` markers for the other movement enum values,
   so those values are not separate reversible DSL states. Rich-text note runs
   beyond the standard author-prefix form and non-note VML shapes are rejected.
+- `Sparkline` adds one x14 mini chart to `cell`, using a one-dimensional A1
+  `range` on this or another worksheet and `type="line" | "column" | "winLoss"`.
+  The source worksheet must exist. It must be declared before worksheet `Row`
+  components. The default type is
+  `line`; omission folding is permitted only when the x14 group has no other
+  non-default settings. Reverse resolves the x14 extension by destination cell
+  and source formula, without relying on the embedded manifest. The pinned
+  writer's default eight theme/RGB color roles and `displayEmptyCellsAs="gap"`
+  are verified; custom colors/options and grouped multi-cell destinations fail
+  with a repair suggestion rather than being dropped.
 - `autoFilterColumns?: { column: integer, values?: string[], includeBlanks?:
   boolean, customFilters?: { logic: "and" | "or", conditions: { operator?:
   string, value: string }[] } }[]` adds criteria to columns within that range.

@@ -454,6 +454,7 @@ impl IrEnvelope {
             ));
         }
         validate_chart_sheet_references(&self.workbook.children, &names)?;
+        validate_sparkline_sheet_references(&self.workbook.children, &names)?;
         Ok(())
     }
 }
@@ -1597,6 +1598,7 @@ fn validate_worksheet_children(
     let mut ignored_error_ranges = Vec::new();
     let mut table_ranges = Vec::new();
     let mut note_cells = std::collections::HashSet::new();
+    let mut sparkline_cells = std::collections::HashSet::new();
     let mut chart_nodes = Vec::new();
     let mut image_nodes = Vec::new();
     let mut chart_custom_width_ranges = Vec::new();
@@ -1631,6 +1633,22 @@ fn validate_worksheet_children(
                 )));
             }
             validate_note(&child, child_index, &mut note_cells)?;
+            continue;
+        }
+        if child.r#type == "Sparkline" {
+            if saw_row {
+                return Err(Error::Compile(format!(
+                    "Worksheet `{sheet_name}` Sparkline at child {} appears after a Row; move sparklines before rows",
+                    child_index + 1
+                )));
+            }
+            let cell = validate_sparkline(&child, child_index)?;
+            if sparkline_cells.contains(&cell) {
+                return Err(Error::Compile(format!(
+                    "more than one Sparkline targets {cell}; keep one sparkline per destination cell"
+                )));
+            }
+            sparkline_cells.insert(cell);
             continue;
         }
         if child.r#type == "Chart" {
@@ -6938,6 +6956,47 @@ fn chart_source_sheet_name(formula: &str) -> Option<String> {
     }
 }
 
+fn validate_sparkline_sheet_references(
+    worksheet_values: &[Value],
+    worksheet_names: &std::collections::HashSet<String>,
+) -> Result<()> {
+    for worksheet_value in worksheet_values {
+        let worksheet: Node = serde_json::from_value(worksheet_value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if worksheet.r#type != "Worksheet" {
+            continue;
+        }
+        let destination_sheet = worksheet
+            .props
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Error::Compile("Worksheet.name must be a string".into()))?;
+        for child_value in &worksheet.children {
+            let child: Node = serde_json::from_value(child_value.clone())
+                .map_err(|error| Error::Compile(error.to_string()))?;
+            if child.r#type != "Sparkline" {
+                continue;
+            }
+            let range = child
+                .props
+                .get("range")
+                .and_then(Value::as_str)
+                .ok_or_else(|| Error::Compile("Sparkline.range must be a string".into()))?;
+            let source_sheet = sparkline_range_sheet_name(range).ok_or_else(|| {
+                Error::Compile(format!(
+                    "Sparkline.range `{range}` must be sheet-qualified; add a worksheet name and `!` before the A1 reference"
+                ))
+            })?;
+            if !worksheet_names.contains(&source_sheet.to_lowercase()) {
+                return Err(Error::Compile(format!(
+                    "Sparkline.range `{range}` on Worksheet `{destination_sheet}` refers to missing worksheet `{source_sheet}`; add that Worksheet or correct the range"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_chart_sheet_references(
     workbook_children: &[Value],
     worksheet_names: &std::collections::HashSet<String>,
@@ -7291,6 +7350,107 @@ fn validate_image_layouts(
         }
     }
     Ok(())
+}
+
+fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<String> {
+    if !sparkline.children.is_empty() {
+        return Err(Error::Compile(format!(
+            "Sparkline at declaration {} cannot have children; use cell, range, and sparklineType properties",
+            declaration_index + 1
+        )));
+    }
+    reject_unknown_props(sparkline, &["cell", "range", "sparklineType"], "Sparkline")?;
+    let cell = sparkline
+        .props
+        .get("cell")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile(format!(
+                "Sparkline at declaration {} requires cell, for example cell=\"D2\"",
+                declaration_index + 1
+            ))
+        })?;
+    let Some((row, column)) = parse_a1_cell_reference(cell) else {
+        return Err(Error::Compile(format!(
+            "Sparkline.cell `{cell}` is not a valid worksheet cell; use an absolute A1 coordinate such as D2"
+        )));
+    };
+    let range = sparkline
+        .props
+        .get("range")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile(format!(
+                "Sparkline at declaration {} requires a sheet-qualified range such as range=\"Data!$A$1:$C$1\"",
+                declaration_index + 1
+            ))
+        })?;
+    if range.len() > 255 {
+        return Err(Error::Compile(
+            "Sparkline.range exceeds 255 characters; shorten the sheet-qualified A1 reference"
+                .into(),
+        ));
+    }
+    if range.starts_with('=') || range.matches('!').count() != 1 {
+        return Err(Error::Compile(format!(
+            "Sparkline.range `{range}` must be a sheet-qualified one-dimensional A1 range; use `Sheet!A1:C1`"
+        )));
+    }
+    let (sheet, reference) = range.split_once('!').expect("one ! was validated");
+    let valid_sheet = sheet
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+        .is_some_and(|value| !value.is_empty() && !value.replace("''", "").contains('\''))
+        || (!sheet.is_empty()
+            && sheet
+                .chars()
+                .all(|value| value.is_ascii_alphanumeric() || matches!(value, '_' | '.')));
+    if !valid_sheet {
+        return Err(Error::Compile(format!(
+            "Sparkline.range `{range}` has an unsupported worksheet name; quote names with spaces, for example `'Sales Data'!A1:C1`"
+        )));
+    }
+    let coordinates = if let Some((first, last)) = reference.split_once(':') {
+        let first = parse_a1_cell_reference(first);
+        let last = parse_a1_cell_reference(last);
+        first
+            .zip(last)
+            .and_then(|((first_row, first_col), (last_row, last_col))| {
+                let bounds = (first_row, first_col, last_row, last_col);
+                (first_row <= last_row && first_col <= last_col)
+                    .then_some(bounds)
+                    .filter(|range| one_dimensional_range_length(*range).is_some())
+            })
+    } else {
+        parse_a1_cell_reference(reference).map(|(row, col)| (row, col, row, col))
+    };
+    if coordinates.is_none() {
+        return Err(Error::Compile(format!(
+            "Sparkline.range `{range}` is not a valid one-dimensional A1 range; use a single row or column such as `Data!A1:C1`"
+        )));
+    }
+    if let Some(kind) = sparkline.props.get("sparklineType")
+        && !kind
+            .as_str()
+            .is_some_and(|value| matches!(value, "line" | "column" | "winLoss"))
+    {
+        return Err(Error::Compile(
+            "Sparkline.sparklineType must be line, column, or winLoss; choose one of those writer-supported types".into(),
+        ));
+    }
+    Ok(format_a1_cell(row, column))
+}
+
+fn sparkline_range_sheet_name(range: &str) -> Option<String> {
+    let (sheet, _) = range.split_once('!')?;
+    if let Some(quoted) = sheet
+        .strip_prefix('\'')
+        .and_then(|value| value.strip_suffix('\''))
+    {
+        Some(quoted.replace("''", "'"))
+    } else {
+        Some(sheet.to_owned())
+    }
 }
 
 #[expect(

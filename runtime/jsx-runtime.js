@@ -13,6 +13,7 @@ export const IgnoreError = host("IgnoreError");
 export const Table = host("Table");
 export const TableColumn = host("TableColumn");
 export const Note = host("Note");
+export const Sparkline = host("Sparkline");
 export const Chart = host("Chart");
 export const Series = host("Series");
 export const ErrorBars = host("ErrorBars");

@@ -28,8 +28,8 @@ use rust_xlsxwriter::{
     ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
     DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
     FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
-    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Table, TableColumn, TableStyle, Url,
-    Workbook,
+    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Sparkline as XlsxSparkline,
+    SparklineType, Table, TableColumn, TableStyle, Url, Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -341,6 +341,10 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             }
             if child.r#type == "Note" {
                 compile_note(worksheet, &child)?;
+                continue;
+            }
+            if child.r#type == "Sparkline" {
+                compile_sparkline(worksheet, &child)?;
                 continue;
             }
             if child.r#type == "Chart" {
@@ -1159,6 +1163,36 @@ fn compile_note(
         .insert_note(row, column, &compiled_note)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot add Note to {cell}: {error}")))
+}
+
+fn compile_sparkline(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    component: &Node,
+) -> xlsx_jsx::Result<()> {
+    let cell = component.props["cell"]
+        .as_str()
+        .expect("validated Sparkline.cell");
+    let (row, column) = parse_a1_cell_reference(cell).expect("validated Sparkline.cell");
+    let range = component.props["range"]
+        .as_str()
+        .expect("validated Sparkline.range");
+    let mut sparkline = XlsxSparkline::new().set_range(range);
+    if let Some(kind) = component.props.get("sparklineType").and_then(Value::as_str) {
+        sparkline = sparkline.set_type(match kind {
+            "line" => SparklineType::Line,
+            "column" => SparklineType::Column,
+            "winLoss" => SparklineType::WinLose,
+            _ => unreachable!("validated Sparkline.sparklineType"),
+        });
+    }
+    worksheet
+        .add_sparkline(row, column, &sparkline)
+        .map(|_| ())
+        .map_err(|error| {
+            Error::Compile(format!(
+                "cannot add Sparkline at {cell} from `{range}`: {error}; use a valid one-dimensional range"
+            ))
+        })
 }
 
 #[expect(
@@ -5740,7 +5774,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         }
     }
     let mut output = String::from(
-        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Image, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
+        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, Image, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
     for (name, value) in [
         ("title", workbook_properties.title.as_deref()),
@@ -5882,6 +5916,9 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         }
         if let Some(notes) = sheet_metadata.map(|metadata| &metadata.notes) {
             render_notes(&mut output, notes);
+        }
+        if let Some(sparklines) = sheet_metadata.map(|metadata| &metadata.sparklines) {
+            render_sparklines(&mut output, sparklines);
         }
         if let Some(metadata) = sheet_metadata {
             render_drawings(&mut output, metadata);
@@ -6232,6 +6269,20 @@ fn render_notes(output: &mut String, notes: &[WorksheetNote]) {
         }
         if !note.alt_text.is_empty() {
             let _ = write!(output, " altText={{{:?}}}", note.alt_text);
+        }
+        output.push_str(" />\n");
+    }
+}
+
+fn render_sparklines(output: &mut String, sparklines: &[WorksheetSparkline]) {
+    for sparkline in sparklines {
+        let _ = write!(
+            output,
+            "    <Sparkline cell={:?} range={:?}",
+            sparkline.cell, sparkline.range
+        );
+        if sparkline.sparkline_type != "line" {
+            let _ = write!(output, " sparklineType={:?}", sparkline.sparkline_type);
         }
         output.push_str(" />\n");
     }
@@ -24753,6 +24804,7 @@ struct WorksheetMetadata {
     conditional_formats: Vec<WorksheetConditionalFormat>,
     ignored_errors: Vec<WorksheetIgnoredError>,
     notes: Vec<WorksheetNote>,
+    sparklines: Vec<WorksheetSparkline>,
     legacy_drawing_relationship_id: Option<String>,
     data_validation_count: Option<usize>,
     auto_filter: Option<String>,
@@ -25212,6 +25264,13 @@ struct WorksheetNote {
     vml_margin_top_points: Option<f64>,
     vml_z_index: Option<u32>,
     vml_anchor: Option<Vec<i32>>,
+}
+
+#[derive(Clone)]
+struct WorksheetSparkline {
+    cell: String,
+    range: String,
+    sparkline_type: &'static str,
 }
 
 struct WorksheetNoteParts {
@@ -26138,6 +26197,7 @@ fn audit_worksheet_xml(
         page_breaks: parse_worksheet_page_breaks(xml, part)?,
         header_footer: parse_worksheet_header_footer(xml, part)?,
         protection: parse_worksheet_protection(xml, part)?,
+        sparklines: parse_sparklines(xml, part)?,
         ..Default::default()
     };
     let mut next_row_index = 0_u32;
@@ -26369,8 +26429,9 @@ fn audit_worksheet_xml(
     validate_merged_ranges(part, &metadata)?;
     metadata.selection = validate_pane_selections(&metadata, &metadata.pane_selections, part)?;
     metadata.conditional_formats = parse_conditional_formats(xml, part, differential_formats)?;
-    merge_x14_data_bars(xml, part, &mut metadata.conditional_formats)?;
-    merge_x14_icon_sets(xml, part, &mut metadata.conditional_formats)?;
+    let without_sparklines = remove_sparkline_extension(xml, part)?;
+    merge_x14_data_bars(&without_sparklines, part, &mut metadata.conditional_formats)?;
+    merge_x14_icon_sets(&without_sparklines, part, &mut metadata.conditional_formats)?;
     if metadata.used_hyperlink_relationships.len() != hyperlink_relationships.len() {
         let unused = hyperlink_relationships
             .keys()
@@ -27351,6 +27412,428 @@ fn parse_conditional_formats(
     }
     rules.sort_by_key(|entry| entry.0);
     Ok(rules.into_iter().map(|(_, rule)| rule).collect())
+}
+
+fn remove_sparkline_extension(xml: &str, part: &str) -> xlsx_jsx::Result<String> {
+    const SPARKLINE_URI: &str = "{05C60535-1F16-4fd2-B633-F4F36F0B64E0}";
+    let mut reader = XmlReader::from_str(xml);
+    let mut writer = XmlWriter::new(Vec::with_capacity(xml.len()));
+    let mut skip_depth = 0_u32;
+    let mut removed = false;
+    loop {
+        let event = reader.read_event().map_err(|error| {
+            Error::Reverse(format!("invalid worksheet XML in `{part}`: {error}"))
+        })?;
+        if matches!(event, Event::Eof) {
+            break;
+        }
+        if skip_depth > 0 {
+            match event {
+                Event::Start(_) => skip_depth += 1,
+                Event::End(_) => skip_depth -= 1,
+                _ => {}
+            }
+            continue;
+        }
+        let is_sparkline_extension = match &event {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == b"ext" =>
+            {
+                element.attributes().with_checks(false).any(|attribute| {
+                    attribute.is_ok_and(|attribute| {
+                        attribute.key.as_ref() == b"uri"
+                            && attribute.value.as_ref() == SPARKLINE_URI.as_bytes()
+                    })
+                })
+            }
+            _ => false,
+        };
+        if is_sparkline_extension {
+            removed = true;
+            if matches!(event, Event::Start(_)) {
+                skip_depth = 1;
+            }
+            continue;
+        }
+        writer.write_event(event.into_owned()).map_err(|error| {
+            Error::Reverse(format!(
+                "cannot filter sparkline extension in `{part}`: {error}"
+            ))
+        })?;
+    }
+    if !removed {
+        return Ok(xml.to_owned());
+    }
+    String::from_utf8(writer.into_inner()).map_err(|error| {
+        Error::Reverse(format!(
+            "filtered worksheet XML in `{part}` is not UTF-8: {error}"
+        ))
+    })
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "Sparkline group records are parsed and validated in one ordered state machine."
+)]
+fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSparkline>> {
+    const SPARKLINE_URI: &str = "{05C60535-1F16-4fd2-B633-F4F36F0B64E0}";
+    let mut reader = XmlReader::from_str(xml);
+    reader.config_mut().trim_text(false);
+    let mut extension_seen = false;
+    let mut in_sparkline_extension = false;
+    let mut in_sparkline_group = false;
+    let mut in_sparkline = false;
+    let mut current_type = "line";
+    let mut current_formula = None;
+    let mut current_cell = None;
+    let mut text_element = None;
+    let mut group_sparkline_count = 0_usize;
+    let mut sparklines = Vec::new();
+    let mut destination_cells = std::collections::HashSet::new();
+    let mut group_colors = std::collections::HashSet::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event) | Event::Empty(event)) => {
+                let name = event.name();
+                match name.as_ref() {
+                    b"ext" => {
+                        let mut uri = None;
+                        let mut x14_namespace = None;
+                        let mut unsupported_attribute = None;
+                        for attribute in event.attributes() {
+                            let attribute = attribute.map_err(|error| Error::Reverse(format!(
+                                "worksheet `{part}` has invalid sparkline extension metadata: {error}"
+                            )))?;
+                            let value = attribute
+                                .decoded_and_normalized_value(
+                                    XmlVersion::Implicit1_0,
+                                    reader.decoder(),
+                                )
+                                .map_err(|error| Error::Reverse(error.to_string()))?
+                                .into_owned();
+                            match attribute.key.as_ref() {
+                                b"uri" => uri = Some(value),
+                                b"xmlns:x14" => x14_namespace = Some(value),
+                                key => {
+                                    unsupported_attribute =
+                                        Some(String::from_utf8_lossy(key).into_owned());
+                                }
+                            }
+                        }
+                        if uri.as_deref() == Some(SPARKLINE_URI) {
+                            if extension_seen {
+                                return Err(Error::Reverse(format!(
+                                    "worksheet `{part}` repeats the sparkline extension; combine sparkline groups into one supported x14 extension"
+                                )));
+                            }
+                            if let Some(attribute) = unsupported_attribute {
+                                return Err(Error::Reverse(format!(
+                                    "worksheet `{part}` sparkline extension has unsupported `{attribute}` metadata; retain only uri and xmlns:x14"
+                                )));
+                            }
+                            if x14_namespace.as_deref()
+                                != Some(
+                                    "http://schemas.microsoft.com/office/spreadsheetml/2009/9/main",
+                                )
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "worksheet `{part}` sparkline extension has an unexpected x14 namespace; use the SpreadsheetML 2009/9 namespace"
+                                )));
+                            }
+                            extension_seen = true;
+                            in_sparkline_extension = true;
+                        }
+                    }
+                    _ if !in_sparkline_extension => {}
+                    b"x14:sparklineGroups" => {
+                        if !extension_seen {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` has sparklineGroups outside the recognized x14 extension; repair its extension URI"
+                            )));
+                        }
+                        let mut attributes = event.attributes();
+                        let namespace = attributes.next().transpose().map_err(|error| {
+                            Error::Reverse(format!(
+                                "worksheet `{part}` has invalid sparkline group namespaces: {error}"
+                            ))
+                        })?;
+                        let valid_namespace = namespace.is_some_and(|attribute| {
+                            attribute.key.as_ref() == b"xmlns:xm"
+                                && attribute.value.as_ref()
+                                    == b"http://schemas.microsoft.com/office/excel/2006/main"
+                        }) && attributes.next().is_none();
+                        if !valid_namespace {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` sparkline extension has an unexpected xm namespace; retain the Excel 2006 main namespace"
+                            )));
+                        }
+                    }
+                    b"x14:sparklineGroup" => {
+                        if in_sparkline_group {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` nests sparkline groups; flatten the group hierarchy"
+                            )));
+                        }
+                        in_sparkline_group = true;
+                        group_sparkline_count = sparklines.len();
+                        current_type = "line";
+                        group_colors.clear();
+                        for attribute in event.attributes() {
+                            let attribute = attribute.map_err(|error| Error::Reverse(format!(
+                                "worksheet `{part}` has invalid sparkline group metadata: {error}"
+                            )))?;
+                            match attribute.key.as_ref() {
+                                b"type" => {
+                                    current_type = match attribute.value.as_ref() {
+                                        b"line" => "line",
+                                        b"column" => "column",
+                                        b"stacked" => "winLoss",
+                                        other => {
+                                            return Err(Error::Reverse(format!(
+                                                "worksheet `{part}` sparkline type `{}` is unsupported; use line, column, or stacked win/loss",
+                                                String::from_utf8_lossy(other)
+                                            )));
+                                        }
+                                    }
+                                }
+                                b"displayEmptyCellsAs" if attribute.value.as_ref() == b"gap" => {}
+                                other => {
+                                    return Err(Error::Reverse(format!(
+                                        "worksheet `{part}` sparkline group has unsupported `{}` metadata; remove custom sparkline options or add matching DSL support",
+                                        String::from_utf8_lossy(other)
+                                    )));
+                                }
+                            }
+                        }
+                    }
+                    b"x14:colorSeries" | b"x14:colorNegative" | b"x14:colorAxis"
+                    | b"x14:colorMarkers" | b"x14:colorFirst" | b"x14:colorLast"
+                    | b"x14:colorHigh" | b"x14:colorLow" => {
+                        let tag = String::from_utf8_lossy(name.as_ref()).into_owned();
+                        if !in_sparkline_group || !group_colors.insert(tag.clone()) {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` has misplaced or duplicate sparkline color `{tag}`; restore one writer-default color per role"
+                            )));
+                        }
+                        if !default_sparkline_color(&tag, &event, reader.decoder())? {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` uses custom sparkline color `{tag}` that the v1 DSL cannot represent; use the writer defaults or add sparkline color properties"
+                            )));
+                        }
+                    }
+                    b"x14:sparkline" => {
+                        if !in_sparkline_group || in_sparkline {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` has a misplaced/nested sparkline record; repair the x14 group"
+                            )));
+                        }
+                        require_no_sparkline_attributes(&event, part, "x14:sparkline")?;
+                        in_sparkline = true;
+                        current_formula = None;
+                        current_cell = None;
+                    }
+                    b"xm:f" if in_sparkline => {
+                        require_no_sparkline_attributes(&event, part, "xm:f")?;
+                        text_element = Some("formula");
+                    }
+                    b"xm:sqref" if in_sparkline => {
+                        require_no_sparkline_attributes(&event, part, "xm:sqref")?;
+                        text_element = Some("cell");
+                    }
+                    b"x14:sparklines" if in_sparkline_group => {
+                        require_no_sparkline_attributes(&event, part, "x14:sparklines")?;
+                    }
+                    _ => {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` sparkline extension contains unsupported `<{}>` content; remove it or add explicit reverse support",
+                            String::from_utf8_lossy(name.as_ref())
+                        )));
+                    }
+                }
+            }
+            Ok(Event::Text(text)) if text_element.is_some() => {
+                let decoded = text.decode().map_err(|error| {
+                    Error::Reverse(format!(
+                        "worksheet `{part}` has invalid sparkline text: {error}"
+                    ))
+                })?;
+                let value = quick_xml::escape::unescape(&decoded)
+                    .map_err(|error| {
+                        Error::Reverse(format!(
+                            "worksheet `{part}` has invalid escaped sparkline text: {error}"
+                        ))
+                    })?
+                    .into_owned();
+                match text_element {
+                    Some("formula") => current_formula
+                        .get_or_insert_with(String::new)
+                        .push_str(&value),
+                    Some("cell") => current_cell
+                        .get_or_insert_with(String::new)
+                        .push_str(&value),
+                    _ => {}
+                }
+            }
+            Ok(Event::GeneralRef(reference)) if text_element.is_some() => {
+                let decoded = reference
+                    .decode()
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                let value = if let Some(character) = reference
+                    .resolve_char_ref()
+                    .map_err(|error| Error::Reverse(error.to_string()))?
+                {
+                    character.to_string()
+                } else {
+                    quick_xml::escape::resolve_predefined_entity(&decoded)
+                        .ok_or_else(|| Error::Reverse(format!(
+                            "worksheet `{part}` sparkline text contains unsupported entity `&{decoded};`"
+                        )))?
+                        .to_owned()
+                };
+                match text_element {
+                    Some("formula") => current_formula
+                        .get_or_insert_with(String::new)
+                        .push_str(&value),
+                    Some("cell") => current_cell
+                        .get_or_insert_with(String::new)
+                        .push_str(&value),
+                    _ => {}
+                }
+            }
+            Ok(Event::End(event)) => match event.name().as_ref() {
+                b"ext" if in_sparkline_extension => in_sparkline_extension = false,
+                b"xm:f" | b"xm:sqref" => text_element = None,
+                b"x14:sparkline" if in_sparkline => {
+                    let formula = current_formula.take().ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "worksheet `{part}` sparkline is missing xm:f; add its source range"
+                        ))
+                    })?;
+                    let cell = current_cell.take().ok_or_else(|| Error::Reverse(format!(
+                        "worksheet `{part}` sparkline is missing xm:sqref; add its destination cell"
+                    )))?;
+                    let source_range = formula
+                        .split_once('!')
+                        .and_then(|(_, reference)| parse_a1_range(reference));
+                    if chart_formula_sheet_name(&formula).is_none()
+                        || !chart_formula_has_valid_reference(&formula, true)
+                        || source_range
+                            .and_then(one_dimensional_range_length)
+                            .is_none()
+                    {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` sparkline source `{formula}` is not a sheet-qualified 1D A1 range; repair xm:f"
+                        )));
+                    }
+                    let Some((row, column)) = parse_a1_cell_reference(&cell) else {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` sparkline destination `{cell}` is not one A1 cell; repair xm:sqref"
+                        )));
+                    };
+                    let canonical_cell = format_a1_cell_reference(row, column);
+                    if !destination_cells.insert(canonical_cell.clone()) {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` repeats sparkline destination `{canonical_cell}`; retain one sparkline per cell"
+                        )));
+                    }
+                    sparklines.push(WorksheetSparkline {
+                        cell: canonical_cell,
+                        range: formula,
+                        sparkline_type: current_type,
+                    });
+                    in_sparkline = false;
+                }
+                b"x14:sparklineGroup" => {
+                    if sparklines.len() == group_sparkline_count {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` sparkline group contains no sparkline entries; add at least one destination cell"
+                        )));
+                    }
+                    let required_colors = [
+                        "x14:colorSeries",
+                        "x14:colorNegative",
+                        "x14:colorAxis",
+                        "x14:colorMarkers",
+                        "x14:colorFirst",
+                        "x14:colorLast",
+                        "x14:colorHigh",
+                        "x14:colorLow",
+                    ];
+                    if required_colors
+                        .iter()
+                        .any(|color| !group_colors.contains(*color))
+                    {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` sparkline group omits one of its writer-default colors; restore all eight color roles or add full color support"
+                        )));
+                    }
+                    in_sparkline_group = false;
+                }
+                _ => {}
+            },
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => {
+                return Err(Error::Reverse(format!(
+                    "invalid sparkline extension XML in `{part}`: {error}"
+                )));
+            }
+        }
+    }
+    if in_sparkline_extension || in_sparkline_group || in_sparkline {
+        return Err(Error::Reverse(format!(
+            "worksheet `{part}` has an incomplete sparkline extension; repair the x14 group and its xm:f/xm:sqref pair"
+        )));
+    }
+    Ok(sparklines)
+}
+
+fn require_no_sparkline_attributes(
+    event: &BytesStart<'_>,
+    part: &str,
+    element: &str,
+) -> xlsx_jsx::Result<()> {
+    if let Some(attribute) = event.attributes().with_checks(false).next() {
+        let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+        return Err(Error::Reverse(format!(
+            "worksheet `{part}` sparkline `{element}` has unsupported `{}` metadata; remove the attribute or add explicit reverse support",
+            String::from_utf8_lossy(attribute.key.as_ref())
+        )));
+    }
+    Ok(())
+}
+
+fn default_sparkline_color(
+    tag: &str,
+    event: &BytesStart<'_>,
+    decoder: quick_xml::encoding::Decoder,
+) -> xlsx_jsx::Result<bool> {
+    let expected: &[(&[u8], &[u8])] = match tag {
+        "x14:colorSeries" | "x14:colorMarkers" => {
+            &[(b"theme", b"4"), (b"tint", b"-0.499984740745262")]
+        }
+        "x14:colorNegative" => &[(b"theme", b"5")],
+        "x14:colorAxis" => &[(b"rgb", b"FF000000")],
+        "x14:colorFirst" | "x14:colorLast" => {
+            &[(b"theme", b"4"), (b"tint", b"0.39997558519241921")]
+        }
+        "x14:colorHigh" | "x14:colorLow" => &[(b"theme", b"4")],
+        _ => return Ok(false),
+    };
+    let mut attributes = Vec::new();
+    for attribute in event.attributes() {
+        let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+            .map_err(|error| Error::Reverse(error.to_string()))?;
+        attributes.push((attribute.key.as_ref().to_vec(), value.into_owned()));
+    }
+    Ok(attributes.len() == expected.len()
+        && expected.iter().all(|(key, value)| {
+            attributes.iter().any(|(actual_key, actual_value)| {
+                actual_key == key && actual_value.as_bytes() == *value
+            })
+        }))
 }
 
 #[expect(
