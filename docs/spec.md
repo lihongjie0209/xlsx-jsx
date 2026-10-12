@@ -1648,11 +1648,18 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 - `widthPixels?: integer` sets a column's width in pixels, from 1 through 1,790.
   Pixel units match `rust_xlsxwriter::Worksheet::set_column_width_pixels()`;
   Excel's character-width serialization is quantized by the writer.
+- `width?: number` sets Excel's default-font character width, from 0.05 through
+  255.7109375. It is mutually exclusive with `widthPixels` and
+  `autoFitWidthPixels`. The compiler restores the exact OOXML `width` after the
+  pinned writer's pixel-based internal conversion; reverse uses `widthPixels`
+  when the source width is exactly representable by the writer, and otherwise
+  preserves the character width as `width` without rounding. Zero-width
+  columns use `hidden` instead.
 - `autoFitWidthPixels?: integer` sets an explicit pixel width and preserves the
   OOXML `bestFit="1"` marker using
   `Worksheet::set_column_autofit_width()`. This is not content measurement or
   one-shot autofit: Excel may grow the column later as values change. Its width
-  must be 1–1,790 and it cannot be combined with `widthPixels`.
+  must be 1–1,790 and it cannot be combined with `width` or `widthPixels`.
   When `Worksheet.autoFit` is also enabled, the worksheet calculation runs
   first and the explicit per-column width/marker is applied afterward.
 - `hidden?: boolean` hides the columns in the inclusive range. `false` is the
@@ -1677,8 +1684,8 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   width outside the supported pixel range is rejected rather than guessed.
 - External `<col>` ranges are expanded and re-coalesced only when adjacent
   columns have identical supported properties. Widths that cannot be mapped
-  exactly to the writer's integer-pixel representation and unsupported
-  attributes are rejected rather than rounded.
+  exactly to the writer's integer-pixel representation are preserved in Excel
+  character units; unsupported attributes are rejected rather than rounded.
 
 ### Row
 

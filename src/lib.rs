@@ -165,6 +165,34 @@ pub fn format_a1_cell_reference(row: u32, column: u16) -> String {
     format_a1_cell(row, column)
 }
 
+/// Converts Excel's default-font character width to the pinned writer's pixel grid.
+///
+/// The conversion mirrors `rust_xlsxwriter::Worksheet::set_column_width()` for
+/// its default Calibri 11 metrics and clamps at Excel's 1,790-pixel limit.
+/// Returns `None` for non-finite, zero-sized, or out-of-range widths.
+#[must_use]
+pub fn column_width_to_pixels(width: f64) -> Option<u32> {
+    if !width.is_finite() || !(0.05..=255.710_937_5).contains(&width) {
+        return None;
+    }
+    let pixels = if width < 1.0 {
+        (width * 12.0).round()
+    } else {
+        (width * 7.0).round() + 5.0
+    }
+    .min(1790.0);
+    if !(1.0..=1790.0).contains(&pixels) {
+        return None;
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "The rounded pixel width is checked within the positive u32 range."
+    )]
+    let pixels = pixels as u32;
+    Some(pixels)
+}
+
 fn parse_a1_cell(reference: &str) -> Option<(u32, u16)> {
     let bytes = reference.as_bytes();
     let mut index = usize::from(bytes.first() == Some(&b'$'));
@@ -2091,6 +2119,12 @@ fn validate_worksheet_children(
                 .get("widthPixels")
                 .and_then(Value::as_u64)
                 .is_some_and(|width| width != 64)
+                || child
+                    .props
+                    .get("width")
+                    .and_then(Value::as_f64)
+                    .and_then(column_width_to_pixels)
+                    .is_some_and(|width| width != 64)
                 || child.props.get("hidden").and_then(Value::as_bool) == Some(true)
             {
                 chart_custom_width_ranges.push((min, max));
@@ -2098,6 +2132,13 @@ fn validate_worksheet_children(
             if let Some(width) = child.props.get("widthPixels").and_then(Value::as_u64) {
                 for column in min..=max {
                     image_column_width_pixels.insert(column - 1, width);
+                }
+            }
+            if let Some(width) = child.props.get("width").and_then(Value::as_f64)
+                && let Some(width) = column_width_to_pixels(width)
+            {
+                for column in min..=max {
+                    image_column_width_pixels.insert(column - 1, u64::from(width));
                 }
             }
             continue;
@@ -12050,6 +12091,10 @@ fn validate_cell_span(
     Ok(value)
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Column range, width, visibility, outline, and format invariants are validated together to keep their mutually exclusive states explicit."
+)]
 fn validate_column(column: &Node, column_index: usize) -> Result<()> {
     if column.r#type != "Column" {
         return Err(Error::Compile(format!(
@@ -12061,6 +12106,7 @@ fn validate_column(column: &Node, column_index: usize) -> Result<()> {
     let mut allowed_column_props = vec![
         "min",
         "max",
+        "width",
         "widthPixels",
         "autoFitWidthPixels",
         "hidden",
@@ -12094,9 +12140,25 @@ fn validate_column(column: &Node, column_index: usize) -> Result<()> {
     for property in ["widthPixels", "autoFitWidthPixels"] {
         validate_column_width(column, column_index, property)?;
     }
-    if column.props.contains_key("autoFitWidthPixels") && column.props.contains_key("widthPixels") {
+    if let Some(width) = column.props.get("width") {
+        let valid = width
+            .as_f64()
+            .is_some_and(|value| column_width_to_pixels(value).is_some());
+        if !valid {
+            return Err(Error::Compile(format!(
+                "Column.width at declaration {} must be a finite Excel character width from 0.05 to 255.7109375; use a positive character width or `hidden={{true}}` for a hidden column",
+                column_index + 1
+            )));
+        }
+    }
+    if ["width", "widthPixels", "autoFitWidthPixels"]
+        .iter()
+        .filter(|property| column.props.contains_key(**property))
+        .count()
+        > 1
+    {
         return Err(Error::Compile(format!(
-            "Column.widthPixels and Column.autoFitWidthPixels are mutually exclusive at declaration {}; keep one width property",
+            "Column.width, Column.widthPixels, and Column.autoFitWidthPixels are mutually exclusive at declaration {}; keep one width property",
             column_index + 1
         )));
     }
@@ -16790,6 +16852,22 @@ mod tests {
             "children":[{"type":"Column","props":{"min":2,"max":3,"autoFitWidthPixels":160},"children":[]}]
         })]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_character_column_width_and_rejects_out_of_range_width() {
+        let valid = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Columns"},
+            "children":[{"type":"Column","props":{"min":1,"max":2,"width":8.43},"children":[]}]
+        })]);
+        assert!(valid.validate().is_ok());
+        let invalid = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Columns"},
+            "children":[{"type":"Column","props":{"min":1,"max":1,"width":0.0},"children":[]}]
+        })]);
+        let error = invalid.validate().expect_err("zero width must use hidden");
+        assert!(error.to_string().contains("Column.width"));
+        assert!(error.to_string().contains("hidden"));
     }
 
     #[test]

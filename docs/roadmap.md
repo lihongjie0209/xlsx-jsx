@@ -29,6 +29,10 @@ reported as complete.
 
 ## Recently delivered
 
+- `Column.width` now supports exact Excel character-unit widths alongside pixel
+  widths. The pinned writer's pixel quantization is repaired in generated
+  worksheet XML, and external character widths reverse without rounding.
+
 - External cell/row/column alignment errors now identify the specific unsupported
   OOXML alignment attribute and its value, with a direct removal/support
   suggestion instead of only a broad unsupported-style list.

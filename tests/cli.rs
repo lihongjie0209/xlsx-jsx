@@ -20392,7 +20392,7 @@ fn reverse_rejects_best_fit_without_explicit_column_width() {
 }
 
 #[test]
-fn reverse_rejects_column_width_that_cannot_be_represented_exactly() {
+fn external_character_column_width_survives_reverse_and_recompile() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("unrepresentable-column.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
@@ -20408,15 +20408,38 @@ fn reverse_rejects_column_width_that_cannot_be_represented_exactly() {
         xml.replace("width=\"8.5703125\"", "width=\"8.43\"")
     });
 
+    let reversed = directory.path().join("character-width.tsx");
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
-    command.args(["reverse"]).arg(input);
     command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(
+        source.contains("<Column min={1} max={1} width={8.43} />"),
+        "{source}"
+    );
+
+    let rebuilt = directory.path().join("character-width-roundtrip.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "cannot be represented exactly as integer pixels",
-        ))
-        .stderr(predicate::str::contains("suggestion:"));
+        .success();
+    let mut archive = ZipArchive::new(std::fs::File::open(&rebuilt).expect("XLSX exists"))
+        .expect("XLSX package opens");
+    let mut sheet = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .expect("worksheet part exists")
+        .read_to_string(&mut sheet)
+        .expect("worksheet XML reads");
+    assert!(sheet.contains("width=\"8.43\""), "{sheet}");
 }
 
 #[test]

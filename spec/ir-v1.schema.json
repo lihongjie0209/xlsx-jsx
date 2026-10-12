@@ -374,6 +374,7 @@
           "properties": {
             "min": { "type": "integer", "minimum": 1, "maximum": 16384 },
             "max": { "type": "integer", "minimum": 1, "maximum": 16384 },
+            "width": { "type": "number", "minimum": 0.05, "maximum": 255.7109375 },
             "widthPixels": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "autoFitWidthPixels": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "hidden": { "type": "boolean" },
@@ -382,6 +383,8 @@
           },
           "allOf": [
             { "$ref": "#/$defs/formatProps" },
+            { "not": { "required": ["width", "widthPixels"] } },
+            { "not": { "required": ["width", "autoFitWidthPixels"] } },
             { "not": { "required": ["widthPixels", "autoFitWidthPixels"] } }
           ],
           "unevaluatedProperties": false
