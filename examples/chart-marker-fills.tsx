@@ -21,6 +21,13 @@ export default <Workbook>
         markerLineDash="dashDot"
         markerLineTransparency={25}
       />
+      <Series
+        values="Data!$B$2:$B$4"
+        categories="Data!$A$2:$A$4"
+        markerType="diamond"
+        markerSize={9}
+        markerFillGradient={{type: "linear", angle: 45, stops: [{color: "#C00000", position: 0}, {color: "#FFF2CC", position: 100}]}}
+      />
     </Chart>
   </Worksheet>
 </Workbook>;

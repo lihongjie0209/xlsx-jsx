@@ -821,7 +821,95 @@ fn spec_exposes_chart_point_formatting() {
         .stdout(predicate::str::contains("pointLines"))
         .stdout(predicate::str::contains("pointPatterns"))
         .stdout(predicate::str::contains("pointGradients"))
+        .stdout(predicate::str::contains("markerFillGradient"))
         .stdout(predicate::str::contains("pointFillHidden"));
+}
+
+#[test]
+fn reverses_external_chart_marker_gradient_without_manifest_and_rebuilds_it() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("marker-gradient.xlsx");
+    let source_path = directory.path().join("marker-gradient.tsx");
+    let rebuilt_path = directory.path().join("marker-gradient-rebuilt.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_number(0, 0, 10).unwrap();
+    worksheet.write_number(1, 0, 20).unwrap();
+    let mut gradient = ChartGradientFill::new();
+    gradient.set_angle(45).set_gradient_stops(&[
+        ChartGradientStop::new("#C00000", 0),
+        ChartGradientStop::new("#FFF2CC", 55),
+        ChartGradientStop::new("#4472C4", 100),
+    ]);
+    let mut marker_format = ChartFormat::new();
+    let mut marker_line = ChartLine::new();
+    marker_line.set_color("#17365D").set_width(1.25);
+    marker_format
+        .set_gradient_fill(&gradient)
+        .set_line(&marker_line);
+    let mut marker = ChartMarker::new();
+    marker
+        .set_type(ChartMarkerType::Circle)
+        .set_format(&mut marker_format);
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_values("Data!$A$1:$A$2")
+        .set_marker(&marker);
+    worksheet.insert_chart(4, 2, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(source.contains("markerFillGradient={{"), "{source}");
+    assert!(source.contains("\"angle\":45"), "{source}");
+    assert!(source.contains("\"position\":55"), "{source}");
+    assert!(source.contains("markerLineColor=\"#17365D\""), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        xml.contains("<a:lin ang=\"2700000\" scaled=\"0\"/>"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<a:gs pos=\"55000\"><a:srgbClr val=\"FFF2CC\"/></a:gs>"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn marker_gradient_conflicts_with_solid_fill_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source_path = directory.path().join("marker-gradient-conflict.tsx");
+    std::fs::write(
+        &source_path,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B3" markerFillColor="#336699" markerFillGradient={{stops: [{color: "#FF0000", position: 0}, {color: "#0000FF", position: 100}]}} /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(&source_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "markerFillGradient conflicts with markerFillColor",
+        ));
 }
 
 #[test]

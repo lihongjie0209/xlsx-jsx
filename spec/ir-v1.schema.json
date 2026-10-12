@@ -1786,6 +1786,26 @@
             "markerSize": { "type": "integer", "minimum": 2, "maximum": 72 },
             "markerFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "markerFillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "markerFillGradient": {
+              "type": "object",
+              "required": ["stops"],
+              "properties": {
+                "type": { "enum": ["linear", "radial", "rectangular", "path"] },
+                "angle": { "type": "integer", "minimum": 0, "maximum": 359 },
+                "stops": {
+                  "type": "array", "minItems": 2, "maxItems": 10,
+                  "items": {
+                    "type": "object", "required": ["color", "position"],
+                    "properties": {
+                      "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+                      "position": { "type": "integer", "minimum": 0, "maximum": 100 }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
             "markerLineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "markerLineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
             "markerLineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
@@ -1919,6 +1939,26 @@
           "not": {
             "properties": {
               "props": { "required": ["name", "title"] }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "required": ["markerFillColor", "markerFillGradient"]
+              }
+            },
+            "required": ["props"]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "props": {
+                "required": ["markerFillTransparency", "markerFillGradient"]
+              }
             },
             "required": ["props"]
           }

@@ -5159,6 +5159,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "markerSize",
                 "markerFillColor",
                 "markerFillTransparency",
+                "markerFillGradient",
                 "markerLineColor",
                 "markerLineWidth",
                 "markerLineDash",
@@ -6671,10 +6672,14 @@ fn validate_chart_series_point_gradients(series: &Node) -> Result<()> {
 }
 
 fn validate_chart_point_gradient_properties(index: usize, gradient: &Value) -> Result<()> {
+    validate_chart_gradient_properties(&format!("Series.pointGradients[{index}]"), gradient)
+}
+
+fn validate_chart_gradient_properties(path: &str, gradient: &Value) -> Result<()> {
     const ALLOWED: [&str; 3] = ["type", "angle", "stops"];
     let Some(properties) = gradient.as_object() else {
         return Err(Error::Compile(format!(
-            "Series.pointGradients[{index}] must be an object with stops"
+            "{path} must be an object with stops"
         )));
     };
     if let Some(property) = properties
@@ -6682,7 +6687,7 @@ fn validate_chart_point_gradient_properties(index: usize, gradient: &Value) -> R
         .find(|key| !ALLOWED.contains(&key.as_str()))
     {
         return Err(Error::Compile(format!(
-            "Series.pointGradients[{index}] has unsupported property `{property}`; use type, angle, and stops"
+            "{path} has unsupported property `{property}`; use type, angle, and stops"
         )));
     }
     let gradient_type = properties
@@ -6691,41 +6696,41 @@ fn validate_chart_point_gradient_properties(index: usize, gradient: &Value) -> R
         .unwrap_or("linear");
     if !matches!(gradient_type, "linear" | "radial" | "rectangular" | "path") {
         return Err(Error::Compile(format!(
-            "Series.pointGradients[{index}].type must be linear, radial, rectangular, or path"
+            "{path}.type must be linear, radial, rectangular, or path"
         )));
     }
     if let Some(angle) = properties.get("angle") {
         if gradient_type != "linear" {
             return Err(Error::Compile(format!(
-                "Series.pointGradients[{index}].angle applies only to linear gradients; remove angle or use type=\"linear\""
+                "{path}.angle applies only to linear gradients; remove angle or use type=\"linear\""
             )));
         }
         if angle.as_u64().is_none_or(|angle| angle > 359) {
             return Err(Error::Compile(format!(
-                "Series.pointGradients[{index}].angle must be an integer from 0 through 359"
+                "{path}.angle must be an integer from 0 through 359"
             )));
         }
     }
     let Some(stops) = properties.get("stops").and_then(Value::as_array) else {
         return Err(Error::Compile(format!(
-            "Series.pointGradients[{index}].stops must be an array of 2 through 10 color stops"
+            "{path}.stops must be an array of 2 through 10 color stops"
         )));
     };
     if !(2..=10).contains(&stops.len()) {
         return Err(Error::Compile(format!(
-            "Series.pointGradients[{index}].stops must contain 2 through 10 entries; add or remove stops"
+            "{path}.stops must contain 2 through 10 entries; add or remove stops"
         )));
     }
     for (stop_index, stop) in stops.iter().enumerate() {
-        validate_chart_point_gradient_stop(index, stop_index, stop)?;
+        validate_chart_gradient_stop(path, stop_index, stop)?;
     }
     Ok(())
 }
 
-fn validate_chart_point_gradient_stop(index: usize, stop_index: usize, stop: &Value) -> Result<()> {
+fn validate_chart_gradient_stop(path: &str, stop_index: usize, stop: &Value) -> Result<()> {
     let Some(stop) = stop.as_object() else {
         return Err(Error::Compile(format!(
-            "Series.pointGradients[{index}].stops[{stop_index}] must be an object with color and position"
+            "{path}.stops[{stop_index}] must be an object with color and position"
         )));
     };
     if stop.len() != 2
@@ -6734,7 +6739,7 @@ fn validate_chart_point_gradient_stop(index: usize, stop_index: usize, stop: &Va
             .any(|key| !matches!(key.as_str(), "color" | "position"))
     {
         return Err(Error::Compile(format!(
-            "Series.pointGradients[{index}].stops[{stop_index}] accepts only color and position"
+            "{path}.stops[{stop_index}] accepts only color and position"
         )));
     }
     if !stop
@@ -6743,7 +6748,7 @@ fn validate_chart_point_gradient_stop(index: usize, stop_index: usize, stop: &Va
         .is_some_and(is_opaque_rgb_color)
     {
         return Err(Error::Compile(format!(
-            "Series.pointGradients[{index}].stops[{stop_index}].color must be an opaque RGB color like #336699"
+            "{path}.stops[{stop_index}].color must be an opaque RGB color like #336699"
         )));
     }
     if stop
@@ -6752,7 +6757,7 @@ fn validate_chart_point_gradient_stop(index: usize, stop_index: usize, stop: &Va
         .is_none_or(|position| position > 100)
     {
         return Err(Error::Compile(format!(
-            "Series.pointGradients[{index}].stops[{stop_index}].position must be an integer percentage from 0 through 100"
+            "{path}.stops[{stop_index}].position must be an integer percentage from 0 through 100"
         )));
     }
     Ok(())
@@ -6867,7 +6872,8 @@ fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize
         .unwrap_or_default();
     let marker_type = series.props.get("markerType");
     let has_marker_fill = series.props.contains_key("markerFillColor")
-        || series.props.contains_key("markerFillTransparency");
+        || series.props.contains_key("markerFillTransparency")
+        || series.props.contains_key("markerFillGradient");
     let has_marker_line = [
         "markerLineColor",
         "markerLineWidth",
@@ -6913,21 +6919,7 @@ fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize
             "Series.markerSize must be an integer from 2 through 72; adjust the marker size".into(),
         ));
     }
-    if let Some(value) = series.props.get("markerFillColor") {
-        validate_rgb_color(value, "Series.markerFillColor", 0, 0)?;
-    }
-    if let Some(value) = series.props.get("markerFillTransparency")
-        && value.as_u64().is_none_or(|transparency| transparency > 100)
-    {
-        return Err(Error::Compile(
-            "Series.markerFillTransparency must be an integer from 0 through 100; use whole-percent transparency".into(),
-        ));
-    }
-    if has_marker_fill && !series.props.contains_key("markerFillColor") {
-        return Err(Error::Compile(
-            "Series.markerFillTransparency requires markerFillColor; add an opaque #RRGGBB color or remove transparency".into(),
-        ));
-    }
+    validate_chart_series_marker_fill(series)?;
     validate_chart_series_marker_line(series)?;
     if has_marker_format && marker_type.and_then(Value::as_str) == Some("none") {
         return Err(Error::Compile(
@@ -6954,6 +6946,37 @@ fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize
             "Chart Series {} marker shape, size, fill, and line formatting are supported only for line, radar, and scatter charts; remove marker properties or change Chart.type",
             series_index + 1
         )));
+    }
+    Ok(())
+}
+
+fn validate_chart_series_marker_fill(series: &Node) -> Result<()> {
+    if let Some(value) = series.props.get("markerFillColor") {
+        validate_rgb_color(value, "Series.markerFillColor", 0, 0)?;
+    }
+    if let Some(gradient) = series.props.get("markerFillGradient") {
+        validate_chart_gradient_properties("Series.markerFillGradient", gradient)?;
+        if series.props.contains_key("markerFillColor")
+            || series.props.contains_key("markerFillTransparency")
+        {
+            return Err(Error::Compile(
+                "Series.markerFillGradient conflicts with markerFillColor and markerFillTransparency; choose one marker fill representation".into(),
+            ));
+        }
+    }
+    if let Some(value) = series.props.get("markerFillTransparency")
+        && value.as_u64().is_none_or(|transparency| transparency > 100)
+    {
+        return Err(Error::Compile(
+            "Series.markerFillTransparency must be an integer from 0 through 100; use whole-percent transparency".into(),
+        ));
+    }
+    if series.props.contains_key("markerFillTransparency")
+        && !series.props.contains_key("markerFillColor")
+    {
+        return Err(Error::Compile(
+            "Series.markerFillTransparency requires markerFillColor; add an opaque #RRGGBB color or remove transparency".into(),
+        ));
     }
     Ok(())
 }

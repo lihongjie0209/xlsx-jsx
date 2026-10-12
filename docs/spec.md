@@ -257,8 +257,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   line and fill formatting require an active marker and cannot accompany
   `markerType="none"`. Omission preserves writer defaults. Marker symbol,
   size, fill, and line overrides are only valid for line, radar, and scatter
-  charts. Pattern/gradient fills and line effects remain unsupported and are
-  rejected during reverse rather than discarded.
+  charts. `markerFillGradient?: PointGradient` accepts the same `type`, optional
+  linear `angle`, and 2–10 opaque RGB whole-percent `stops` as
+  `Series.pointGradients`. It conflicts with `markerFillColor` and
+  `markerFillTransparency`; gradients round-trip without a manifest. Pattern
+  fills, gradient alpha/theme colors, and line effects remain unsupported and
+  are rejected during reverse rather than discarded.
 - `Series.lineColor?: "#RRGGBB"`, `lineWidth?: number`, `lineDash?: "solid" |
   "roundDot" | "squareDot" | "dash" | "dashDot" | "longDash" |
   "longDashDot" | "longDashDotDot"`, `lineTransparency?: number`, and
