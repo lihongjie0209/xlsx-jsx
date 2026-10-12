@@ -445,6 +445,20 @@ fn agent_json_spec_is_valid_json_and_describes_sparkline_options() {
     );
     let background_image = &schema["$defs"]["backgroundImage"]["properties"]["props"];
     assert_eq!(background_image["required"][0], "data");
+
+    let table_format = &schema["$defs"]["tableColumnFormat"]["properties"];
+    assert_eq!(table_format["horizontalAlign"]["enum"][3], "distributed");
+    assert_eq!(table_format["verticalAlign"]["enum"][2], "bottom");
+    assert_eq!(table_format["wrapText"]["const"].as_bool(), Some(true));
+
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["spec", "--format", "json"]);
+    command
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("horizontalAlign"))
+        .stdout(predicate::str::contains("verticalAlign"))
+        .stdout(predicate::str::contains("wrapText"));
 }
 
 #[test]
@@ -16346,6 +16360,57 @@ fn public_table_formats_example_reverses_header_font_metadata() {
 }
 
 #[test]
+fn public_table_column_alignment_example_builds_and_reverses_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let output = directory.path().join("table-column-alignment.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build", "examples/table-column-alignment.tsx", "-o"])
+        .arg(&output);
+    command.assert().success();
+
+    let mut archive = ZipArchive::new(std::fs::File::open(&output).expect("XLSX exists"))
+        .expect("XLSX package opens");
+    let mut styles = String::new();
+    archive
+        .by_name("xl/styles.xml")
+        .expect("styles.xml exists")
+        .read_to_string(&mut styles)
+        .expect("styles XML is readable");
+    assert!(
+        styles.contains("<alignment horizontal=\"left\" vertical=\"center\" wrapText=\"1\"/>")
+            && styles.contains("<alignment horizontal=\"right\" vertical=\"top\"/>"),
+        "{styles}"
+    );
+
+    let reversed = directory.path().join("table-column-alignment.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("\"horizontalAlign\":\"left\""), "{source}");
+    assert!(source.contains("\"verticalAlign\":\"center\""), "{source}");
+    assert!(source.contains("\"wrapText\":true"), "{source}");
+    assert!(source.contains("\"horizontalAlign\":\"right\""), "{source}");
+    assert!(source.contains("\"verticalAlign\":\"top\""), "{source}");
+
+    let rebuilt = directory
+        .path()
+        .join("table-column-alignment-roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+}
+
+#[test]
 fn external_tables_survive_reverse_and_recompile() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("table.xlsx");
@@ -16413,6 +16478,100 @@ fn external_tables_survive_reverse_and_recompile() {
         std::fs::read_to_string(second_reverse).expect("second reverse output exists"),
         source
     );
+}
+
+#[test]
+fn external_table_column_alignment_reverses_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("external-table-alignment.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_string(0, 0, "Description")
+        .expect("header writes");
+    worksheet
+        .write_string(0, 1, "Quantity")
+        .expect("header writes");
+    worksheet
+        .write_string(1, 0, "A long description")
+        .expect("cell writes");
+    worksheet.write_number(1, 1, 12).expect("cell writes");
+    let left_wrapped = rust_xlsxwriter::Format::new()
+        .set_align(rust_xlsxwriter::FormatAlign::Left)
+        .set_align(rust_xlsxwriter::FormatAlign::VerticalCenter)
+        .set_text_wrap();
+    let right = rust_xlsxwriter::Format::new()
+        .set_align(rust_xlsxwriter::FormatAlign::Right)
+        .set_align(rust_xlsxwriter::FormatAlign::Top);
+    let columns = [
+        rust_xlsxwriter::TableColumn::new()
+            .set_header("Description")
+            .set_format(&left_wrapped),
+        rust_xlsxwriter::TableColumn::new()
+            .set_header("Quantity")
+            .set_format(&right),
+    ];
+    let table = rust_xlsxwriter::Table::new()
+        .set_name("InventoryTable")
+        .set_columns(&columns);
+    worksheet
+        .add_table(0, 0, 1, 1, &table)
+        .expect("table is added");
+    workbook.save(&input).expect("external workbook writes");
+    let external = directory
+        .path()
+        .join("external-table-alignment-authored.xlsx");
+    let mut archive = ZipArchive::new(std::fs::File::open(&input).expect("workbook exists"))
+        .expect("external package opens");
+    let mut writer =
+        ZipWriter::new(std::fs::File::create(&external).expect("authored package is created"));
+    let mut patched_styles = false;
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).expect("package entry opens");
+        let name = entry.name().to_owned();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut bytes).expect("package entry reads");
+        if name == "xl/styles.xml" {
+            let xml = String::from_utf8(bytes).expect("styles XML is UTF-8");
+            let original = "<dxfs count=\"2\"><dxf></dxf><dxf></dxf></dxfs>";
+            assert!(xml.contains(original), "{xml}");
+            let authored = "<dxfs count=\"2\"><dxf><alignment horizontal=\"left\" vertical=\"center\" wrapText=\"1\"/></dxf><dxf><alignment horizontal=\"right\" vertical=\"top\"/></dxf></dxfs>";
+            bytes = xml.replacen(original, authored, 1).into_bytes();
+            patched_styles = true;
+        }
+        writer
+            .start_file(name, SimpleFileOptions::default())
+            .expect("package entry is copied");
+        std::io::Write::write_all(&mut writer, &bytes).expect("package entry writes");
+    }
+    assert!(patched_styles, "external styles part was found");
+    writer.finish().expect("external package is finalized");
+
+    let reversed = directory.path().join("external-table-alignment.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("\"horizontalAlign\":\"left\""), "{source}");
+    assert!(source.contains("\"verticalAlign\":\"center\""), "{source}");
+    assert!(source.contains("\"wrapText\":true"), "{source}");
+    assert!(source.contains("\"horizontalAlign\":\"right\""), "{source}");
+    assert!(source.contains("\"verticalAlign\":\"top\""), "{source}");
+
+    let rebuilt = directory
+        .path()
+        .join("external-table-alignment-roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
 }
 
 #[test]

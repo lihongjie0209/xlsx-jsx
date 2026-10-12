@@ -581,17 +581,17 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         source: std::io::Error::other(error.to_string()),
     })?;
     let x14_icon_normalization = collect_x14_icon_normalization_targets(ir)?;
-    let table_script_targets = collect_table_script_targets(ir)?;
+    let table_dxf_targets = collect_table_dxf_targets(ir)?;
     let literal_error_count = count_literal_error_cells(ir);
     if !x14_icon_normalization.is_empty()
-        || !table_script_targets.is_empty()
+        || !table_dxf_targets.is_empty()
         || literal_error_count > 0
     {
         normalize_generated_xlsx(
             path,
             &x14_icon_normalization,
             literal_error_count,
-            &table_script_targets,
+            &table_dxf_targets,
         )?;
     }
     Ok(())
@@ -774,16 +774,19 @@ fn collect_x14_icon_normalization_targets(
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct TableDxfFontMetadata {
+struct TableDxfMetadata {
     script: Option<String>,
     scheme: Option<String>,
     name: Option<String>,
     size: Option<String>,
     family: Option<String>,
     charset: Option<String>,
+    horizontal_align: Option<String>,
+    vertical_align: Option<String>,
+    wrap_text: Option<bool>,
 }
 
-impl TableDxfFontMetadata {
+impl TableDxfMetadata {
     fn is_empty(&self) -> bool {
         self.script.is_none()
             && self.scheme.is_none()
@@ -791,12 +794,15 @@ impl TableDxfFontMetadata {
             && self.size.is_none()
             && self.family.is_none()
             && self.charset.is_none()
+            && self.horizontal_align.is_none()
+            && self.vertical_align.is_none()
+            && self.wrap_text.is_none()
     }
 }
 
-fn collect_table_script_targets(
+fn collect_table_dxf_targets(
     ir: &IrEnvelope,
-) -> xlsx_jsx::Result<HashMap<String, BTreeMap<usize, TableDxfFontMetadata>>> {
+) -> xlsx_jsx::Result<HashMap<String, BTreeMap<usize, TableDxfMetadata>>> {
     let mut targets = HashMap::new();
     for worksheet_value in &ir.workbook.children {
         let worksheet: Node = serde_json::from_value(worksheet_value.clone())
@@ -819,7 +825,7 @@ fn collect_table_script_targets(
                 let Some(format) = column.props.get("format").and_then(Value::as_object) else {
                     continue;
                 };
-                let metadata = TableDxfFontMetadata {
+                let metadata = TableDxfMetadata {
                     script: format
                         .get("script")
                         .and_then(Value::as_str)
@@ -841,6 +847,15 @@ fn collect_table_script_targets(
                     size: format.get("fontSize").map(ToString::to_string),
                     family: format.get("fontFamily").map(ToString::to_string),
                     charset: format.get("fontCharset").map(ToString::to_string),
+                    horizontal_align: format
+                        .get("horizontalAlign")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    vertical_align: format
+                        .get("verticalAlign")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    wrap_text: format.get("wrapText").and_then(Value::as_bool),
                 };
                 if metadata.is_empty() {
                     continue;
@@ -859,7 +874,7 @@ fn normalize_generated_xlsx(
     path: &std::path::Path,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
-    table_script_targets: &HashMap<String, BTreeMap<usize, TableDxfFontMetadata>>,
+    table_dxf_targets: &HashMap<String, BTreeMap<usize, TableDxfMetadata>>,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -887,7 +902,7 @@ fn normalize_generated_xlsx(
         temporary_file,
         targets_by_part,
         literal_error_count,
-        table_script_targets,
+        table_dxf_targets,
     );
     if let Err(error) = rewrite_result {
         let _ = std::fs::remove_file(&temporary_path);
@@ -914,7 +929,7 @@ fn rewrite_generated_xlsx(
     temporary_file: std::fs::File,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
-    table_script_targets: &HashMap<String, BTreeMap<usize, TableDxfFontMetadata>>,
+    table_dxf_targets: &HashMap<String, BTreeMap<usize, TableDxfMetadata>>,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -922,7 +937,7 @@ fn rewrite_generated_xlsx(
     })?;
     let mut archive = ZipArchive::new(source_file)
         .map_err(|error| Error::Compile(format!("cannot read generated XLSX package: {error}")))?;
-    let dxf_scripts = collect_table_dxf_script_indices(&mut archive, table_script_targets)?;
+    let dxf_metadata = collect_table_dxf_indices(&mut archive, table_dxf_targets)?;
     let mut writer = ZipWriter::new(temporary_file);
     let mut patched_parts = std::collections::HashSet::new();
     let mut patched_error_cells = 0_usize;
@@ -961,11 +976,11 @@ fn rewrite_generated_xlsx(
             let (xml, patched_count) = patch_literal_error_cells(&xml, &name)?;
             patched_error_cells += patched_count;
             bytes = xml.into_bytes();
-        } else if name == "xl/styles.xml" && !dxf_scripts.is_empty() {
+        } else if name == "xl/styles.xml" && !dxf_metadata.is_empty() {
             let xml = String::from_utf8(bytes).map_err(|error| {
                 Error::Compile(format!("generated styles part is not UTF-8 XML: {error}"))
             })?;
-            bytes = patch_table_dxf_fonts(&xml, &dxf_scripts)?.into_bytes();
+            bytes = patch_table_dxfs(&xml, &dxf_metadata)?.into_bytes();
         }
         writer
             .start_file(
@@ -1013,10 +1028,10 @@ fn rewrite_generated_xlsx(
     Ok(())
 }
 
-fn collect_table_dxf_script_indices(
+fn collect_table_dxf_indices(
     archive: &mut ZipArchive<std::fs::File>,
-    requested: &HashMap<String, BTreeMap<usize, TableDxfFontMetadata>>,
-) -> xlsx_jsx::Result<BTreeMap<usize, TableDxfFontMetadata>> {
+    requested: &HashMap<String, BTreeMap<usize, TableDxfMetadata>>,
+) -> xlsx_jsx::Result<BTreeMap<usize, TableDxfMetadata>> {
     let mut resolved = BTreeMap::new();
     let mut found = BTreeSet::new();
     let part_names = archive
@@ -1060,7 +1075,7 @@ fn collect_table_dxf_script_indices(
                         {
                             let dxf_id = chart_xml_attribute(&event, "dataDxfId", reader.decoder())?
                                 .ok_or_else(|| Error::Compile(format!(
-                                    "generated table `{}` column {} is missing dataDxfId required for its font format",
+                                    "generated table `{}` column {} is missing dataDxfId required for its differential format",
                                     table_name.as_deref().unwrap_or("<unnamed>"),
                                     index + 1
                                 )))?
@@ -1106,9 +1121,9 @@ fn collect_table_dxf_script_indices(
     Ok(resolved)
 }
 
-fn patch_table_dxf_fonts(
+fn patch_table_dxfs(
     xml: &str,
-    scripts: &BTreeMap<usize, TableDxfFontMetadata>,
+    requested: &BTreeMap<usize, TableDxfMetadata>,
 ) -> xlsx_jsx::Result<String> {
     let mut reader = XmlReader::from_str(xml);
     let mut dxf_index = 0_usize;
@@ -1128,7 +1143,7 @@ fn patch_table_dxf_fonts(
             Ok(Event::Empty(event)) if event.local_name().as_ref() == b"dxf" => {
                 let index = dxf_index;
                 dxf_index += 1;
-                if scripts.contains_key(&index) {
+                if requested.contains_key(&index) {
                     let end = usize::try_from(reader.buffer_position()).map_err(|_| {
                         Error::Compile("generated styles.xml exceeds platform limits".into())
                     })?;
@@ -1139,7 +1154,7 @@ fn patch_table_dxf_fonts(
             Ok(Event::End(event)) if event.local_name().as_ref() == b"dxf" => {
                 let index = dxf_index;
                 dxf_index += 1;
-                if scripts.contains_key(&index) {
+                if requested.contains_key(&index) {
                     let start = dxf_start.take().ok_or_else(|| {
                         Error::Compile(format!("generated DXF {index} has no opening tag"))
                     })?;
@@ -1155,12 +1170,12 @@ fn patch_table_dxf_fonts(
             Ok(_) => {}
             Err(error) => {
                 return Err(Error::Compile(format!(
-                    "invalid generated styles XML while restoring table scripts: {error}"
+                    "invalid generated styles XML while restoring table differential formats: {error}"
                 )));
             }
         }
     }
-    for index in scripts.keys() {
+    for index in requested.keys() {
         if *index >= dxf_index || !fragments.iter().any(|(found, _, _)| found == index) {
             return Err(Error::Compile(format!(
                 "generated styles.xml is missing table differential format {index}; repair the table format serialization"
@@ -1169,9 +1184,9 @@ fn patch_table_dxf_fonts(
     }
     let mut output = xml.to_owned();
     for (index, start, end) in fragments.into_iter().rev() {
-        let metadata = scripts.get(&index).ok_or_else(|| {
+        let metadata = requested.get(&index).ok_or_else(|| {
             Error::Compile(format!(
-                "missing requested font metadata for generated DXF {index}"
+                "missing requested differential metadata for generated DXF {index}"
             ))
         })?;
         let fragment = output.get(start..end).ok_or_else(|| {
@@ -1179,7 +1194,7 @@ fn patch_table_dxf_fonts(
                 "generated DXF {index} has invalid XML byte boundaries"
             ))
         })?;
-        let replacement = patch_one_dxf_font(fragment, metadata, index)?;
+        let replacement = patch_one_dxf(fragment, metadata, index)?;
         output.replace_range(start..end, &replacement);
     }
     Ok(output)
@@ -1203,51 +1218,98 @@ fn find_last_xml_tag_start(xml: &str, end: usize, tag: &str) -> xlsx_jsx::Result
         .ok_or_else(|| Error::Compile(format!("generated XML is missing `<{tag}>`")))
 }
 
-fn patch_one_dxf_font(
+fn patch_one_dxf(
     fragment: &str,
-    metadata: &TableDxfFontMetadata,
+    metadata: &TableDxfMetadata,
     index: usize,
 ) -> xlsx_jsx::Result<String> {
-    let font = if let Some(font_start) = fragment.find("<font") {
-        let font_end = fragment[font_start..]
-            .find("</font>")
-            .map(|offset| font_start + offset + "</font>".len())
-            .ok_or_else(|| {
-                Error::Compile(format!("generated table DXF {index} has an unclosed font"))
-            })?;
-        fragment[font_start..font_end].to_owned()
-    } else {
-        "<font></font>".to_owned()
-    };
-    let font = append_dxf_font_metadata(font, metadata, index)?;
+    let has_font_metadata = metadata.script.is_some()
+        || metadata.scheme.is_some()
+        || metadata.name.is_some()
+        || metadata.size.is_some()
+        || metadata.family.is_some()
+        || metadata.charset.is_some();
+    let mut output = if has_font_metadata {
+        let font = if let Some(font_start) = fragment.find("<font") {
+            let font_end = fragment[font_start..]
+                .find("</font>")
+                .map(|offset| font_start + offset + "</font>".len())
+                .ok_or_else(|| {
+                    Error::Compile(format!("generated table DXF {index} has an unclosed font"))
+                })?;
+            fragment[font_start..font_end].to_owned()
+        } else {
+            "<font></font>".to_owned()
+        };
+        let font = append_dxf_font_metadata(font, metadata, index)?;
 
-    if let Some(font_start) = fragment.find("<font") {
-        let font_end = fragment[font_start..]
-            .find("</font>")
-            .map(|offset| font_start + offset + "</font>".len())
-            .ok_or_else(|| {
-                Error::Compile(format!("generated table DXF {index} has an unclosed font"))
+        if let Some(font_start) = fragment.find("<font") {
+            let font_end = fragment[font_start..]
+                .find("</font>")
+                .map(|offset| font_start + offset + "</font>".len())
+                .ok_or_else(|| {
+                    Error::Compile(format!("generated table DXF {index} has an unclosed font"))
+                })?;
+            let mut output = fragment.to_owned();
+            output.replace_range(font_start..font_end, &font);
+            output
+        } else if let Some(empty_end) = fragment.strip_suffix("/>") {
+            format!("{empty_end}>{font}</dxf>")
+        } else {
+            let open_end = fragment.find('>').map(|offset| offset + 1).ok_or_else(|| {
+                Error::Compile(format!(
+                    "generated table DXF {index} has malformed opening tag"
+                ))
             })?;
-        let mut output = fragment.to_owned();
-        output.replace_range(font_start..font_end, &font);
-        return Ok(output);
+            let mut output = fragment.to_owned();
+            output.insert_str(open_end, &font);
+            output
+        }
+    } else {
+        fragment.to_owned()
+    };
+    let has_alignment = metadata.horizontal_align.is_some()
+        || metadata.vertical_align.is_some()
+        || metadata.wrap_text == Some(true);
+    if has_alignment {
+        let mut attributes = Vec::new();
+        if let Some(horizontal) = &metadata.horizontal_align {
+            attributes.push(format!("horizontal=\"{horizontal}\""));
+        }
+        if let Some(vertical) = &metadata.vertical_align {
+            attributes.push(format!("vertical=\"{vertical}\""));
+        }
+        if metadata.wrap_text == Some(true) {
+            attributes.push("wrapText=\"1\"".to_owned());
+        }
+        let alignment = format!("<alignment {}/>", attributes.join(" "));
+        if let Some(start) = output.find("<alignment") {
+            let end = output[start..]
+                .find("/>")
+                .map(|offset| start + offset + 2)
+                .ok_or_else(|| {
+                    Error::Compile(format!(
+                        "generated table DXF {index} has malformed alignment"
+                    ))
+                })?;
+            if output[start..end] != alignment {
+                return Err(Error::Compile(format!(
+                    "generated table DXF {index} contains conflicting alignment metadata; repair the writer output"
+                )));
+            }
+        } else {
+            let close = output.rfind("</dxf>").ok_or_else(|| {
+                Error::Compile(format!("generated table DXF {index} has no closing tag"))
+            })?;
+            output.insert_str(close, &alignment);
+        }
     }
-    if let Some(empty_end) = fragment.strip_suffix("/>") {
-        return Ok(format!("{empty_end}>{font}</dxf>"));
-    }
-    let open_end = fragment.find('>').map(|offset| offset + 1).ok_or_else(|| {
-        Error::Compile(format!(
-            "generated table DXF {index} has malformed opening tag"
-        ))
-    })?;
-    let mut output = fragment.to_owned();
-    output.insert_str(open_end, &font);
     Ok(output)
 }
 
 fn append_dxf_font_metadata(
     mut font: String,
-    metadata: &TableDxfFontMetadata,
+    metadata: &TableDxfMetadata,
     index: usize,
 ) -> xlsx_jsx::Result<String> {
     if let Some(script) = &metadata.script {
@@ -4786,7 +4848,7 @@ fn compile_header_footer_image(
 fn build_table_column_format(value: &Value) -> xlsx_jsx::Result<Format> {
     let props = value.as_object().cloned().ok_or_else(|| {
         Error::Compile(
-            "TableColumn format must be an object; use bold, italic, strikethrough, underline, fontColor, or fillColor"
+            "TableColumn format must be an object; use supported horizontal/vertical alignment, wrapText=true, font, fill, number-format, or border properties"
                 .into(),
         )
     })?;
@@ -9231,6 +9293,21 @@ fn table_column_format_value(style: &CellFontStyle) -> Value {
     if let Some(script) = &style.script {
         props.insert("script".into(), Value::String(script.clone()));
     }
+    if let Some(alignment) = style.horizontal_align {
+        props.insert(
+            "horizontalAlign".into(),
+            Value::String(alignment.as_str().to_owned()),
+        );
+    }
+    if let Some(alignment) = style.vertical_align {
+        props.insert(
+            "verticalAlign".into(),
+            Value::String(alignment.as_str().to_owned()),
+        );
+    }
+    if style.wrap_text == Some(true) {
+        props.insert("wrapText".into(), Value::Bool(true));
+    }
     if let Some(font_scheme) = &style.font_scheme {
         let scheme = match font_scheme.as_str() {
             "none" => "none",
@@ -11691,7 +11768,7 @@ fn parse_table_xml(
                                 })?;
                                 if style.support == StyleSupport::Unsupported {
                                     return Err(Error::Reverse(format!(
-                                        "table part `{part}` column uses a differential format outside the supported theme/literal font metadata, emphasis/decoration/script/color, fill, number-format, and edge-border subset; simplify the table format or add explicit DSL and reverse support"
+                                        "table part `{part}` column uses a differential format outside the supported font metadata, emphasis/decoration/script, color/fill/border, number-format, horizontal/vertical alignment, and wrapText subset; simplify the format or add matching DSL and reverse support"
                                     )));
                                 }
                                 Ok(style.clone())
@@ -38609,6 +38686,7 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
     let mut foreground_seen = false;
     let mut background_seen = false;
     let mut number_format_seen = false;
+    let mut alignment_seen = false;
     let mut in_border = false;
     let mut formats = Vec::new();
     let mut current: Option<CellFontStyle> = None;
@@ -38636,6 +38714,7 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                     foreground_seen = false;
                     background_seen = false;
                     number_format_seen = false;
+                    alignment_seen = false;
                     in_border = false;
                     current = Some(CellFontStyle {
                         support: StyleSupport::Supported,
@@ -38722,6 +38801,14 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         style.number_format =
                             parse_differential_number_format(&event, reader.decoder())?;
                     }
+                    b"alignment" if in_dxf => {
+                        if alignment_seen {
+                            style.support = StyleSupport::Unsupported;
+                        }
+                        alignment_seen = true;
+                        style.apply_alignment = true;
+                        parse_cell_alignment(&event, style, reader.decoder())?;
+                    }
                     b"patternFill" if in_fill => {
                         if pattern_seen {
                             style.support = StyleSupport::Unsupported;
@@ -38795,6 +38882,9 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         || style.fill_foreground_color.is_some()
                         || style.fill_background_color.is_some()
                         || style.number_format.is_some()
+                        || style.horizontal_align.is_some()
+                        || style.vertical_align.is_some()
+                        || style.wrap_text == Some(true)
                         || style.borders.has_any();
                     if !has_supported_style {
                         style.support = StyleSupport::Unsupported;

@@ -25,10 +25,13 @@ xlsx-jsx spec --format json
 
 ## Feature matrix
 
+See [the development roadmap](docs/roadmap.md) for prioritized follow-up work
+and intentionally deferred lower-frequency features.
+
 | Feature | Build | Reverse external XLSX | Status |
 |---|---:|---:|---|
 | Worksheets and positional rows/cells | yes | yes | v1 |
-| Rectangular tables, totals rows, column totals, calculated columns, and formats | yes | yes | `Table` supports headered and headerless ranges (`headerRow={false}`); headerless `TableColumn` declarations preserve explicit OOXML column names. Columns also support totals/formulas and bold/italic/strikethrough/underline/script/theme font scheme/font name/size/family/charset/RGB/theme/solid and patterned fills/number-format/four-edge-border differential data formats; script and font metadata are restored in the referenced DXF despite upstream writer omissions; `headerFormat` supports the full Cell-format subset and reverses as header `Cell` formatting; unsupported dxf properties are rejected |
+| Rectangular tables, totals rows, column totals, calculated columns, and formats | yes | yes | `Table` supports headered and headerless ranges (`headerRow={false}`); headerless `TableColumn` declarations preserve explicit OOXML column names. Columns also support totals/formulas and bold/italic/strikethrough/underline/script/theme font scheme/font name/size/family/charset/RGB/theme/solid and patterned fills/number-format/four-edge-border/alignment/wrap differential data formats; script, font metadata, and alignment are restored in the referenced DXF despite upstream writer omissions; `headerFormat` supports the full Cell-format subset and reverses as header `Cell` formatting; unsupported dxf properties are rejected |
 | Worksheet visibility | yes | yes | `visibility="hidden"` or `"veryHidden"`; first worksheet stays visible |
 | Active worksheet | yes | yes | `active={true}` selects one visible worksheet when opened; default is the first worksheet |
 | First visible tab | yes | yes | `firstTab={true}` selects one visible worksheet as the leftmost tab; default is the first worksheet |

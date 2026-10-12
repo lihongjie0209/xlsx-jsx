@@ -9948,6 +9948,9 @@ fn validate_table_column_format_property(
         {
             Ok(())
         }
+        "horizontalAlign" | "verticalAlign" | "wrapText" => {
+            validate_table_column_alignment_property(key, value, property)
+        }
         "numberFormat" => validate_table_column_number_format(value, property),
         "fontName" | "fontSize" | "fontFamily" | "fontCharset" => {
             validate_table_column_font_property(key, value, property)
@@ -9972,34 +9975,7 @@ fn validate_table_column_format_property(
         | "fillForegroundColor"
         | "fillBackgroundColor" => validate_style_color(value, key, index, 0),
         "borderTop" | "borderRight" | "borderBottom" | "borderLeft" => {
-            let Some(style) = value.as_str() else {
-                return Err(Error::Compile(format!(
-                    "TableColumn.{property}.{key} must be a quoted border style"
-                )));
-            };
-            if ![
-                "none",
-                "thin",
-                "medium",
-                "dashed",
-                "dotted",
-                "thick",
-                "double",
-                "hair",
-                "mediumDashed",
-                "dashDot",
-                "mediumDashDot",
-                "dashDotDot",
-                "mediumDashDotDot",
-                "slantDashDot",
-            ]
-            .contains(&style)
-            {
-                return Err(Error::Compile(format!(
-                    "TableColumn.{property}.{key} has unsupported border style `{style}`; use an OOXML edge style"
-                )));
-            }
-            Ok(())
+            validate_table_column_border_property(key, value, property)
         }
         "borderDiagonalType"
             if value
@@ -10021,9 +9997,75 @@ fn validate_table_column_format_property(
             "TableColumn.{property}.{key} must be true; table differential formats can add emphasis but cannot encode a false override"
         ))),
         _ => Err(Error::Compile(format!(
-            "TableColumn.{property}.{key} is not supported; use font scheme/name/size/family/charset, bold/italic/strikethrough, underline, script, RGB colors, numberFormat, or supported edge borders"
+            "TableColumn.{property}.{key} is not supported; use horizontal/vertical alignment, wrapText=true, font scheme/name/size/family/charset, bold/italic/strikethrough, underline, script, RGB colors, numberFormat, or supported edge borders"
         ))),
     }
+}
+
+fn validate_table_column_border_property(key: &str, value: &Value, property: &str) -> Result<()> {
+    let Some(style) = value.as_str() else {
+        return Err(Error::Compile(format!(
+            "TableColumn.{property}.{key} must be a quoted border style"
+        )));
+    };
+    if ![
+        "none",
+        "thin",
+        "medium",
+        "dashed",
+        "dotted",
+        "thick",
+        "double",
+        "hair",
+        "mediumDashed",
+        "dashDot",
+        "mediumDashDot",
+        "dashDotDot",
+        "mediumDashDotDot",
+        "slantDashDot",
+    ]
+    .contains(&style)
+    {
+        return Err(Error::Compile(format!(
+            "TableColumn.{property}.{key} has unsupported border style `{style}`; use an OOXML edge style"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_table_column_alignment_property(
+    key: &str,
+    value: &Value,
+    property: &str,
+) -> Result<()> {
+    let valid = match key {
+        "horizontalAlign" => value.as_str().is_some_and(|alignment| {
+            ["left", "center", "right", "distributed"].contains(&alignment)
+        }),
+        "verticalAlign" => value
+            .as_str()
+            .is_some_and(|alignment| ["top", "center", "bottom"].contains(&alignment)),
+        "wrapText" => value.as_bool() == Some(true),
+        _ => false,
+    };
+    if valid {
+        return Ok(());
+    }
+    let message = match key {
+        "horizontalAlign" => {
+            "must be `left`, `center`, `right`, or `distributed`; choose a supported differential alignment"
+        }
+        "verticalAlign" => {
+            "must be `top`, `center`, or `bottom`; choose a supported differential alignment"
+        }
+        "wrapText" => {
+            "must be true; the pinned writer cannot serialize a false differential override"
+        }
+        _ => unreachable!("alignment property names are selected by the caller"),
+    };
+    Err(Error::Compile(format!(
+        "TableColumn.{property}.{key} {message}"
+    )))
 }
 
 fn validate_table_column_font_property(key: &str, value: &Value, property: &str) -> Result<()> {
@@ -15815,6 +15857,43 @@ mod tests {
     }
 
     #[test]
+    fn accepts_supported_table_column_alignment_formats() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Inventory"}, "children":[
+                {"type":"Table","props":{"range":"A1:B2","name":"InventoryTable"},"children":[
+                    {"type":"TableColumn","props":{"format":{"horizontalAlign":"left","verticalAlign":"center","wrapText":true}},"children":[]},
+                    {"type":"TableColumn","props":{"format":{"horizontalAlign":"right","verticalAlign":"top"}},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Description"]},{"type":"Cell","props":{},"children":["Quantity"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["A long description"]},{"type":"Cell","props":{},"children":[12]}]}
+            ]
+        })]);
+
+        input
+            .validate()
+            .expect("writer-supported table differential alignment is valid");
+    }
+
+    #[test]
+    fn rejects_false_table_column_wrap_override_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Inventory"}, "children":[
+                {"type":"Table","props":{"range":"A1:A2","name":"InventoryTable"},"children":[
+                    {"type":"TableColumn","props":{"format":{"wrapText":false}},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Description"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["A long description"]}]}
+            ]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("the pinned writer cannot encode a false dxf override");
+
+        assert!(error.to_string().contains("must be true"), "{error}");
+        assert!(error.to_string().contains("cannot serialize"), "{error}");
+    }
+
+    #[test]
     fn accepts_table_column_font_metadata_formats() {
         let table = |column| {
             serde_json::json!({
@@ -16108,13 +16187,14 @@ mod tests {
             .expect_err("a total label and calculation cannot coexist");
         assert!(error.to_string().contains("label or a calculation"));
         let unsupported_format = workbook(vec![table(vec![
-            serde_json::json!({"type":"TableColumn","props":{"format":{"horizontalAlign":"left"}},"children":[]}),
+            serde_json::json!({"type":"TableColumn","props":{"format":{"textRotation":30}},"children":[]}),
             serde_json::json!({"type":"TableColumn","props":{},"children":[]}),
         ])]);
         let error = unsupported_format
             .validate()
             .expect_err("table dxf formats only support the declared style subset");
-        assert!(error.to_string().contains("is not supported"));
+        assert!(error.to_string().contains("textRotation"));
+        assert!(error.to_string().contains("not supported"));
         let empty_number_format = workbook(vec![table(vec![
             serde_json::json!({"type":"TableColumn","props":{"format":{"numberFormat":""}},"children":[]}),
             serde_json::json!({"type":"TableColumn","props":{},"children":[]}),

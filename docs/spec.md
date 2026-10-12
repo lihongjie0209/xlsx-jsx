@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.82
+Version: 1.83
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -1251,7 +1251,9 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `headings`), `fontName`, `fontSize`,
   `fontFamily`, `fontCharset`, and `fontColor`,
   `fillColor`, or differential/ordinary pattern-fill properties `fillPattern`,
-  `fillForegroundColor`, and `fillBackgroundColor`, `numberFormat`, the four
+  `fillForegroundColor`, and `fillBackgroundColor`, `horizontalAlign` (`left`,
+  `center`, `right`, or `distributed`), `verticalAlign` (`top`, `center`, or
+  `bottom`), `wrapText={true}`, `numberFormat`, the four
   edge borders and their RGB/theme colors, and `borderDiagonalType`; `format` applies a differential style to data
   cells and is preserved as table-column metadata. `headerFormat` styles the
   worksheet header cell and reverses canonically as ordinary `Cell` formatting.
@@ -1260,17 +1262,20 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   protection flags, number format, fills, and borders. It is serialized as
   ordinary header-cell formatting and reverses canonically as `Cell` formatting.
   The pinned writer omits font name/size/family/charset from data-cell
-  differential formats. The compiler restores these values in the referenced
-  `<dxf><font>` before returning the XLSX, and reverse preserves them from
+  differential formats and omits `alignment` from table-column DXFs. The
+  compiler restores these values in the referenced `<dxf><font>` and supported
+  alignment attributes in the referenced `<dxf>` before returning the XLSX;
+  reverse preserves them from
   external table styles. `fontScheme` maps to the differential font's explicit
   `none`, `minor` (body), or `major` (headings) theme scheme. `fontName` is a
   literal typeface of 1–255 XML-valid characters, `fontSize` is 1–409 points,
   `fontFamily` is 0–5, and `fontCharset` is an unsigned byte. Theme colors
   use `{ theme: 0..9, shade: 0..5 }`; the pinned writer emits the discrete
   theme variants in DXFs, and reverse preserves theme index and shade from
-  external table DXFs. Other
-  table-specific format properties remain rejected until the differential-
-  style reader can preserve them losslessly.
+  external table DXFs. Differential alignment preserves the supported horizontal/vertical
+  alignment and wrapping properties; text rotation, reading direction,
+  indentation, and shrink-to-fit remain rejected because table differential
+  formats are not yet modeled for those properties.
   Differential styles cannot encode
   false overrides, so emphasis properties are additive and must be true.
   `fillColor` is the solid-fill shorthand and is mutually exclusive with pattern
