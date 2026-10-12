@@ -440,6 +440,7 @@ impl IrEnvelope {
             validate_first_tab(&sheet, name)?;
             validate_worksheet_tab_color(&sheet, name)?;
             validate_default_row_height(&sheet, name)?;
+            validate_worksheet_auto_fit(&sheet, name)?;
             validate_hide_unused_rows(&sheet, name)?;
             validate_show_gridlines(&sheet, name)?;
             validate_worksheet_zoom(&sheet, name)?;
@@ -961,6 +962,17 @@ fn validate_default_row_height(sheet: &Node, name: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_worksheet_auto_fit(sheet: &Node, name: &str) -> Result<()> {
+    if let Some(value) = sheet.props.get("autoFit")
+        && !value.is_boolean()
+    {
+        return Err(Error::Compile(format!(
+            "Worksheet.autoFit on `{name}` must be a boolean; use autoFit={{true}} to calculate column widths from cell contents"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_hide_unused_rows(sheet: &Node, name: &str) -> Result<()> {
     let Some(value) = sheet.props.get("hideUnusedRows") else {
         return Ok(());
@@ -1112,6 +1124,7 @@ fn validate_worksheet_properties(sheet: &Node) -> Result<()> {
             "codeName",
             "visibility",
             "defaultRowHeightPixels",
+            "autoFit",
             "hideUnusedRows",
             "showGridlines",
             "printGridlines",
@@ -2244,6 +2257,15 @@ fn validate_worksheet_children(
             .and_then(Value::as_u64)
             .unwrap_or(20),
     };
+    if sheet.props.get("autoFit").and_then(Value::as_bool) == Some(true)
+        && image_nodes
+            .iter()
+            .any(|image| image.props.contains_key("fit"))
+    {
+        return Err(Error::Compile(format!(
+            "Worksheet.autoFit on `{sheet_name}` cannot be combined with Image.fit because autofitting changes column geometry after image-fit sizing; remove autoFit or use explicit image width and height"
+        )));
+    }
     validate_image_layouts(&image_nodes, &image_geometry, sheet_name)?;
     for (range, header_row) in table_ranges {
         if range.2 as usize >= row_index {
@@ -14191,6 +14213,24 @@ mod tests {
             "type":"Worksheet","props":{"name":"Rows","defaultRowHeightPixels":24},"children":[]
         })]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_boolean_worksheet_autofit_property() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Widths","autoFit":true},"children":[]
+        })]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_non_boolean_worksheet_autofit_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Widths","autoFit":"yes"},"children":[]
+        })]);
+        let error = input.validate().expect_err("autoFit must be boolean");
+        assert!(error.to_string().contains("Worksheet.autoFit"));
+        assert!(error.to_string().contains("boolean"));
     }
 
     #[test]

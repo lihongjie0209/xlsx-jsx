@@ -570,6 +570,9 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
                     .map_err(|error| Error::Compile(error.to_string()))?;
             }
         }
+        if sheet.props.get("autoFit").and_then(Value::as_bool) == Some(true) {
+            worksheet.autofit();
+        }
     }
     for (sheet_name, name, formula) in local_defined_names {
         let quoted_sheet = sheet_name.replace('\'', "''");
@@ -584,15 +587,24 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     let x14_icon_normalization = collect_x14_icon_normalization_targets(ir)?;
     let table_dxf_targets = collect_table_dxf_targets(ir)?;
     let literal_error_count = count_literal_error_cells(ir);
+    let strip_autofit_flags = ir.workbook.children.iter().any(|child| {
+        child
+            .get("props")
+            .and_then(|props| props.get("autoFit"))
+            .and_then(Value::as_bool)
+            == Some(true)
+    });
     if !x14_icon_normalization.is_empty()
         || !table_dxf_targets.is_empty()
         || literal_error_count > 0
+        || strip_autofit_flags
     {
         normalize_generated_xlsx(
             path,
             &x14_icon_normalization,
             literal_error_count,
             &table_dxf_targets,
+            strip_autofit_flags,
         )?;
     }
     Ok(())
@@ -649,6 +661,106 @@ fn preapply_image_cell_dimensions(
         }
     }
     Ok(())
+}
+
+fn strip_best_fit_column_flags(xml: &str, part: &str) -> xlsx_jsx::Result<String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut writer = XmlWriter::new(Vec::new());
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref start)) if start.local_name().as_ref() == b"col" => {
+                let normalized = without_best_fit_attribute(start, reader.decoder(), part)?;
+                writer
+                    .write_event(Event::Start(normalized))
+                    .map_err(|error| {
+                        Error::Compile(format!(
+                            "cannot normalize auto-fit columns in `{part}`: {error}"
+                        ))
+                    })?;
+            }
+            Ok(Event::Empty(ref start)) if start.local_name().as_ref() == b"col" => {
+                let normalized = without_best_fit_attribute(start, reader.decoder(), part)?;
+                writer
+                    .write_event(Event::Empty(normalized))
+                    .map_err(|error| {
+                        Error::Compile(format!(
+                            "cannot normalize auto-fit columns in `{part}`: {error}"
+                        ))
+                    })?;
+            }
+            Ok(Event::Eof) => break,
+            Ok(event) => writer.write_event(event.into_owned()).map_err(|error| {
+                Error::Compile(format!("cannot normalize worksheet `{part}`: {error}"))
+            })?,
+            Err(error) => {
+                return Err(Error::Compile(format!(
+                    "cannot parse generated worksheet `{part}` while normalizing auto-fit columns: {error}"
+                )));
+            }
+        }
+    }
+    String::from_utf8(writer.into_inner()).map_err(|error| {
+        Error::Compile(format!(
+            "normalized worksheet `{part}` is not UTF-8 XML: {error}"
+        ))
+    })
+}
+
+fn without_best_fit_attribute(
+    start: &BytesStart<'_>,
+    decoder: quick_xml::encoding::Decoder,
+    part: &str,
+) -> xlsx_jsx::Result<BytesStart<'static>> {
+    let attributes = start
+        .attributes()
+        .with_checks(false)
+        .map(|attribute| {
+            attribute.map_err(|error| {
+                Error::Compile(format!(
+                    "generated column metadata in `{part}` has malformed attributes: {error}"
+                ))
+            })
+        })
+        .collect::<xlsx_jsx::Result<Vec<_>>>()?;
+    if !attributes.iter().any(|attribute| {
+        attribute.key.local_name().as_ref() == b"bestFit" && attribute.value.as_ref() == b"1"
+    }) {
+        return Ok(start.to_owned());
+    }
+    let mut content = String::from_utf8(start.name().as_ref().to_vec()).map_err(|error| {
+        Error::Compile(format!(
+            "generated column tag in `{part}` is not UTF-8: {error}"
+        ))
+    })?;
+    for attribute in attributes {
+        if attribute.key.local_name().as_ref() == b"bestFit" {
+            if attribute.value.as_ref() != b"1" {
+                return Err(Error::Compile(format!(
+                    "generated column metadata in `{part}` has unexpected bestFit value; expected writer-generated value 1"
+                )));
+            }
+            continue;
+        }
+        let key = std::str::from_utf8(attribute.key.as_ref()).map_err(|error| {
+            Error::Compile(format!(
+                "generated column attribute in `{part}` is not UTF-8: {error}"
+            ))
+        })?;
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+            .map_err(|error| {
+                Error::Compile(format!(
+                    "generated column attribute `{key}` in `{part}` is invalid: {error}"
+                ))
+            })?;
+        content.push(' ');
+        content.push_str(key);
+        content.push_str("=\"");
+        content.push_str(&value);
+        content.push('"');
+    }
+    let name_length = start.name().as_ref().len();
+    Ok(BytesStart::from_content(content, name_length))
 }
 
 fn compile_custom_workbook_properties(
@@ -929,6 +1041,7 @@ fn normalize_generated_xlsx(
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
     table_dxf_targets: &HashMap<String, BTreeMap<usize, TableDxfMetadata>>,
+    strip_autofit_flags: bool,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -957,6 +1070,7 @@ fn normalize_generated_xlsx(
         targets_by_part,
         literal_error_count,
         table_dxf_targets,
+        strip_autofit_flags,
     );
     if let Err(error) = rewrite_result {
         let _ = std::fs::remove_file(&temporary_path);
@@ -984,6 +1098,7 @@ fn rewrite_generated_xlsx(
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
     table_dxf_targets: &HashMap<String, BTreeMap<usize, TableDxfMetadata>>,
+    strip_autofit_flags: bool,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -1029,6 +1144,11 @@ fn rewrite_generated_xlsx(
             };
             let (xml, patched_count) = patch_literal_error_cells(&xml, &name)?;
             patched_error_cells += patched_count;
+            let xml = if strip_autofit_flags {
+                strip_best_fit_column_flags(&xml, &name)?
+            } else {
+                xml
+            };
             bytes = xml.into_bytes();
         } else if name == "xl/styles.xml" && !dxf_metadata.is_empty() {
             let xml = String::from_utf8(bytes).map_err(|error| {

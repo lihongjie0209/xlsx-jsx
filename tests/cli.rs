@@ -281,6 +281,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .success()
         .stdout(predicate::str::contains("xlsx-jsx IR v1"))
         .stdout(predicate::str::contains("fillColor"))
+        .stdout(predicate::str::contains("autoFit"))
         .stdout(predicate::str::contains("fillPattern"))
         .stdout(predicate::str::contains("fillForegroundColor"))
         .stdout(predicate::str::contains("fillBackgroundColor"))
@@ -725,6 +726,108 @@ export default <Workbook><Worksheet name="Images"><Image cell="A1" fit="containC
         .arg(input)
         .assert()
         .success();
+}
+
+#[test]
+fn builds_autofitted_columns_and_reverse_canonicalizes_to_explicit_widths() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("autofit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Row, Cell } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Widths" autoFit={true}><Row><Cell>Short</Cell><Cell>A much longer column value</Cell></Row><Row><Cell>Data</Cell><Cell>More content</Cell></Row></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    let built = directory.path().join("autofit.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&built)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&built, "xl/worksheets/sheet1.xml");
+    assert!(xml.contains("<cols>"), "{xml}");
+    assert!(xml.contains("min=\"2\""), "{xml}");
+    assert!(!xml.contains("bestFit="), "{xml}");
+
+    let reversed = directory.path().join("autofit-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&built)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(!source.contains("autoFit="), "{source}");
+    assert!(source.contains("widthPixels={"), "{source}");
+
+    let external = directory.path().join("external-autofit.xlsx");
+    let mut external_workbook = XlsxWorkbook::new();
+    let external_sheet = external_workbook.add_worksheet();
+    external_sheet
+        .write_string(0, 0, "Header")
+        .expect("cell writes");
+    external_sheet
+        .write_string(1, 0, "A manually sized external value")
+        .expect("cell writes");
+    external_sheet
+        .set_column_width_pixels(0, 280)
+        .expect("external column width is valid");
+    external_workbook
+        .save(&external)
+        .expect("external workbook saves");
+    let external_reversed = directory.path().join("external-autofit.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&external_reversed)
+        .assert()
+        .success();
+    let external_source =
+        std::fs::read_to_string(&external_reversed).expect("external reverse output exists");
+    assert!(!external_source.contains("autoFit="), "{external_source}");
+    assert!(
+        external_source.contains("widthPixels={"),
+        "{external_source}"
+    );
+
+    let rebuilt = directory.path().join("autofit-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    assert!(rebuilt_xml.contains("<cols>"), "{rebuilt_xml}");
+}
+
+#[test]
+fn rejects_autofit_with_image_fit_and_actionable_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-autofit-image.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images" autoFit={true}><Image cell="A1" fit="contain" data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Worksheet.autoFit"))
+        .stderr(predicate::str::contains("explicit image width and height"));
 }
 
 #[test]

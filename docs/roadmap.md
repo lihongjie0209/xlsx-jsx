@@ -25,6 +25,11 @@ completed batch; they do not block work on the next batch.
   dimensions of the target cell. Reverse emits canonical explicit pixel
   dimensions/offsets because OOXML records picture geometry, not the author's
   fit method.
+- Worksheet `autoFit={true}` calculates final column widths from cell contents;
+  the compiler removes the writer's transient `bestFit` marker and external
+  reverse canonicalizes the resulting widths as explicit `Column` values.
+  Arbitrary external `bestFit` flags remain unsupported, and `autoFit` cannot
+  be combined with `Image.fit` because their geometry calculations conflict.
 
 ## Deferred lower-frequency table differential formats
 
@@ -43,7 +48,6 @@ forward/reverse batch.
 
 - Chartsheet `zoomToFit`: the pinned `Worksheet::set_zoom_to_fit()` API only
   affects chartsheets, so this is lower priority than worksheet/table authoring.
-- Column best-fit/autofit behavior: `rust_xlsxwriter::autofit()` computes
-  widths but does not serialize OOXML `bestFit`; the resulting widths are
-  covered, while external `bestFit` metadata remains rejected because it
-  cannot be reproduced as an editable auto-fit behavior.
+- External column `bestFit` metadata remains rejected: replaying it may produce
+  different widths. The supported one-shot `Worksheet.autoFit` operation is
+  documented above and reverses to explicit final widths.

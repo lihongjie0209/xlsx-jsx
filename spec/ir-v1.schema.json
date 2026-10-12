@@ -82,6 +82,7 @@
             "codeName": { "type": "string", "minLength": 1, "maxLength": 31 },
             "visibility": { "enum": ["visible", "hidden", "veryHidden"] },
             "defaultRowHeightPixels": { "type": "integer", "minimum": 1, "maximum": 545 },
+            "autoFit": { "type": "boolean" },
             "hideUnusedRows": { "type": "boolean" },
             "showGridlines": { "type": "boolean" },
             "view": { "enum": ["normal", "pageLayout", "pageBreakPreview"] },

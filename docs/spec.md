@@ -1127,6 +1127,22 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   when they map exactly to an integer pixel height (OOXML points ÷ 0.75) within
   Excel's 409-point limit, and rejects contradictory or fractional-pixel
   layouts rather than rounding.
+- `autoFit?: boolean` asks the compiler to calculate worksheet column widths
+  from written cell contents using the pinned `rust_xlsxwriter` autofit
+  algorithm, which approximates Excel using default Calibri 11 character
+  metrics and may not account for all number/date formats; it can be expensive
+  for large worksheets. This is a one-time build operation, not an Excel
+  instruction that runs when users later edit cells. Explicit column widths
+  larger than the calculated width remain in effect; smaller explicit widths
+  may grow. Since OOXML stores the resulting widths rather than the author's autofit intent,
+  reverse emits canonical explicit `Column.widthPixels` values and does not
+  reconstruct `autoFit`. It cannot be combined with `Image.fit`, because the
+  writer changes column geometry after image-fit dimensions have been resolved;
+  omit image fitting or use explicit image dimensions. External `bestFit`
+  metadata remains unsupported. The pinned writer sets `bestFit="1"` on
+  columns it grows; the compiler removes that transient marker after saving so
+  the output represents the final explicit widths, not a future auto-fit
+  instruction.
 - `hideUnusedRows?: boolean` hides rows without explicit row data using
   `sheetFormatPr@zeroHeight`; it defaults to false and is omitted by reverse.
   It does not replace per-row `hidden` metadata on rows that contain data.
