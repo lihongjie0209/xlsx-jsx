@@ -21512,6 +21512,91 @@ fn reverses_external_sparkline_without_a_manifest() {
 }
 
 #[test]
+fn builds_and_reverses_sparkline_group_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("sparkline-group.tsx");
+    let workbook_path = directory.path().join("sparkline-group.xlsx");
+    let reversed_path = directory.path().join("sparkline-group-reversed.tsx");
+    let rebuilt_path = directory.path().join("sparkline-group-rebuilt.xlsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, SparklineGroup } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><SparklineGroup cells="F2:F4" range="Data!A2:D4" sparklineType="column" /></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&workbook_path)
+        .assert()
+        .success();
+    let generated = read_zip_part_for_test(&workbook_path, "xl/worksheets/sheet1.xml");
+    assert!(
+        generated.contains("<x14:sparklineGroup type=\"column\""),
+        "{generated}"
+    );
+    for source_row in ["A2:D2", "A3:D3", "A4:D4"] {
+        assert!(
+            generated.contains(&format!("<xm:f>Data!{source_row}</xm:f>")),
+            "{generated}"
+        );
+    }
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&reversed_path)
+        .assert()
+        .success();
+    let reversed = std::fs::read_to_string(&reversed_path).unwrap();
+    assert!(reversed.contains("<Sparkline cell=\"F2\""), "{reversed}");
+    assert!(reversed.contains("<Sparkline cell=\"F4\""), "{reversed}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&reversed_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt = read_zip_part_for_test(&rebuilt_path, "xl/worksheets/sheet1.xml");
+    for (destination, source_row) in [("F2", "A2:D2"), ("F3", "A3:D3"), ("F4", "A4:D4")] {
+        assert!(
+            rebuilt.contains(&format!("<xm:sqref>{destination}</xm:sqref>")),
+            "{rebuilt}"
+        );
+        assert!(
+            rebuilt.contains(&format!("<xm:f>Data!{source_row}</xm:f>")),
+            "{rebuilt}"
+        );
+    }
+}
+
+#[test]
+fn rejects_sparkline_group_with_mismatched_destination_length() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-sparkline-group.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, SparklineGroup } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><SparklineGroup cells="F2:F3" range="Data!A2:D4" /></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("destination length"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
 fn rejects_external_sparkline_colors_that_the_dsl_cannot_represent() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("custom-sparkline-color.xlsx");

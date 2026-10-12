@@ -1651,6 +1651,22 @@ fn validate_worksheet_children(
             sparkline_cells.insert(cell);
             continue;
         }
+        if child.r#type == "SparklineGroup" {
+            if saw_row {
+                return Err(Error::Compile(format!(
+                    "Worksheet `{sheet_name}` SparklineGroup at child {} appears after a Row; move sparklines before rows",
+                    child_index + 1
+                )));
+            }
+            for cell in validate_sparkline_group(&child, child_index)? {
+                if !sparkline_cells.insert(cell.clone()) {
+                    return Err(Error::Compile(format!(
+                        "more than one Sparkline targets {cell}; keep one sparkline per destination cell"
+                    )));
+                }
+            }
+            continue;
+        }
         if child.r#type == "Chart" {
             if saw_row {
                 return Err(Error::Compile(format!(
@@ -6974,7 +6990,7 @@ fn validate_sparkline_sheet_references(
         for child_value in &worksheet.children {
             let child: Node = serde_json::from_value(child_value.clone())
                 .map_err(|error| Error::Compile(error.to_string()))?;
-            if child.r#type != "Sparkline" {
+            if child.r#type != "Sparkline" && child.r#type != "SparklineGroup" {
                 continue;
             }
             let range = child
@@ -7439,6 +7455,107 @@ fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<Stri
         ));
     }
     Ok(format_a1_cell(row, column))
+}
+
+fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Vec<String>> {
+    if !group.children.is_empty() {
+        return Err(Error::Compile(format!(
+            "SparklineGroup at declaration {} cannot have children; use cells, range, sparklineType, and dataRowOrder properties",
+            declaration_index + 1
+        )));
+    }
+    reject_unknown_props(
+        group,
+        &["cells", "range", "sparklineType", "dataRowOrder"],
+        "SparklineGroup",
+    )?;
+    let cells = group
+        .props
+        .get("cells")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile("SparklineGroup requires cells, for example cells=\"F2:F4\"".into())
+        })?;
+    let Some((first_row, first_col, last_row, last_col)) = parse_a1_range(cells) else {
+        return Err(Error::Compile(format!(
+            "SparklineGroup.cells `{cells}` must be a valid A1 range; use a single row or column such as F2:F4"
+        )));
+    };
+    if first_row != last_row && first_col != last_col {
+        return Err(Error::Compile(format!(
+            "SparklineGroup.cells `{cells}` must be one-dimensional; use a single row or column"
+        )));
+    }
+    let range = group.props.get("range").and_then(Value::as_str).ok_or_else(|| {
+        Error::Compile("SparklineGroup requires a sheet-qualified rectangular range such as range=\"Data!A2:D4\"".into())
+    })?;
+    let Some((sheet, reference)) = range.split_once('!') else {
+        return Err(Error::Compile(format!(
+            "SparklineGroup.range `{range}` must include a worksheet name and `!`; use `Sheet!A1:D4`"
+        )));
+    };
+    let sheet_valid = sheet
+        .strip_prefix('\'')
+        .and_then(|s| s.strip_suffix('\''))
+        .is_some_and(|s| !s.is_empty())
+        || (!sheet.is_empty()
+            && sheet
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.')));
+    let Some((source_first_row, source_first_col, source_last_row, source_last_col)) =
+        parse_a1_range(reference)
+    else {
+        return Err(Error::Compile(format!(
+            "SparklineGroup.range `{range}` must be a sheet-qualified rectangular A1 range such as `Data!A2:D4`"
+        )));
+    };
+    if !sheet_valid || source_first_row == source_last_row || source_first_col == source_last_col {
+        return Err(Error::Compile(format!(
+            "SparklineGroup.range `{range}` must be a sheet-qualified two-dimensional A1 range; use a rectangle such as `Data!A2:D4`"
+        )));
+    }
+    let dest_len = u64::from(last_row - first_row + 1).max(u64::from(last_col - first_col + 1));
+    let source_rows = u64::from(source_last_row - source_first_row + 1);
+    let source_cols = u64::from(source_last_col - source_first_col + 1);
+    let row_order = group
+        .props
+        .get("dataRowOrder")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let expected_len = if row_order { source_rows } else { source_cols };
+    if dest_len != expected_len {
+        return Err(Error::Compile(format!(
+            "SparklineGroup destination length {dest_len} does not match the {} dimension ({expected_len}) selected by dataRowOrder={row_order}; adjust cells, range, or dataRowOrder",
+            if row_order { "row" } else { "column" }
+        )));
+    }
+    if let Some(value) = group.props.get("dataRowOrder")
+        && !value.is_boolean()
+    {
+        return Err(Error::Compile(
+            "SparklineGroup.dataRowOrder must be a boolean; use true or false".into(),
+        ));
+    }
+    if let Some(kind) = group.props.get("sparklineType")
+        && !kind
+            .as_str()
+            .is_some_and(|v| matches!(v, "line" | "column" | "winLoss"))
+    {
+        return Err(Error::Compile(
+            "SparklineGroup.sparklineType must be line, column, or winLoss".into(),
+        ));
+    }
+    let mut result = Vec::new();
+    if first_col == last_col {
+        for row in first_row..=last_row {
+            result.push(format_a1_cell(row, first_col));
+        }
+    } else {
+        for col in first_col..=last_col {
+            result.push(format_a1_cell(first_row, col));
+        }
+    }
+    Ok(result)
 }
 
 fn sparkline_range_sheet_name(range: &str) -> Option<String> {

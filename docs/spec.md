@@ -1141,6 +1141,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   writer's default eight theme/RGB color roles and `displayEmptyCellsAs="gap"`
   are verified; custom colors/options and grouped multi-cell destinations fail
   with a repair suggestion rather than being dropped.
+- `SparklineGroup` adds one-dimensional destination `cells` from a rectangular,
+  sheet-qualified source `range` using the same `sparklineType` values as
+  `Sparkline`. The destination must be a single row or column and its length
+  length must match the source rows when `dataRowOrder` is true, or source
+  columns when it is false. `dataRowOrder` defaults to `true`; true advances
+  through source rows and each generated formula spans columns, while false
+  advances through source columns and each formula spans rows. The source worksheet must exist and this component must precede
+  worksheet `Row` components. Reverse expands each actual x14 formula/destination
+  pair into ordinary `Sparkline` components, preserving the writer-visible
+  mapping without relying on the embedded manifest.
 - `autoFilterColumns?: { column: integer, values?: string[], includeBlanks?:
   boolean, customFilters?: { logic: "and" | "or", conditions: { operator?:
   string, value: string }[] } }[]` adds criteria to columns within that range.

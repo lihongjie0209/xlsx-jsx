@@ -347,6 +347,10 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
                 compile_sparkline(worksheet, &child)?;
                 continue;
             }
+            if child.r#type == "SparklineGroup" {
+                compile_sparkline_group(worksheet, &child)?;
+                continue;
+            }
             if child.r#type == "Chart" {
                 compile_chart(worksheet, &child)?;
                 continue;
@@ -1193,6 +1197,37 @@ fn compile_sparkline(
                 "cannot add Sparkline at {cell} from `{range}`: {error}; use a valid one-dimensional range"
             ))
         })
+}
+
+fn compile_sparkline_group(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    component: &Node,
+) -> xlsx_jsx::Result<()> {
+    let cells = component.props["cells"]
+        .as_str()
+        .expect("validated SparklineGroup.cells");
+    let (first_row, first_col, last_row, last_col) =
+        xlsx_jsx::parse_a1_range(cells).expect("validated SparklineGroup.cells");
+    let range = component.props["range"]
+        .as_str()
+        .expect("validated SparklineGroup.range");
+    let mut sparkline = XlsxSparkline::new().set_range(range);
+    if let Some(kind) = component.props.get("sparklineType").and_then(Value::as_str) {
+        sparkline = sparkline.set_type(match kind {
+            "line" => SparklineType::Line,
+            "column" => SparklineType::Column,
+            "winLoss" => SparklineType::WinLose,
+            _ => unreachable!("validated SparklineGroup.sparklineType"),
+        });
+    }
+    if component.props.get("dataRowOrder").and_then(Value::as_bool) == Some(false) {
+        sparkline = sparkline.set_column_order(true);
+    }
+    worksheet.add_sparkline_group(first_row, first_col, last_row, last_col, &sparkline)
+        .map(|_| ())
+        .map_err(|error| Error::Compile(format!(
+            "cannot add SparklineGroup to {cells} from `{range}`: {error}; use a one-dimensional destination and a matching two-dimensional source range"
+        )))
 }
 
 #[expect(
@@ -5774,7 +5809,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         }
     }
     let mut output = String::from(
-        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, Image, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
+        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, SparklineGroup, Image, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
     for (name, value) in [
         ("title", workbook_properties.title.as_deref()),
