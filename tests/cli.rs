@@ -207,6 +207,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("company"))
         .stdout(predicate::str::contains("hyperlinkBase"))
         .stdout(predicate::str::contains("CustomProperty"))
+        .stdout(predicate::str::contains("codeName"))
         .stdout(predicate::str::contains("sparklineType"))
         .stdout(predicate::str::contains("sparklineGroup"))
         .stdout(predicate::str::contains("showEmptyCellsAs"))
@@ -16244,6 +16245,45 @@ fn external_rgb_tab_color_round_trips_and_theme_colors_are_rejected() {
         .failure()
         .stderr(predicate::str::contains("tabColor has unsupported"))
         .stderr(predicate::str::contains("theme"));
+}
+
+#[test]
+fn external_worksheet_code_name_round_trips_without_a_macro_project() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("worksheet-code-name.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .add_worksheet()
+        .set_name("Data")
+        .expect("worksheet name is valid")
+        .set_vba_name("DataSheet")
+        .expect("worksheet code name is valid");
+    workbook.save(&input).expect("workbook writes");
+
+    let reversed = directory.path().join("worksheet-code-name.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("codeName=\"DataSheet\""), "{source}");
+
+    let rebuilt = directory.path().join("rebuilt-code-name.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+    let worksheet_xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    assert!(
+        worksheet_xml.contains("codeName=\"DataSheet\""),
+        "{worksheet_xml}"
+    );
 }
 
 #[test]

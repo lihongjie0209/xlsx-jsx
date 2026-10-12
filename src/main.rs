@@ -325,6 +325,11 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         worksheet
             .set_name(name)
             .map_err(|error| Error::Compile(error.to_string()))?;
+        if let Some(code_name) = sheet.props.get("codeName").and_then(Value::as_str) {
+            worksheet
+                .set_vba_name(code_name)
+                .map_err(|error| Error::Compile(error.to_string()))?;
+        }
         if sheet.props.get("active").and_then(Value::as_bool) == Some(true) {
             worksheet.set_active(true);
         }
@@ -6083,6 +6088,9 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         if let Some(color) = sheet_metadata.and_then(|metadata| metadata.tab_color.as_deref()) {
             let _ = write!(output, " tabColor={color:?}");
         }
+        if let Some(code_name) = sheet_metadata.and_then(|metadata| metadata.code_name.as_deref()) {
+            let _ = write!(output, " codeName={code_name:?}");
+        }
         if let Some(height) = sheet_metadata.and_then(|metadata| metadata.default_row_height_pixels)
         {
             let _ = write!(output, " defaultRowHeightPixels={{{height}}}");
@@ -9905,6 +9913,16 @@ fn audit_reverse_subset(
         return Err(Error::Reverse(
             "workbook dynamic-array metadata and worksheet cm markers do not match; repair the metadata part, workbook relationship, or dynamic formula cells".into(),
         ));
+    }
+    let mut worksheet_code_names = std::collections::HashSet::new();
+    for (sheet_name, metadata) in &styles_by_sheet {
+        if let Some(code_name) = metadata.code_name.as_ref()
+            && !worksheet_code_names.insert(code_name.to_lowercase())
+        {
+            return Err(Error::Reverse(format!(
+                "worksheet `{sheet_name}` codeName `{code_name}` duplicates another worksheet code name ignoring case; assign a unique codeName"
+            )));
+        }
     }
     let (active_sheet_index, first_tab_index) = audit_workbook_xml(
         &workbook_xml,
@@ -25225,6 +25243,7 @@ struct WorksheetMetadata {
     first_tab: Option<()>,
     visibility: WorksheetVisibility,
     tab_color: Option<String>,
+    code_name: Option<String>,
     default_row_height_pixels: Option<u32>,
     hide_unused_rows: bool,
     hide_screen_gridlines: bool,
@@ -32642,7 +32661,13 @@ fn audit_sheet_properties_if_present(
     metadata: &mut WorksheetMetadata,
 ) -> xlsx_jsx::Result<()> {
     if tag == "sheetPr" {
-        audit_sheet_properties(event, part, decoder, &mut metadata.filter_mode)?;
+        audit_sheet_properties(
+            event,
+            part,
+            decoder,
+            &mut metadata.filter_mode,
+            &mut metadata.code_name,
+        )?;
     } else if tag == "pageSetUpPr" {
         audit_page_setup_properties(event, part, decoder, &mut metadata.print)?;
     } else if tag == "outlinePr" {
@@ -32748,18 +32773,40 @@ fn audit_sheet_properties(
     part: &str,
     decoder: quick_xml::encoding::Decoder,
     filter_mode: &mut Option<bool>,
+    code_name: &mut Option<String>,
 ) -> xlsx_jsx::Result<()> {
     for attribute in event.attributes().with_checks(false) {
         let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
-        if attribute.key.local_name().as_ref() != b"filterMode" || filter_mode.is_some() {
-            return Err(Error::Reverse(format!(
-                "worksheet `{part}` sheetPr has unsupported metadata; only derived filterMode is modeled"
-            )));
-        }
+        let key = attribute.key.local_name();
         let value = attribute
             .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
-            .map_err(|error| Error::Reverse(error.to_string()))?;
-        *filter_mode = Some(parse_xml_bool(&value, part, "sheetPr.filterMode")?);
+            .map_err(|error| Error::Reverse(error.to_string()))?
+            .into_owned();
+        match key.as_ref() {
+            b"filterMode" if filter_mode.is_none() => {
+                *filter_mode = Some(parse_xml_bool(&value, part, "sheetPr.filterMode")?);
+            }
+            b"codeName" if code_name.is_none() => {
+                let mut characters = value.chars();
+                if !characters.next().is_some_and(char::is_alphabetic)
+                    || value.chars().count() > 31
+                    || !value
+                        .chars()
+                        .all(|character| character.is_alphanumeric() || character == '_')
+                {
+                    return Err(Error::Reverse(format!(
+                        "worksheet `{part}` has invalid sheetPr.codeName `{value}`; use 1–31 alphanumeric or underscore characters beginning with a letter"
+                    )));
+                }
+                *code_name = Some(value);
+            }
+            _ => {
+                return Err(Error::Reverse(format!(
+                    "worksheet `{part}` sheetPr has unsupported or duplicate `{}` metadata; only filterMode and codeName are modeled",
+                    String::from_utf8_lossy(key.as_ref())
+                )));
+            }
+        }
     }
     Ok(())
 }

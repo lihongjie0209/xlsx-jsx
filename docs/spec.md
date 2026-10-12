@@ -962,6 +962,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `tabColor?: string` sets the worksheet tab's opaque RGB color using exactly
   `#RRGGBB`; reverse preserves explicit RGB values in uppercase. Theme, indexed,
   automatic, and alpha-bearing colors are rejected rather than approximated.
+- `codeName?: string` sets the worksheet VBA/OOXML code name via
+  `Worksheet::set_vba_name()`. It must be 1–31 Unicode alphanumeric or `_`
+  characters and begin with a letter; code names are unique ignoring Unicode
+  lowercase comparison. Reverse preserves `sheetPr@codeName` without requiring
+  a VBA project and rejects invalid or duplicate names.
 - Children: `Column`, `DataValidation`, `ConditionalFormat`, `IgnoreError`,
   `Table`, `Note`, and `Chart`
   components followed by zero or more `Row` components. Metadata must appear

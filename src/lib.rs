@@ -388,6 +388,7 @@ impl IrEnvelope {
         let mut table_names = std::collections::HashSet::new();
         let mut global_defined_names = std::collections::HashSet::new();
         let mut custom_property_names = std::collections::HashSet::new();
+        let mut worksheet_code_names = std::collections::HashSet::new();
         let mut worksheet_index = 0;
         validate_active_worksheet_uniqueness(&self.workbook.children)?;
         validate_default_active_selection(&self.workbook.children)?;
@@ -423,6 +424,7 @@ impl IrEnvelope {
                     Error::Compile(format!("Worksheet {sheet_index} requires name: string"))
                 })?;
             validate_worksheet_visibility_and_active(&sheet, sheet_index, name)?;
+            validate_worksheet_code_name(&sheet, name, &mut worksheet_code_names)?;
             validate_first_tab(&sheet, name)?;
             validate_worksheet_tab_color(&sheet, name)?;
             validate_default_row_height(&sheet, name)?;
@@ -970,6 +972,7 @@ fn validate_worksheet_properties(sheet: &Node) -> Result<()> {
             "selected",
             "firstTab",
             "tabColor",
+            "codeName",
             "visibility",
             "defaultRowHeightPixels",
             "hideUnusedRows",
@@ -1011,6 +1014,39 @@ fn validate_worksheet_properties(sheet: &Node) -> Result<()> {
         ],
         "Worksheet",
     )
+}
+
+fn validate_worksheet_code_name(
+    sheet: &Node,
+    worksheet_name: &str,
+    code_names: &mut std::collections::HashSet<String>,
+) -> Result<()> {
+    let Some(value) = sheet.props.get("codeName") else {
+        return Ok(());
+    };
+    let code_name = value.as_str().ok_or_else(|| {
+        Error::Compile(format!(
+            "Worksheet.codeName on `{worksheet_name}` must be a string; use a VBA identifier such as `DataSheet`"
+        ))
+    })?;
+    let mut characters = code_name.chars();
+    let valid_first_character = characters.next().is_some_and(char::is_alphabetic);
+    if !valid_first_character
+        || code_name.chars().count() > 31
+        || !code_name
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_')
+    {
+        return Err(Error::Compile(format!(
+            "Worksheet.codeName `{code_name}` on `{worksheet_name}` is invalid; use 1–31 alphanumeric or underscore characters beginning with a letter"
+        )));
+    }
+    if !code_names.insert(code_name.to_lowercase()) {
+        return Err(Error::Compile(format!(
+            "Worksheet.codeName `{code_name}` duplicates another Worksheet.codeName ignoring case; choose a unique code name"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_worksheet_protection(sheet: &Node, name: &str) -> Result<()> {
@@ -12702,6 +12738,42 @@ mod tests {
             "type":"Worksheet","props":{"name":"Colored","tabColor":"#4472C4"},"children":[]
         })]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_valid_worksheet_code_name() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Data","codeName":"DataSheet"},"children":[]
+        })]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_worksheet_code_name_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Data","codeName":"1 Data"},"children":[]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("invalid code names are rejected");
+        assert!(error.to_string().contains("Worksheet.codeName"));
+        assert!(error.to_string().contains("beginning with a letter"));
+    }
+
+    #[test]
+    fn rejects_duplicate_worksheet_code_names_ignoring_case() {
+        let input = workbook(vec![
+            serde_json::json!({"type":"Worksheet","props":{"name":"One","codeName":"DataSheet"},"children":[]}),
+            serde_json::json!({"type":"Worksheet","props":{"name":"Two","codeName":"datasheet"},"children":[]}),
+        ]);
+        let error = input
+            .validate()
+            .expect_err("code names are unique ignoring case");
+        assert!(
+            error
+                .to_string()
+                .contains("duplicates another Worksheet.codeName")
+        );
     }
 
     #[test]
