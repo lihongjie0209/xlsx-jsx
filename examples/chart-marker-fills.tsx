@@ -28,6 +28,13 @@ export default <Workbook>
         markerSize={9}
         markerFillGradient={{type: "linear", angle: 45, stops: [{color: "#C00000", position: 0}, {color: "#FFF2CC", position: 100}]}}
       />
+      <Series
+        values="Data!$B$2:$B$4"
+        categories="Data!$A$2:$A$4"
+        markerType="square"
+        markerFillPattern={{pattern: "diagBrick", foregroundColor: "#C00000", backgroundColor: "#FFF2CC"}}
+        markerLineColor="#17365D"
+      />
     </Chart>
   </Worksheet>
 </Workbook>;

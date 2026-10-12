@@ -5160,6 +5160,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "markerFillColor",
                 "markerFillTransparency",
                 "markerFillGradient",
+                "markerFillPattern",
                 "markerLineColor",
                 "markerLineWidth",
                 "markerLineDash",
@@ -6873,7 +6874,8 @@ fn validate_chart_series_marker(chart: &Node, series: &Node, series_index: usize
     let marker_type = series.props.get("markerType");
     let has_marker_fill = series.props.contains_key("markerFillColor")
         || series.props.contains_key("markerFillTransparency")
-        || series.props.contains_key("markerFillGradient");
+        || series.props.contains_key("markerFillGradient")
+        || series.props.contains_key("markerFillPattern");
     let has_marker_line = [
         "markerLineColor",
         "markerLineWidth",
@@ -6958,9 +6960,52 @@ fn validate_chart_series_marker_fill(series: &Node) -> Result<()> {
         validate_chart_gradient_properties("Series.markerFillGradient", gradient)?;
         if series.props.contains_key("markerFillColor")
             || series.props.contains_key("markerFillTransparency")
+            || series.props.contains_key("markerFillPattern")
         {
             return Err(Error::Compile(
-                "Series.markerFillGradient conflicts with markerFillColor and markerFillTransparency; choose one marker fill representation".into(),
+                "Series.markerFillGradient conflicts with markerFillColor and markerFillTransparency or markerFillPattern; choose exactly one marker fill representation".into(),
+            ));
+        }
+    }
+    if let Some(value) = series.props.get("markerFillPattern") {
+        let Some(properties) = value.as_object() else {
+            return Err(Error::Compile(
+                "Series.markerFillPattern must be an object; use {pattern: \"pct20\", foregroundColor: \"#336699\"}".into(),
+            ));
+        };
+        if properties
+            .keys()
+            .any(|key| !["pattern", "foregroundColor", "backgroundColor"].contains(&key.as_str()))
+        {
+            return Err(Error::Compile(
+                "Series.markerFillPattern has unsupported properties; use pattern, foregroundColor, or backgroundColor".into(),
+            ));
+        }
+        let pattern = properties
+            .get("pattern")
+            .and_then(Value::as_str)
+            .filter(|pattern| chart_data_table_fill_pattern_is_supported(pattern));
+        if pattern.is_none() {
+            return Err(Error::Compile(
+                "Series.markerFillPattern.pattern must be one of the 48 supported DrawingML presets; use a value listed by `xlsx-jsx spec`".into(),
+            ));
+        }
+        for property in ["foregroundColor", "backgroundColor"] {
+            if properties
+                .get(property)
+                .is_some_and(|color| !color.as_str().is_some_and(is_opaque_rgb_color))
+            {
+                return Err(Error::Compile(format!(
+                    "Series.markerFillPattern.{property} must be an opaque RGB color like #336699"
+                )));
+            }
+        }
+        if series.props.contains_key("markerFillColor")
+            || series.props.contains_key("markerFillTransparency")
+            || series.props.contains_key("markerFillGradient")
+        {
+            return Err(Error::Compile(
+                "Series.markerFillPattern conflicts with markerFillColor, markerFillTransparency, or markerFillGradient; choose exactly one marker fill representation".into(),
             ));
         }
     }
@@ -12816,6 +12861,29 @@ mod tests {
                     "markerLineWidth":1.5,
                     "markerLineDash":"dashDot",
                     "markerLineTransparency":25
+                },"children":[]}]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_chart_series_marker_pattern_fill_with_outline() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"line","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!B1:B3",
+                    "markerType":"circle",
+                    "markerFillPattern":{
+                        "pattern":"diagBrick",
+                        "foregroundColor":"#C00000",
+                        "backgroundColor":"#FFF2CC"
+                    },
+                    "markerLineColor":"#17365D"
                 },"children":[]}]
             })],
         )]);

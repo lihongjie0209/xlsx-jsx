@@ -260,9 +260,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   charts. `markerFillGradient?: PointGradient` accepts the same `type`, optional
   linear `angle`, and 2–10 opaque RGB whole-percent `stops` as
   `Series.pointGradients`. It conflicts with `markerFillColor` and
-  `markerFillTransparency`; gradients round-trip without a manifest. Pattern
-  fills, gradient alpha/theme colors, and line effects remain unsupported and
-  are rejected during reverse rather than discarded.
+  `markerFillTransparency`. `markerFillPattern?: PointPattern` accepts the same
+  48 DrawingML pattern names and optional opaque RGB `foregroundColor` and
+  `backgroundColor` as `Series.pointPatterns`. Exactly one of solid, pattern,
+  and gradient fill representations may be selected, but any can be combined
+  with a marker outline. Pattern and gradient fills round-trip without a
+  manifest. Gradient alpha/theme colors and line effects remain unsupported
+  and are rejected during reverse rather than discarded.
 - `Series.lineColor?: "#RRGGBB"`, `lineWidth?: number`, `lineDash?: "solid" |
   "roundDot" | "squareDot" | "dash" | "dashDot" | "longDash" |
   "longDashDot" | "longDashDotDot"`, `lineTransparency?: number`, and

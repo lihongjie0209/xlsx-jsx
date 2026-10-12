@@ -2461,6 +2461,23 @@ fn chart_marker_format(series: &Node) -> Option<ChartFormat> {
         format.set_gradient_fill(&fill);
         has_format = true;
     }
+    if let Some(value) = series.props.get("markerFillPattern") {
+        let properties = value.as_object().expect("validated marker pattern object");
+        let pattern_name = properties
+            .get("pattern")
+            .and_then(Value::as_str)
+            .expect("validated marker pattern name");
+        let mut fill = ChartPatternFill::new();
+        fill.set_pattern(chart_pattern_fill_type(pattern_name));
+        if let Some(color) = properties.get("foregroundColor").and_then(Value::as_str) {
+            fill.set_foreground_color(color);
+        }
+        if let Some(color) = properties.get("backgroundColor").and_then(Value::as_str) {
+            fill.set_background_color(color);
+        }
+        format.set_pattern_fill(&fill);
+        has_format = true;
+    }
     let has_line = [
         "markerLineColor",
         "markerLineWidth",
@@ -7170,6 +7187,13 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
             let _ = write!(
                 output,
                 " markerFillGradient={{{}}}",
+                Value::Object(properties.clone())
+            );
+        }
+        if let Some(properties) = &series.marker_fill_pattern {
+            let _ = write!(
+                output,
+                " markerFillPattern={{{}}}",
                 Value::Object(properties.clone())
             );
         }
@@ -13990,6 +14014,9 @@ fn parse_chart_xml(
     let mut point_pattern: Option<String> = None;
     let mut point_pattern_foreground_color: Option<String> = None;
     let mut point_pattern_background_color: Option<String> = None;
+    let mut marker_pattern: Option<String> = None;
+    let mut marker_pattern_foreground_color: Option<String> = None;
+    let mut marker_pattern_background_color: Option<String> = None;
     let mut point_gradient_type: Option<&'static str> = None;
     let mut point_gradient_angle: Option<u16> = None;
     let mut point_gradient_stops = Vec::<Value>::new();
@@ -15014,12 +15041,15 @@ fn parse_chart_xml(
                             | "noFill"
                             | "prstDash"
                             | "gradFill"
+                            | "pattFill"
                             | "gsLst"
                             | "gs"
                             | "lin"
                             | "path"
                             | "fillToRect"
                             | "tileRect"
+                            | "fgClr"
+                            | "bgClr"
                     )
                 {
                     return Err(Error::Reverse(format!(
@@ -15319,16 +15349,19 @@ fn parse_chart_xml(
                             | "noFill"
                             | "prstDash"
                             | "gradFill"
+                            | "pattFill"
                             | "gsLst"
                             | "gs"
                             | "lin"
                             | "path"
                             | "fillToRect"
                             | "tileRect"
+                            | "fgClr"
+                            | "bgClr"
                     )
                 {
                     return Err(Error::Reverse(format!(
-                        "chart part `{part}` has unsupported `<{tag}>` marker formatting; only RGB solid fill and ChartLine outline properties are represented, so remove gradients, patterns, line effects, or extensions"
+                        "chart part `{part}` has unsupported marker formatting child `<{tag}>`; keep supported RGB solid, pattern, or gradient fills and ChartLine outlines, and remove effects or extensions"
                     )));
                 }
                 if stack.iter().any(|ancestor| ancestor == "dPt")
@@ -15817,6 +15850,40 @@ fn parse_chart_xml(
                         if point_pattern.replace(pattern).is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats a point pattern fill; keep one supported pattern per point"
+                            )));
+                        }
+                    }
+                    "pattFill"
+                        if stack.last().is_some_and(|parent| parent == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "marker")
+                            && !stack.iter().any(|ancestor| ancestor == "dPt") =>
+                    {
+                        let pattern = chart_xml_attribute(&event, "prst", reader.decoder())?
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a marker pattFill without prst; add one supported DrawingML pattern preset"
+                            )))?;
+                        if !chart_data_table_fill_pattern_is_supported(&pattern) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported marker pattern `{pattern}`; use one of the 48 pinned ChartPatternFillType presets"
+                            )));
+                        }
+                        let current = series.last_mut().ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has marker pattern formatting outside a series"
+                            ))
+                        })?;
+                        if std::mem::replace(&mut current.marker_fill_seen, true)
+                            || current.marker_fill_color.is_some()
+                            || current.marker_fill_gradient.is_some()
+                            || current.marker_fill_pattern.is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` combines marker fill representations; retain exactly one solid, pattern, or gradient fill"
+                            )));
+                        }
+                        if marker_pattern.replace(pattern).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a marker pattern fill; keep one supported pattern per marker"
                             )));
                         }
                     }
@@ -17810,6 +17877,7 @@ fn parse_chart_xml(
                         marker_fill_color: None,
                         marker_fill_transparency: None,
                         marker_fill_gradient: None,
+                        marker_fill_pattern: None,
                         marker_fill_seen: false,
                         marker_line_color: None,
                         marker_line_width: None,
@@ -19594,7 +19662,9 @@ fn parse_chart_xml(
                     }
                     "srgbClr"
                         if matches!(stack.last().map(String::as_str), Some("fgClr" | "bgClr"))
-                            && stack.iter().any(|ancestor| ancestor == "dPt")
+                            && (stack.iter().any(|ancestor| ancestor == "dPt")
+                                || (stack.iter().any(|ancestor| ancestor == "marker")
+                                    && !stack.iter().any(|ancestor| ancestor == "dPt")))
                             && stack.iter().any(|ancestor| ancestor == "pattFill")
                             && stack.iter().any(|ancestor| ancestor == "spPr") =>
                     {
@@ -19609,7 +19679,16 @@ fn parse_chart_xml(
                                 "chart part `{part}` has a non-RGB point pattern color; use an opaque six-digit #RRGGBB color"
                             )));
                         }
-                        let target = if stack.last().is_some_and(|parent| parent == "fgClr") {
+                        let is_foreground = stack.last().is_some_and(|parent| parent == "fgClr");
+                        let target = if stack.iter().any(|ancestor| ancestor == "marker")
+                            && !stack.iter().any(|ancestor| ancestor == "dPt")
+                        {
+                            if is_foreground {
+                                &mut marker_pattern_foreground_color
+                            } else {
+                                &mut marker_pattern_background_color
+                            }
+                        } else if is_foreground {
                             &mut point_pattern_foreground_color
                         } else {
                             &mut point_pattern_background_color
@@ -21504,6 +21583,32 @@ fn parse_chart_xml(
                         )));
                     }
                 }
+                if tag == "pattFill"
+                    && stack.iter().any(|ancestor| ancestor == "marker")
+                    && !stack.iter().any(|ancestor| ancestor == "dPt")
+                {
+                    let pattern = marker_pattern.take().ok_or_else(|| Error::Reverse(format!(
+                        "chart part `{part}` closes a marker pattFill without a supported preset"
+                    )))?;
+                    let mut properties = serde_json::Map::new();
+                    properties.insert("pattern".into(), Value::String(pattern));
+                    if let Some(color) = marker_pattern_foreground_color.take() {
+                        properties.insert("foregroundColor".into(), Value::String(color));
+                    }
+                    if let Some(color) = marker_pattern_background_color.take() {
+                        properties.insert("backgroundColor".into(), Value::String(color));
+                    }
+                    let current = series.last_mut().ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "chart part `{part}` closes marker pattern formatting outside a series"
+                        ))
+                    })?;
+                    if current.marker_fill_pattern.replace(properties).is_some() {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats marker pattern fills; keep one marker fill"
+                        )));
+                    }
+                }
                 if tag == "gs" && stack.iter().any(|ancestor| ancestor == "gradFill") {
                     let position = point_gradient_stop_position.take().ok_or_else(|| {
                         Error::Reverse(format!(
@@ -21814,12 +21919,15 @@ fn parse_chart_xml(
         if item.marker_fill_seen
             && item.marker_fill_color.is_none()
             && item.marker_fill_gradient.is_none()
+            && item.marker_fill_pattern.is_none()
         {
             return Err(Error::Reverse(format!(
-                "chart part `{part}` has a marker solid fill without an RGB color; add one opaque #RRGGBB marker fill or remove the fill"
+                "chart part `{part}` has a marker fill without a supported RGB color, pattern, or gradient; repair the fill or remove it"
             )));
         }
-        if (item.marker_fill_color.is_some() || item.marker_fill_gradient.is_some())
+        if (item.marker_fill_color.is_some()
+            || item.marker_fill_gradient.is_some()
+            || item.marker_fill_pattern.is_some())
             && item.marker_type == Some("none")
         {
             return Err(Error::Reverse(format!(
@@ -21877,6 +21985,8 @@ fn parse_chart_xml(
             item.marker_size.is_some()
                 || item.marker_type.is_some()
                 || item.marker_fill_color.is_some()
+                || item.marker_fill_pattern.is_some()
+                || item.marker_fill_gradient.is_some()
                 || item.marker_line_color.is_some()
                 || item.marker_line_width.is_some()
                 || item.marker_line_dash.is_some()
@@ -23925,6 +24035,12 @@ fn audit_chart_attributes(
             && stack.iter().any(|ancestor| ancestor == "dPt")
             && stack.iter().any(|ancestor| ancestor == "spPr")
             && chart_data_table_fill_pattern_is_supported(&value);
+        let is_supported_marker_pattern_attribute = tag == "pattFill"
+            && key == "prst"
+            && stack.iter().any(|ancestor| ancestor == "marker")
+            && !stack.iter().any(|ancestor| ancestor == "dPt")
+            && stack.iter().any(|ancestor| ancestor == "spPr")
+            && chart_data_table_fill_pattern_is_supported(&value);
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
             && !is_supported_chart_title_body_attribute
@@ -23939,6 +24055,7 @@ fn audit_chart_attributes(
             && !is_supported_chart_legend_font_attribute
             && !is_supported_data_table_pattern_attribute
             && !is_supported_point_pattern_attribute
+            && !is_supported_marker_pattern_attribute
         {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` has unsupported `{tag}@{key}={value}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
@@ -27780,6 +27897,7 @@ struct WorksheetChartSeries {
     marker_fill_color: Option<String>,
     marker_fill_transparency: Option<u32>,
     marker_fill_gradient: Option<serde_json::Map<String, Value>>,
+    marker_fill_pattern: Option<serde_json::Map<String, Value>>,
     marker_fill_seen: bool,
     marker_line_color: Option<String>,
     marker_line_width: Option<f64>,

@@ -822,7 +822,100 @@ fn spec_exposes_chart_point_formatting() {
         .stdout(predicate::str::contains("pointPatterns"))
         .stdout(predicate::str::contains("pointGradients"))
         .stdout(predicate::str::contains("markerFillGradient"))
+        .stdout(predicate::str::contains("markerFillPattern"))
         .stdout(predicate::str::contains("pointFillHidden"));
+}
+
+#[test]
+fn reverses_external_chart_marker_pattern_without_manifest_and_rebuilds_it() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("marker-pattern.xlsx");
+    let source_path = directory.path().join("marker-pattern.tsx");
+    let rebuilt_path = directory.path().join("marker-pattern-rebuilt.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_number(0, 0, 10).unwrap();
+    worksheet.write_number(1, 0, 20).unwrap();
+    let mut pattern = ChartPatternFill::new();
+    pattern
+        .set_pattern(ChartPatternFillType::DiagonalBrick)
+        .set_foreground_color("#C00000")
+        .set_background_color("#FFF2CC");
+    let mut marker_format = ChartFormat::new();
+    let mut marker_line = ChartLine::new();
+    marker_line.set_color("#17365D").set_width(1.25);
+    marker_format
+        .set_pattern_fill(&pattern)
+        .set_line(&marker_line);
+    let mut marker = ChartMarker::new();
+    marker
+        .set_type(ChartMarkerType::Circle)
+        .set_format(&mut marker_format);
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_values("Data!$A$1:$A$2")
+        .set_marker(&marker);
+    worksheet.insert_chart(4, 2, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(source.contains("markerFillPattern={{"), "{source}");
+    assert!(source.contains("\"pattern\":\"diagBrick\""), "{source}");
+    assert!(
+        source.contains("\"foregroundColor\":\"#C00000\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("\"backgroundColor\":\"#FFF2CC\""),
+        "{source}"
+    );
+    assert!(source.contains("markerLineColor=\"#17365D\""), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<a:pattFill prst=\"diagBrick\">"), "{xml}");
+    assert!(
+        xml.contains("<a:fgClr><a:srgbClr val=\"C00000\"/></a:fgClr>"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<a:bgClr><a:srgbClr val=\"FFF2CC\"/></a:bgClr>"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn marker_pattern_conflicts_with_gradient_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source_path = directory.path().join("marker-pattern-conflict.tsx");
+    std::fs::write(
+        &source_path,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B3" markerFillPattern={{pattern: "pct20"}} markerFillGradient={{stops: [{color: "#FF0000", position: 0}, {color: "#0000FF", position: 100}]}} /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(&source_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("conflicts with markerFillColor"));
 }
 
 #[test]
