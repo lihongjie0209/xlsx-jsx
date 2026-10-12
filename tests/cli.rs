@@ -52,6 +52,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("x2AxisDisplayUnit"))
         .stdout(predicate::str::contains("x2AxisReversed"))
         .stdout(predicate::str::contains("x2AxisMajorTickType"))
+        .stdout(predicate::str::contains("x2AxisHidden"))
         .stdout(predicate::str::contains("x2AxisMajorGridlines"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
@@ -4419,6 +4420,54 @@ fn secondary_axis_tick_properties_are_validated_with_repair_guidance() {
             "Chart.x2AxisMajorTickType must be cross, inside, outside, or none",
         ))
         .stderr(predicate::str::contains("choose one of these tick types"));
+}
+
+#[test]
+fn secondary_axis_visibility_requires_a_secondary_series() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory
+        .path()
+        .join("secondary-visibility-without-axis.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" y2AxisHidden={true}><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(source)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "require at least one Series with secondaryAxis={true}",
+        ))
+        .stderr(predicate::str::contains(
+            "add a secondary series or remove these properties",
+        ));
+}
+
+#[test]
+fn secondary_axis_visibility_rejects_non_boolean_values() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("invalid-secondary-visibility.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" x2AxisHidden="yes"><Series values="Data!B2:B4" /><Series values="Data!C2:C4" secondaryAxis={true} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(source)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.x2AxisHidden must be a boolean",
+        ))
+        .stderr(predicate::str::contains(
+            "use true to hide the axis or false to keep it visible",
+        ));
 }
 
 #[test]
@@ -8946,6 +8995,99 @@ fn secondary_axis_tick_properties_map_horizontal_bar_handles_without_a_manifest(
         "{source}"
     );
     assert!(source.contains("y2AxisLabelPosition=\"low\""), "{source}");
+}
+
+#[test]
+fn secondary_axis_visibility_round_trips_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-secondary-axis-visibility.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-secondary-axis-visibility.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_values("Data!B2:B4")
+        .set_categories("Data!A2:A4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_categories("Data!A2:A4")
+        .set_secondary_axis(true);
+    chart.x2_axis().set_hidden(false);
+    chart.y2_axis().set_hidden(true);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("x2AxisHidden={false}"), "{source}");
+    assert!(source.contains("y2AxisHidden={true}"), "{source}");
+
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-secondary-axis-visibility.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert_eq!(xml.matches("<c:delete val=\"1\"/>").count(), 1, "{xml}");
+    assert!(!xml.contains("<c:delete val=\"0\"/>"), "{xml}");
+}
+
+#[test]
+fn secondary_axis_visibility_maps_horizontal_bar_handles_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-secondary-bar-visibility.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-secondary-bar-visibility.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Bar);
+    chart
+        .add_series()
+        .set_values("Data!B2:B4")
+        .set_categories("Data!A2:A4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_categories("Data!A2:A4")
+        .set_secondary_axis(true);
+    chart.x2_axis().set_hidden(true);
+    chart.y2_axis().set_hidden(false);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("x2AxisHidden={true}"), "{source}");
+    assert!(source.contains("y2AxisHidden={false}"), "{source}");
 }
 
 #[test]

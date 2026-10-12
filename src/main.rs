@@ -2891,6 +2891,7 @@ fn configure_chart_category_axis_settings(
         }
     }
     configure_chart_axis_hidden(chart, component);
+    configure_chart_secondary_axis_hidden(chart, component);
     Ok(())
 }
 
@@ -3040,6 +3041,20 @@ fn configure_chart_axis_hidden(chart: &mut Chart, component: &Node) {
             chart.x_axis()
         } else {
             chart.y_axis()
+        };
+        axis.set_hidden(hidden);
+    }
+}
+
+fn configure_chart_secondary_axis_hidden(chart: &mut Chart, component: &Node) {
+    for (property, horizontal) in [("x2AxisHidden", true), ("y2AxisHidden", false)] {
+        let Some(hidden) = component.props.get(property).and_then(Value::as_bool) else {
+            continue;
+        };
+        let axis = if horizontal {
+            chart.x2_axis()
+        } else {
+            chart.y2_axis()
         };
         axis.set_hidden(hidden);
     }
@@ -6838,6 +6853,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     append_chart_axis_value_properties(&mut properties, chart);
     append_chart_axis_reversal_properties(&mut properties, chart);
     append_chart_secondary_tick_properties(&mut properties, chart);
+    append_chart_secondary_axis_hidden_properties(&mut properties, chart);
     append_chart_scatter_axis_display_unit_properties(&mut properties, chart);
     append_chart_secondary_axis_display_unit_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
@@ -7421,6 +7437,17 @@ fn append_chart_secondary_tick_properties(properties: &mut String, chart: &Works
     ] {
         if let Some(value) = value {
             let _ = write!(properties, " {name}=\"{value}\"");
+        }
+    }
+}
+
+fn append_chart_secondary_axis_hidden_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (name, hidden) in [
+        ("x2AxisHidden", chart.x2_axis_hidden),
+        ("y2AxisHidden", chart.y2_axis_hidden),
+    ] {
+        if let Some(hidden) = hidden {
+            let _ = write!(properties, " {name}={{{hidden}}}");
         }
     }
 }
@@ -10418,6 +10445,8 @@ struct ParsedSecondaryChartGroups {
     y2_axis_minor_tick_type: Option<&'static str>,
     x2_axis_label_position: Option<&'static str>,
     y2_axis_label_position: Option<&'static str>,
+    x2_axis_hidden: Option<bool>,
+    y2_axis_hidden: Option<bool>,
     secondary_gridlines: [Option<bool>; 4],
     secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4],
     secondary_value_axis_min: Option<f64>,
@@ -11004,6 +11033,8 @@ fn parse_secondary_chart_groups(
     let mut y2_axis_minor_tick_type = None;
     let mut x2_axis_label_position = None;
     let mut y2_axis_label_position = None;
+    let mut x2_axis_hidden = None;
+    let mut y2_axis_hidden = None;
     let mut x2_axis_crossing = None;
     let mut y2_axis_crossing = None;
     let mut x2_axis_crossing_value = None;
@@ -11021,6 +11052,15 @@ fn parse_secondary_chart_groups(
             Some("l" | "r") => Some(2),
             _ => None,
         };
+        let hidden_target = match position {
+            Some("l" | "r") => &mut y2_axis_hidden,
+            _ => &mut x2_axis_hidden,
+        };
+        if hidden_target.replace(parsed_axis.deleted).is_some() {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has multiple secondary axes at the same physical position; restore distinct x2/y2 axes"
+            )));
+        }
         let tick_targets = match position {
             Some("l" | "r") => (
                 &mut y2_axis_major_tick_type,
@@ -11485,6 +11525,8 @@ fn parse_secondary_chart_groups(
         y2_axis_minor_tick_type,
         x2_axis_label_position,
         y2_axis_label_position,
+        x2_axis_hidden,
+        y2_axis_hidden,
         secondary_gridlines,
         secondary_gridline_styles,
         secondary_value_axis_min,
@@ -11604,7 +11646,7 @@ fn validate_secondary_axis_defaults(
             )));
         }
         let expected = match tag.as_str() {
-            "delete" | "auto" => Some(("val", "1")),
+            "auto" => Some(("val", "1")),
             "lblAlgn" => Some(("val", "ctr")),
             "lblOffset" => Some(("val", "100")),
             _ => None,
@@ -11617,6 +11659,9 @@ fn validate_secondary_axis_defaults(
             )));
         }
         let values_valid = match tag.as_str() {
+            "delete" => attributes
+                .get("val")
+                .is_some_and(|value| matches!(value.as_str(), "0" | "1" | "true" | "false")),
             "orientation" => attributes
                 .get("val")
                 .is_some_and(|value| matches!(value.as_str(), "minMax" | "maxMin")),
@@ -20225,6 +20270,8 @@ fn parse_chart_xml(
         y2_axis_minor_tick_type: secondary_chart_groups.y2_axis_minor_tick_type,
         x2_axis_label_position: secondary_chart_groups.x2_axis_label_position,
         y2_axis_label_position: secondary_chart_groups.y2_axis_label_position,
+        x2_axis_hidden: secondary_chart_groups.x2_axis_hidden,
+        y2_axis_hidden: secondary_chart_groups.y2_axis_hidden,
         secondary_value_axis_display_unit: secondary_chart_groups.secondary_value_axis_display_unit,
         secondary_value_axis_display_unit_label: secondary_chart_groups
             .secondary_value_axis_display_unit_label,
@@ -24701,6 +24748,8 @@ struct WorksheetChart {
     y2_axis_minor_tick_type: Option<&'static str>,
     x2_axis_label_position: Option<&'static str>,
     y2_axis_label_position: Option<&'static str>,
+    x2_axis_hidden: Option<bool>,
+    y2_axis_hidden: Option<bool>,
     secondary_value_axis_display_unit: Option<&'static str>,
     secondary_value_axis_display_unit_label: Option<bool>,
     x2_axis_display_unit: Option<&'static str>,

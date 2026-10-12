@@ -2120,6 +2120,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "categoryAxisMaxDate",
             "horizontalAxisHidden",
             "verticalAxisHidden",
+            "x2AxisHidden",
+            "y2AxisHidden",
             "showLegend",
             "autoTitleDeleted",
             "titleOverlay",
@@ -4244,7 +4246,12 @@ fn validate_chart_category_axis_tick_position(chart: &Node, chart_type: &str) ->
 }
 
 fn validate_chart_axis_hidden(chart: &Node, chart_type: &str) -> Result<()> {
-    for property in ["horizontalAxisHidden", "verticalAxisHidden"] {
+    for property in [
+        "horizontalAxisHidden",
+        "verticalAxisHidden",
+        "x2AxisHidden",
+        "y2AxisHidden",
+    ] {
         let Some(value) = chart.props.get(property) else {
             continue;
         };
@@ -4886,12 +4893,14 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
             "y2AxisMinorTickType",
             "x2AxisLabelPosition",
             "y2AxisLabelPosition",
+            "x2AxisHidden",
+            "y2AxisHidden",
         ]
         .iter()
         .any(|property| chart.props.contains_key(*property))
     {
         return Err(Error::Compile(
-            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, gridlines, and crossings require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties (including secondary-axis label fonts, ticks, and label positions)".into(),
+            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, gridlines, and crossings require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties (including secondary-axis label fonts, ticks, label positions, and hidden-state settings)".into(),
         ));
     }
     validate_chart_series_spacing(chart)?;

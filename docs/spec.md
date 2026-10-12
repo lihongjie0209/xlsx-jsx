@@ -137,6 +137,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `y2AxisLabelPosition` accept `nextTo`, `high`, `low`, or `none`. These
   properties require a secondary series and reverse through chart-group axis
   IDs and physical positions, including horizontal-bar handle swaps.
+  `x2AxisHidden` and `y2AxisHidden` independently hide or show those axes with
+  boolean values. They require a secondary series; reverse preserves each
+  axis' OOXML `delete` state by physical position, including horizontal bars.
   `Chart.x2AxisMajorGridlines`, `x2AxisMinorGridlines`, `y2AxisMajorGridlines`,
   and `y2AxisMinorGridlines` control gridlines on the secondary horizontal and
   vertical axes. Each accepts a boolean or the same `{color, width, dash,
