@@ -1143,14 +1143,18 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   so reverse accepts only its default axis color. Custom point colors
   imply their matching display flag; an external custom point color with that
   flag disabled is rejected because the writer setter would enable it.
+  `lineWeight` is a positive width in points. `min`/`max` set manual bounds;
+  `minAxisType`/`maxAxisType` accept `individual`, `group`, or `custom` and
+  default to `individual`. `custom` requires the matching numeric bound, while
+  `group` and `individual` cannot be combined with one. If both manual bounds
+  are supplied, `min` must be less than `max`.
   The source worksheet must exist. It must be declared before worksheet `Row`
   components. The default type is `line` and is omitted from JSX when applicable.
   Reverse resolves the x14 extension by destination cell
   and source formula, without relying on the embedded manifest. The pinned
   writer-default theme/RGB colors and seven public opaque RGB roles are
   preserved; custom axis colors and other theme/indexed/alpha colors, plus
-  numeric bounds, line weight, date-axis ranges, and preset styles fail with
-  repair guidance.
+  date-axis ranges and preset styles fail with repair guidance.
 - `SparklineGroup` adds one-dimensional destination `cells` from a rectangular,
   sheet-qualified source `range` using the same `sparklineType` values as
   `Sparkline`, and accepts the same display and color options. The destination

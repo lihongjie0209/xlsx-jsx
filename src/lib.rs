@@ -7402,6 +7402,11 @@ fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<Stri
             "lastPointColor",
             "highPointColor",
             "lowPointColor",
+            "lineWeight",
+            "min",
+            "max",
+            "minAxisType",
+            "maxAxisType",
         ],
         "Sparkline",
     )?;
@@ -7522,6 +7527,11 @@ fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Ve
             "lastPointColor",
             "highPointColor",
             "lowPointColor",
+            "lineWeight",
+            "min",
+            "max",
+            "minAxisType",
+            "maxAxisType",
         ],
         "SparklineGroup",
     )?;
@@ -7616,6 +7626,7 @@ fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Ve
 }
 
 fn validate_sparkline_options(component: &Node, name: &str) -> Result<()> {
+    validate_sparkline_scale(component, name)?;
     for property in [
         "showHighPoint",
         "showLowPoint",
@@ -7677,6 +7688,65 @@ fn validate_sparkline_options(component: &Node, name: &str) -> Result<()> {
                 )));
             }
         }
+    }
+    Ok(())
+}
+
+fn validate_sparkline_scale(component: &Node, name: &str) -> Result<()> {
+    for property in ["lineWeight", "min", "max"] {
+        if let Some(value) = component.props.get(property) {
+            let Some(number) = value.as_f64() else {
+                return Err(Error::Compile(format!(
+                    "{name}.{property} must be a finite number; use a numeric literal"
+                )));
+            };
+            if !number.is_finite() || (property == "lineWeight" && number <= 0.0) {
+                return Err(Error::Compile(format!(
+                    "{name}.{property} must be {}; use a finite {} value",
+                    if property == "lineWeight" {
+                        "greater than zero"
+                    } else {
+                        "finite"
+                    },
+                    if property == "lineWeight" {
+                        "positive"
+                    } else {
+                        "numeric"
+                    }
+                )));
+            }
+        }
+    }
+    for (axis_property, bound_property) in [("minAxisType", "min"), ("maxAxisType", "max")] {
+        let axis = component
+            .props
+            .get(axis_property)
+            .and_then(Value::as_str)
+            .unwrap_or(if component.props.contains_key(bound_property) {
+                "custom"
+            } else {
+                "individual"
+            });
+        if !matches!(axis, "individual" | "group" | "custom") {
+            return Err(Error::Compile(format!(
+                "{name}.{axis_property} must be individual, group, or custom; choose a supported axis mode"
+            )));
+        }
+        let has_bound = component.props.contains_key(bound_property);
+        if (axis == "custom") != has_bound {
+            return Err(Error::Compile(format!(
+                "{name}.{axis_property}=\"custom\" requires `{bound_property}`, while individual/group axes forbid it; add the bound or change the axis type"
+            )));
+        }
+    }
+    if let (Some(min), Some(max)) = (
+        component.props.get("min").and_then(Value::as_f64),
+        component.props.get("max").and_then(Value::as_f64),
+    ) && min >= max
+    {
+        return Err(Error::Compile(format!(
+            "{name}.min must be less than max; increase max or decrease min"
+        )));
     }
     Ok(())
 }

@@ -1036,6 +1036,19 @@ fn apply_sparkline_options(mut sparkline: XlsxSparkline, component: &Node) -> Xl
             _ => unreachable!("validated Sparkline.showEmptyCellsAs"),
         });
     }
+    if let Some(value) = component.props.get("lineWeight").and_then(Value::as_f64) {
+        sparkline = sparkline.set_line_weight(value);
+    }
+    if let Some(value) = component.props.get("min").and_then(Value::as_f64) {
+        sparkline = sparkline.set_custom_min(value);
+    } else if component.props.get("minAxisType").and_then(Value::as_str) == Some("group") {
+        sparkline = sparkline.set_group_min(true);
+    }
+    if let Some(value) = component.props.get("max").and_then(Value::as_f64) {
+        sparkline = sparkline.set_custom_max(value);
+    } else if component.props.get("maxAxisType").and_then(Value::as_str) == Some("group") {
+        sparkline = sparkline.set_group_max(true);
+    }
     for property in [
         "sparklineColor",
         "negativePointColor",
@@ -6401,6 +6414,25 @@ fn render_sparklines(output: &mut String, sparklines: &[WorksheetSparkline]) {
                 " showEmptyCellsAs={:?}",
                 sparkline.options.show_empty_cells_as
             );
+        }
+        if let Some(value) = sparkline.options.line_weight {
+            let _ = write!(output, " lineWeight={{{value:?}}}");
+        }
+        for (value, property) in [
+            (sparkline.options.min, "min"),
+            (sparkline.options.max, "max"),
+        ] {
+            if let Some(value) = value {
+                let _ = write!(output, " {property}={{{value:?}}}");
+            }
+        }
+        for (value, property) in [
+            (sparkline.options.min_axis_type, "minAxisType"),
+            (sparkline.options.max_axis_type, "maxAxisType"),
+        ] {
+            if value != "individual" {
+                let _ = write!(output, " {property}={value:?}");
+            }
         }
         for (value, property) in [
             (&sparkline.options.colors.sparkline, "sparklineColor"),
@@ -25421,6 +25453,11 @@ struct SparklineOptions {
     show_hidden_data: bool,
     right_to_left: bool,
     show_empty_cells_as: &'static str,
+    line_weight: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+    min_axis_type: &'static str,
+    max_axis_type: &'static str,
     colors: SparklineColors,
 }
 
@@ -25449,6 +25486,11 @@ impl Default for SparklineOptions {
             right_to_left: false,
             // OOXML defaults to zero when displayEmptyCellsAs is absent.
             show_empty_cells_as: "zero",
+            line_weight: None,
+            min: None,
+            max: None,
+            min_axis_type: "individual",
+            max_axis_type: "individual",
             colors: SparklineColors::default(),
         }
     }
@@ -27831,6 +27873,28 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                                     current_options.right_to_left =
                                         parse_sparkline_bool_attribute(&attribute, part)?;
                                 }
+                                b"lineWeight" => {
+                                    current_options.line_weight =
+                                        Some(parse_sparkline_number_attribute(&attribute, part)?);
+                                }
+                                b"manualMin" => {
+                                    current_options.min =
+                                        Some(parse_sparkline_number_attribute(&attribute, part)?);
+                                    current_options.min_axis_type = "custom";
+                                }
+                                b"manualMax" => {
+                                    current_options.max =
+                                        Some(parse_sparkline_number_attribute(&attribute, part)?);
+                                    current_options.max_axis_type = "custom";
+                                }
+                                b"minAxisType" => {
+                                    current_options.min_axis_type =
+                                        parse_sparkline_axis_type(&attribute, part, "minAxisType")?;
+                                }
+                                b"maxAxisType" => {
+                                    current_options.max_axis_type =
+                                        parse_sparkline_axis_type(&attribute, part, "maxAxisType")?;
+                                }
                                 other => {
                                     return Err(Error::Reverse(format!(
                                         "worksheet `{part}` sparkline group has unsupported `{}` metadata; remove custom sparkline options or add matching DSL support",
@@ -27996,6 +28060,7 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                             "worksheet `{part}` sparkline group contains no sparkline entries; add at least one destination cell"
                         )));
                     }
+                    validate_reversed_sparkline_axis(&current_options, part)?;
                     for (color, enabled, property) in [
                         (
                             &current_options.colors.negative,
@@ -28071,6 +28136,91 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
         )));
     }
     Ok(sparklines)
+}
+
+fn parse_sparkline_number_attribute(
+    attribute: &quick_xml::events::attributes::Attribute<'_>,
+    part: &str,
+) -> xlsx_jsx::Result<f64> {
+    let value = std::str::from_utf8(attribute.value.as_ref()).map_err(|error| {
+        Error::Reverse(format!(
+            "worksheet `{part}` has a non-UTF8 sparkline number: {error}"
+        ))
+    })?;
+    let number = value.parse::<f64>().map_err(|_| {
+        Error::Reverse(format!(
+            "worksheet `{part}` sparkline number `{value}` is invalid; use a finite numeric value"
+        ))
+    })?;
+    if !number.is_finite() || (attribute.key.as_ref() == b"lineWeight" && number <= 0.0) {
+        return Err(Error::Reverse(format!(
+            "worksheet `{part}` sparkline `{}` must be {}; repair the attribute with a finite {} value",
+            String::from_utf8_lossy(attribute.key.as_ref()),
+            if attribute.key.as_ref() == b"lineWeight" {
+                "greater than zero"
+            } else {
+                "finite"
+            },
+            if attribute.key.as_ref() == b"lineWeight" {
+                "positive"
+            } else {
+                "numeric"
+            }
+        )));
+    }
+    Ok(number)
+}
+
+fn parse_sparkline_axis_type(
+    attribute: &quick_xml::events::attributes::Attribute<'_>,
+    part: &str,
+    property: &str,
+) -> xlsx_jsx::Result<&'static str> {
+    match attribute.value.as_ref() {
+        b"individual" => Ok("individual"),
+        b"group" => Ok("group"),
+        b"custom" => Ok("custom"),
+        value => Err(Error::Reverse(format!(
+            "worksheet `{part}` sparkline {property} `{}` is unsupported; use individual, group, or custom",
+            String::from_utf8_lossy(value)
+        ))),
+    }
+}
+
+fn validate_reversed_sparkline_axis(
+    options: &SparklineOptions,
+    part: &str,
+) -> xlsx_jsx::Result<()> {
+    for (axis_type, bound, property, bound_property) in [
+        (
+            options.min_axis_type,
+            options.min,
+            "minAxisType",
+            "manualMin",
+        ),
+        (
+            options.max_axis_type,
+            options.max,
+            "maxAxisType",
+            "manualMax",
+        ),
+    ] {
+        if (axis_type == "custom") != bound.is_some() {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` sparkline {property} `{axis_type}` conflicts with `{bound_property}`; custom requires a bound, while individual/group forbid it"
+            )));
+        }
+    }
+    if options
+        .min
+        .zip(options.max)
+        .is_some_and(|(min, max)| min >= max)
+    {
+        return Err(Error::Reverse(format!(
+            "worksheet `{part}` sparkline manualMin must be less than manualMax; adjust the bounds"
+        )));
+    }
+    Ok(())
 }
 
 fn require_no_sparkline_attributes(
