@@ -96,8 +96,9 @@ ordinary floating `Image` pictures and do not use worksheet drawing anchors.
 
 ### Chart
 
-`Chart` models area, column, bar, line, and pie charts with series source formulas
-and a worksheet anchor. Chart components must appear before worksheet rows.
+`Chart` models area, column, bar, line, and pie charts with series source formulas.
+On a `Worksheet`, it uses a cell anchor and must appear before worksheet rows;
+on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 
 - `type` is one of `area`, `areaStacked`, `areaPercentStacked`, `column`,
   `columnStacked`, `columnPercentStacked`, `bar`, `barStacked`,
@@ -997,8 +998,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 
 ### Workbook
 
-- Children: one or more `Worksheet` components plus optional global
-  `DefinedName` declarations and `CustomProperty` metadata. Names and custom
+- Children: one or more `Worksheet` components, optional `Chartsheet`
+  components, and optional global `DefinedName` declarations and
+  `CustomProperty` metadata. Names and custom
   properties may appear before or after worksheets; source ordering is retained
   within each corresponding scope.
 - v1 has no implicit sheet; sheets are emitted in source order.
@@ -1017,6 +1019,25 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `HyperlinkBase`; unknown authored app properties are rejected. Other
   authored core metadata (identifiers and independent last-modifier values) is
   rejected because it has no lossless Workbook property in v1.
+
+### Chartsheet
+
+- A `Chartsheet` is a dedicated chart tab and must appear after at least one
+  `Worksheet`; this keeps workbook active-tab semantics deterministic. It
+  requires a unique Excel `name` and optionally accepts
+  `visibility="visible" | "hidden" | "veryHidden"` (visible is the default).
+- It contains exactly one direct `Chart` child and no cell data, rows, or other
+  worksheet components. The chart uses the same chart types, series, and
+  formatting as a worksheet chart, but has no `cell`, `width`, `height`, or
+  `movement` anchor properties. Series formulas must reference ordinary
+  worksheets in the same workbook.
+- Reverse recognizes external `chartsheet` relationships and preserves sheet
+  order, name, visibility, chart semantics, and series without a manifest. A
+  chartsheet that is active/selected, contains other drawing objects, or has
+  unsupported sheet metadata is rejected with a repair suggestion. Only the
+  pinned writer's default landscape absolute canvas (`x=0`, `y=0`,
+  `cx=9308969`, `cy=6078325`) is representable; portrait or custom chart-sheet
+  geometry is rejected rather than normalized.
 
 ### CustomProperty
 

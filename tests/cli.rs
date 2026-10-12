@@ -15826,6 +15826,155 @@ export default <Workbook><Worksheet name="Errors"><Row>
 }
 
 #[test]
+fn validates_a_chartsheet_with_a_single_chart() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("chartsheet.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chartsheet, Chart, Series, Row, Cell } from "xlsx-jsx";
+
+export default <Workbook>
+  <Worksheet name="Data">
+    <Row><Cell value="Month" /><Cell value="Sales" /></Row>
+    <Row><Cell value="Jan" /><Cell value={10} /></Row>
+    <Row><Cell value="Feb" /><Cell value={20} /></Row>
+  </Worksheet>
+  <Chartsheet name="Sales chart">
+    <Chart type="column">
+      <Series categories="Data!$A$2:$A$3" values="Data!$B$2:$B$3" title="Sales" />
+    </Chart>
+  </Chartsheet>
+</Workbook>;
+"#,
+    )
+    .expect("source fixture is written");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source)
+        .args(["-o"])
+        .arg(directory.path().join("chartsheet.xlsx"))
+        .assert()
+        .success();
+
+    let external = directory.path().join("chartsheet.xlsx");
+    let workbook = calamine::open_workbook_auto(&external).expect("XLSX opens");
+    assert_eq!(workbook.sheets_metadata().len(), 2);
+    assert_eq!(workbook.sheets_metadata()[1].name, "Sales chart");
+    assert_eq!(
+        workbook.sheets_metadata()[1].typ,
+        calamine::SheetType::ChartSheet
+    );
+
+    let reversed = directory.path().join("chartsheet.roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let reversed_source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(reversed_source.contains("<Chartsheet name={\"Sales chart\"}"));
+    assert!(reversed_source.contains("<Chart type=\"column\""));
+
+    let rebuilt = directory.path().join("chartsheet.rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_workbook = calamine::open_workbook_auto(&rebuilt).expect("rebuilt XLSX opens");
+    assert_eq!(rebuilt_workbook.sheets_metadata().len(), 2);
+    assert_eq!(
+        rebuilt_workbook.sheets_metadata()[1].typ,
+        calamine::SheetType::ChartSheet
+    );
+}
+
+#[test]
+fn reverses_and_rebuilds_an_external_chartsheet_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("external-chartsheet.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let data = workbook
+        .add_worksheet()
+        .set_name("Data")
+        .expect("worksheet name is valid");
+    data.write_string(0, 0, "Month")
+        .expect("category header is written");
+    data.write_string(1, 0, "Jan")
+        .expect("first category is written");
+    data.write_string(2, 0, "Feb")
+        .expect("second category is written");
+    data.write_number(1, 1, 10).expect("first value is written");
+    data.write_number(2, 1, 20)
+        .expect("second value is written");
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_categories("Data!$A$2:$A$3")
+        .set_values("Data!$B$2:$B$3")
+        .set_name("Sales");
+    let chartsheet = workbook
+        .add_chartsheet()
+        .set_name("External chart")
+        .expect("chartsheet name is valid");
+    chartsheet.set_hidden(true);
+    chartsheet
+        .insert_chart(0, 0, &chart)
+        .expect("chart is valid for a chartsheet");
+    workbook.save(&external).expect("external XLSX saves");
+    let archive = ZipArchive::new(std::fs::File::open(&external).expect("external file exists"))
+        .expect("external XLSX is a ZIP package");
+    assert!(
+        !archive
+            .file_names()
+            .any(|part| part.to_ascii_lowercase().contains("manifest"))
+    );
+
+    let reversed = directory.path().join("external-chartsheet.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("<Chartsheet name={\"External chart\"}"));
+    assert!(source.contains("visibility=\"hidden\""));
+    assert!(source.contains("<Series"));
+    assert!(source.contains("Data!$A$2:$A$3"));
+
+    let rebuilt = directory.path().join("external-chartsheet-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_workbook = calamine::open_workbook_auto(&rebuilt).expect("rebuilt XLSX opens");
+    assert_eq!(rebuilt_workbook.sheets_metadata()[1].name, "External chart");
+    assert_eq!(
+        rebuilt_workbook.sheets_metadata()[1].typ,
+        calamine::SheetType::ChartSheet
+    );
+    assert_eq!(
+        rebuilt_workbook.sheets_metadata()[1].visible,
+        calamine::SheetVisible::Hidden
+    );
+}
+
+#[test]
 fn validate_rejects_invalid_literal_excel_error_cells_with_repair() {
     let directory = tempdir().expect("temporary directory is available");
     let source = directory.path().join("invalid-error-cell.tsx");

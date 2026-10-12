@@ -7,6 +7,7 @@ export const Workbook = host("Workbook");
 export const DefinedName = host("DefinedName");
 export const CustomProperty = host("CustomProperty");
 export const Worksheet = host("Worksheet");
+export const Chartsheet = host("Chartsheet");
 export const Column = host("Column");
 export const DataValidation = host("DataValidation");
 export const ConditionalFormat = host("ConditionalFormat");

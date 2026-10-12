@@ -311,6 +311,17 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             .get("name")
             .and_then(Value::as_str)
             .ok_or_else(|| Error::Compile("worksheet missing name".into()))?;
+        if sheet.r#type == "Chartsheet" {
+            let chartsheet = workbook.add_chartsheet();
+            chartsheet
+                .set_name(name)
+                .map_err(|error| Error::Compile(error.to_string()))?;
+            apply_worksheet_visibility(chartsheet, &sheet)?;
+            let chart: Node = serde_json::from_value(sheet.children[0].clone())
+                .map_err(|error| Error::Compile(error.to_string()))?;
+            compile_chart(chartsheet, &chart, true)?;
+            continue;
+        }
         for child_value in &sheet.children {
             let child: Node = serde_json::from_value(child_value.clone())
                 .map_err(|error| Error::Compile(error.to_string()))?;
@@ -390,7 +401,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
                 continue;
             }
             if child.r#type == "Chart" {
-                compile_chart(worksheet, &child)?;
+                compile_chart(worksheet, &child, false)?;
                 continue;
             }
             if child.r#type == "Image" {
@@ -1533,16 +1544,21 @@ fn compile_sparkline_group(
 fn compile_chart(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     component: &Node,
+    chartsheet: bool,
 ) -> xlsx_jsx::Result<()> {
     let chart_type = chart_type_from_name(
         component.props["type"]
             .as_str()
             .expect("validated Chart.type"),
     );
-    let cell = component.props["cell"]
-        .as_str()
-        .expect("validated Chart.cell");
-    let (row, column) = parse_a1_cell_reference(cell).expect("validated Chart.cell");
+    let (row, column) = if chartsheet {
+        (0, 0)
+    } else {
+        let cell = component.props["cell"]
+            .as_str()
+            .expect("validated Chart.cell");
+        parse_a1_cell_reference(cell).expect("validated Chart.cell")
+    };
     let mut chart = Chart::new(chart_type);
     if let Some(mut format) = chart_shape_format(component, "chartAreaFillColor", "chartAreaLine") {
         chart.chart_area().set_format(&mut format);
@@ -2126,7 +2142,16 @@ fn compile_chart(
     worksheet
         .insert_chart(row, column, &chart)
         .map(|_| ())
-        .map_err(|error| Error::Compile(format!("cannot insert Chart at {cell}: {error}")))
+        .map_err(|error| {
+            let location = if chartsheet {
+                "Chartsheet"
+            } else {
+                component.props["cell"]
+                    .as_str()
+                    .expect("validated Chart.cell")
+            };
+            Error::Compile(format!("cannot insert Chart at {location}: {error}"))
+        })
 }
 
 fn chart_axis_font(component: &Node, prefix: &str) -> ChartFont {
@@ -6574,7 +6599,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         }
     }
     let mut output = String::from(
-        "import { Workbook, Worksheet, DefinedName, CustomProperty, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, SparklineGroup, Image, BackgroundImage, HeaderImage, FooterImage, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
+        "import { Workbook, Worksheet, Chartsheet, DefinedName, CustomProperty, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, SparklineGroup, Image, BackgroundImage, HeaderImage, FooterImage, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
     for (name, value) in [
         ("title", workbook_properties.title.as_deref()),
@@ -6620,7 +6645,13 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
     }
     for name in sheet_names {
         let sheet_metadata = metadata_by_sheet.get(&name);
-        let _ = write!(output, "  <Worksheet name={{{name:?}}}");
+        let is_chartsheet = sheet_metadata.is_some_and(|metadata| metadata.is_chartsheet);
+        let sheet_component = if is_chartsheet {
+            "Chartsheet"
+        } else {
+            "Worksheet"
+        };
+        let _ = write!(output, "  <{sheet_component} name={{{name:?}}}");
         if sheet_metadata.is_some_and(|metadata| metadata.active_worksheet.is_some()) {
             output.push_str(" active={true}");
         }
@@ -6768,8 +6799,10 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         if let Some(metadata) = sheet_metadata {
             render_drawings(&mut output, metadata);
         }
-        render_worksheet_rows(&mut output, &mut workbook, &name, sheet_metadata, &formats)?;
-        output.push_str("  </Worksheet>\n");
+        if !is_chartsheet {
+            render_worksheet_rows(&mut output, &mut workbook, &name, sheet_metadata, &formats)?;
+        }
+        let _ = writeln!(output, "  </{sheet_component}>");
     }
     output.push_str("</Workbook>;\n");
     Ok(output)
@@ -7196,7 +7229,9 @@ fn render_sparklines(output: &mut String, sparklines: &[WorksheetSparkline]) {
 fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
     for drawing in &metadata.drawing_order {
         match drawing {
-            WorksheetDrawingOrder::Chart(index) => render_chart(output, &metadata.charts[*index]),
+            WorksheetDrawingOrder::Chart(index) => {
+                render_chart(output, &metadata.charts[*index], metadata.is_chartsheet);
+            }
             WorksheetDrawingOrder::Image(index) => render_image(output, &metadata.images[*index]),
         }
     }
@@ -7206,7 +7241,7 @@ fn render_drawings(output: &mut String, metadata: &WorksheetMetadata) {
     clippy::too_many_lines,
     reason = "The JSX chart renderer emits chart and series properties in deterministic order."
 )]
-fn render_chart(output: &mut String, chart: &WorksheetChart) {
+fn render_chart(output: &mut String, chart: &WorksheetChart, chartsheet: bool) {
     let alt_text = chart
         .alt_text
         .as_ref()
@@ -7222,13 +7257,19 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         .map(|value| format!(" movement=\"{value}\""))
         .unwrap_or_default();
     let movement = format!("{movement}{}", render_stock_bar_properties(chart));
+    let anchor_properties = if chartsheet {
+        String::new()
+    } else {
+        format!(
+            " cell={{{:?}}} width={{{}}} height={{{}}}",
+            chart.cell, chart.width, chart.height
+        )
+    };
     let _ = writeln!(
         output,
-        "    <Chart type={:?} cell={{{:?}}} width={{{}}} height={{{}}} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
+        "    <Chart type={:?}{} name={{{:?}}}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}>",
         chart.chart_type,
-        chart.cell,
-        chart.width,
-        chart.height,
+        anchor_properties,
         chart.name,
         alt_text,
         decorative,
@@ -10076,7 +10117,10 @@ fn audit_reverse_subset(
         .collect();
     let relationship_parts = archive
         .file_names()
-        .filter(|name| name.starts_with("xl/worksheets/_rels/") && name.ends_with(".xml.rels"))
+        .filter(|name| {
+            (name.starts_with("xl/worksheets/_rels/") || name.starts_with("xl/chartsheets/_rels/"))
+                && name.ends_with(".xml.rels")
+        })
         .map(str::to_owned)
         .collect::<Vec<_>>();
     let mut hyperlink_relationships_by_sheet = HashMap::new();
@@ -10088,12 +10132,24 @@ fn audit_reverse_subset(
         HashMap::new();
     let mut referenced_note_parts = std::collections::HashSet::new();
     for relationship_part in relationship_parts {
-        let worksheet_part = worksheet_part_from_relationship_part(&relationship_part)
-            .ok_or_else(|| Error::Reverse("invalid worksheet relationship part name".into()))?;
+        let worksheet_part = sheet_part_from_relationship_part(&relationship_part)
+            .ok_or_else(|| Error::Reverse("invalid sheet relationship part name".into()))?;
         let relationships = parse_worksheet_relationships(
             &read_zip_part(&mut archive, &relationship_part)?,
             &relationship_part,
         )?;
+        if worksheet_part.starts_with("xl/chartsheets/")
+            && (!relationships.hyperlinks.is_empty()
+                || !relationships.tables.is_empty()
+                || !relationships.background_images.is_empty()
+                || !relationships.comments.is_empty()
+                || !relationships.vml_drawings.is_empty()
+                || relationships.drawings.len() != 1)
+        {
+            return Err(Error::Reverse(format!(
+                "chartsheet `{worksheet_part}` must have exactly one chart drawing relationship and no worksheet-only relationships; remove the unsupported relationships"
+            )));
+        }
         hyperlink_relationships_by_sheet.insert(worksheet_part.clone(), relationships.hyperlinks);
         background_image_relationships_by_sheet
             .insert(worksheet_part.clone(), relationships.background_images);
@@ -10209,7 +10265,7 @@ fn audit_reverse_subset(
                 "package part `{name}` is not recognized by the v1 reader; remove the custom feature or add explicit parsing and reverse support"
             )));
         }
-        if name.starts_with("xl/worksheets/")
+        if (name.starts_with("xl/worksheets/") || name.starts_with("xl/chartsheets/"))
             && std::path::Path::new(&name)
                 .extension()
                 .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"))
@@ -10221,21 +10277,26 @@ fn audit_reverse_subset(
             let hyperlink_relationships = hyperlink_relationships_by_sheet
                 .get(&name)
                 .unwrap_or(&no_hyperlink_relationships);
-            let metadata = audit_worksheet_xml(
-                &xml,
-                &name,
-                &formats,
-                &differential_formats,
-                hyperlink_relationships,
-                &shared_strings,
-                has_dynamic_metadata,
-            )?;
+            let is_chartsheet = name.starts_with("xl/chartsheets/");
+            let metadata = if is_chartsheet {
+                audit_chartsheet_xml(&xml, &name)?
+            } else {
+                audit_worksheet_xml(
+                    &xml,
+                    &name,
+                    &formats,
+                    &differential_formats,
+                    hyperlink_relationships,
+                    &shared_strings,
+                    has_dynamic_metadata,
+                )?
+            };
             let mut metadata = metadata;
             if metadata.legacy_drawing_hf_relationship_id.is_some()
                 && !header_footer_images_by_sheet.contains_key(&name)
             {
                 return Err(Error::Reverse(format!(
-                    "worksheet `{name}` references legacyDrawingHF without a matching VML image relationship; repair the worksheet relationships"
+                    "sheet `{name}` references legacyDrawingHF without a matching VML image relationship; repair its relationships"
                 )));
             }
             if let Some(images) = header_footer_images_by_sheet.get(&name) {
@@ -10261,7 +10322,7 @@ fn audit_reverse_subset(
                 image_positions.sort_unstable();
                 if marker_positions != image_positions {
                     return Err(Error::Reverse(format!(
-                        "worksheet `{name}` {property} picture marker positions {marker_positions:?} do not match VML image positions {image_positions:?}; repair the `&G` marker or its legacyDrawingHF image relationship"
+                        "sheet `{name}` {property} picture marker positions {marker_positions:?} do not match VML image positions {image_positions:?}; repair the `&G` marker or its legacyDrawingHF image relationship"
                     )));
                 }
             }
@@ -10270,14 +10331,14 @@ fn audit_reverse_subset(
                     != Some(note_parts.vml_relationship_id.as_str())
                 {
                     return Err(Error::Reverse(format!(
-                        "worksheet `{name}` legacyDrawing relationship does not match its VML note relationship; repair r:id `{}`",
+                        "sheet `{name}` legacyDrawing relationship does not match its VML note relationship; repair r:id `{}`",
                         note_parts.vml_relationship_id
                     )));
                 }
                 metadata.notes.clone_from(&note_parts.notes);
             } else if metadata.legacy_drawing_relationship_id.is_some() {
                 return Err(Error::Reverse(format!(
-                    "worksheet `{name}` references legacyDrawing without one comments/VML note relationship pair; repair the worksheet relationships"
+                    "sheet `{name}` references legacyDrawing without one comments/VML note relationship pair; repair its relationships"
                 )));
             }
             if !metadata.notes.is_empty() {
@@ -10412,10 +10473,20 @@ fn audit_reverse_subset(
         let drawing_relationship_xml = read_zip_part(&mut archive, &drawing_relationship_part)?;
         let drawing_relationships =
             parse_generic_relationships(&drawing_relationship_xml, &drawing_relationship_part)?;
-        let drawing_anchors = parse_chart_drawing(&drawing_xml, &drawing_path)?;
+        let drawing_anchors =
+            parse_chart_drawing(&drawing_xml, &drawing_path, metadata.is_chartsheet)?;
         if drawing_anchors.is_empty() {
             return Err(Error::Reverse(format!(
                 "drawing `{drawing_path}` contains no chart or picture anchors; repair its drawing XML"
+            )));
+        }
+        if metadata.is_chartsheet
+            && (drawing_anchors.len() != 1
+                || drawing_anchors[0].kind != DrawingObjectKind::Chart
+                || !drawing_anchors[0].chartsheet_anchor)
+        {
+            return Err(Error::Reverse(format!(
+                "chartsheet `{worksheet_part}` must contain exactly one absolute-anchored chart and no pictures; remove extra drawing objects or repair its chart anchor"
             )));
         }
         let mut used_drawing_relationships = std::collections::HashSet::new();
@@ -10456,6 +10527,7 @@ fn audit_reverse_subset(
                         anchor,
                         metadata,
                         &worksheet_names,
+                        metadata.is_chartsheet,
                     )?);
                     metadata
                         .drawing_order
@@ -10702,11 +10774,31 @@ fn audit_reverse_subset(
         &mut styles_by_sheet,
         &mut workbook_properties,
     )?;
+    let first_sheet = sheet_order
+        .first()
+        .ok_or_else(|| Error::Reverse("workbook contains no sheets".into()))?;
+    if styles_by_sheet
+        .get(first_sheet)
+        .is_some_and(|metadata| metadata.is_chartsheet)
+    {
+        return Err(Error::Reverse(
+            "the first workbook sheet is a chartsheet, which this DSL cannot use as the deterministic active sheet; move a visible worksheet first"
+                .into(),
+        ));
+    }
     let active_sheet = sheet_order.get(active_sheet_index).ok_or_else(|| {
         Error::Reverse(format!(
             "workbook activeTab {active_sheet_index} references a missing worksheet; repair workbook.xml"
         ))
     })?;
+    if styles_by_sheet
+        .get(active_sheet)
+        .is_some_and(|metadata| metadata.is_chartsheet)
+    {
+        return Err(Error::Reverse(format!(
+            "chartsheet `{active_sheet}` is active; this DSL currently requires an ordinary Worksheet to remain active, so activate a worksheet before reversing"
+        )));
+    }
     if visibility_by_sheet.get(active_sheet) != Some(&WorksheetVisibility::Visible) {
         return Err(Error::Reverse(format!(
             "workbook active worksheet `{active_sheet}` is hidden; choose a visible active worksheet or repair workbook.xml"
@@ -10724,6 +10816,14 @@ fn audit_reverse_subset(
             first_tab_index.saturating_add(1)
         ))
     })?;
+    if styles_by_sheet
+        .get(first_tab)
+        .is_some_and(|metadata| metadata.is_chartsheet)
+    {
+        return Err(Error::Reverse(format!(
+            "chartsheet `{first_tab}` is the first visible tab, which this DSL cannot preserve; move a worksheet tab to the left"
+        )));
+    }
     if visibility_by_sheet.get(first_tab) != Some(&WorksheetVisibility::Visible) {
         return Err(Error::Reverse(format!(
             "workbook first visible tab `{first_tab}` is hidden; choose a visible worksheet or repair workbook.xml"
@@ -11359,6 +11459,15 @@ fn worksheet_part_from_relationship_part(relationship_part: &str) -> Option<Stri
     Some(format!("xl/worksheets/{file_name}"))
 }
 
+fn sheet_part_from_relationship_part(relationship_part: &str) -> Option<String> {
+    worksheet_part_from_relationship_part(relationship_part).or_else(|| {
+        let file_name = relationship_part
+            .strip_prefix("xl/chartsheets/_rels/")?
+            .strip_suffix(".rels")?;
+        Some(format!("xl/chartsheets/{file_name}"))
+    })
+}
+
 fn resolve_opc_target(source_part: &str, target: &str) -> xlsx_jsx::Result<String> {
     if target.is_empty() || target.contains('\\') || target.starts_with('/') {
         return Err(Error::Reverse(format!(
@@ -11504,8 +11613,14 @@ enum DrawingObjectKind {
 }
 
 #[derive(Default)]
+#[allow(clippy::struct_excessive_bools)]
 struct ChartAnchor {
     kind: DrawingObjectKind,
+    chartsheet_anchor: bool,
+    chartsheet_x: Option<i64>,
+    chartsheet_y: Option<i64>,
+    chartsheet_width: Option<u64>,
+    chartsheet_height: Option<u64>,
     edit_as: Option<String>,
     relationship_id: String,
     hyperlink_relationship_id: Option<String>,
@@ -13896,6 +14011,7 @@ fn parse_chart_xml(
     anchor: ChartAnchor,
     metadata: &WorksheetMetadata,
     worksheet_names: &std::collections::HashSet<String>,
+    chartsheet: bool,
 ) -> xlsx_jsx::Result<WorksheetChart> {
     const PX_EMU: u32 = 9_525;
     const DEFAULT_COLUMN_PIXELS: u32 = 64;
@@ -13903,14 +14019,18 @@ fn parse_chart_xml(
     let (up_bar_style, down_bar_style) = parse_stock_bar_styles(xml, part)?;
     let secondary_chart_groups = parse_secondary_chart_groups(xml, part)?;
     let legend_font = parse_chart_legend_font(xml, part)?;
-    let movement = match anchor.edit_as.as_deref() {
-        None | Some("twoCell") => None,
-        Some("oneCell") => Some("moveOnly"),
-        Some("absolute") => Some("fixed"),
-        Some(value) => {
-            return Err(Error::Reverse(format!(
-                "chart drawing in `{part}` has unsupported editAs value `{value}`; use the default two-cell behavior, `oneCell`, or `absolute`"
-            )));
+    let movement = if chartsheet {
+        None
+    } else {
+        match anchor.edit_as.as_deref() {
+            None | Some("twoCell") => None,
+            Some("oneCell") => Some("moveOnly"),
+            Some("absolute") => Some("fixed"),
+            Some(value) => {
+                return Err(Error::Reverse(format!(
+                    "chart drawing in `{part}` has unsupported editAs value `{value}`; use the default two-cell behavior, `oneCell`, or `absolute`"
+                )));
+            }
         }
     };
     if anchor.decorative
@@ -13923,112 +14043,143 @@ fn parse_chart_xml(
             "chart drawing in `{part}` combines alt text with the decorative accessibility marker; keep a description or mark the chart decorative, not both"
         )));
     }
-    let from_row = anchor
-        .from_row
-        .ok_or_else(|| Error::Reverse(format!("chart drawing in `{part}` is missing from/row")))?;
-    let from_column = anchor
-        .from_column
-        .ok_or_else(|| Error::Reverse(format!("chart drawing in `{part}` is missing from/col")))?;
-    let to_row = anchor
-        .to_row
-        .ok_or_else(|| Error::Reverse(format!("chart drawing in `{part}` is missing to/row")))?;
-    let to_column = anchor
-        .to_column
-        .ok_or_else(|| Error::Reverse(format!("chart drawing in `{part}` is missing to/col")))?;
-    if !anchor.from_column_offset_seen
-        || !anchor.from_row_offset_seen
-        || anchor.from_column_offset != Some(0)
-        || anchor.from_row_offset != Some(0)
-    {
-        return Err(Error::Reverse(format!(
-            "chart drawing in `{part}` is missing from/colOff or from/rowOff; repair the two-cell anchor"
-        )));
-    }
-    if to_row < from_row || to_column < from_column {
-        return Err(Error::Reverse(format!(
-            "chart drawing in `{part}` has reversed anchor coordinates; repair from/to positions"
-        )));
-    }
-    if to_row >= 1_048_576 || to_column >= 16_384 {
-        return Err(Error::Reverse(format!(
-            "chart drawing in `{part}` extends beyond Excel's worksheet grid; repair its anchor coordinates"
-        )));
-    }
-    let column_offset = anchor.to_column_offset.ok_or_else(|| {
-        Error::Reverse(format!(
-            "chart drawing in `{part}` is missing to/colOff; repair the two-cell anchor"
-        ))
-    })?;
-    let row_offset = anchor.to_row_offset.ok_or_else(|| {
-        Error::Reverse(format!(
-            "chart drawing in `{part}` is missing to/rowOff; repair the two-cell anchor"
-        ))
-    })?;
-    if column_offset % PX_EMU != 0 || row_offset % PX_EMU != 0 {
-        return Err(Error::Reverse(format!(
-            "chart drawing in `{part}` ends at fractional-pixel offsets; use whole-pixel chart dimensions"
-        )));
-    }
-    if column_offset / PX_EMU >= DEFAULT_COLUMN_PIXELS || row_offset / PX_EMU >= DEFAULT_ROW_PIXELS
-    {
-        return Err(Error::Reverse(format!(
-            "chart drawing in `{part}` has end offsets outside the default worksheet grid; preserve standard row/column dimensions or extend chart geometry support"
-        )));
-    }
-    if metadata
-        .default_row_height_pixels
-        .is_some_and(|height| height != DEFAULT_ROW_PIXELS)
-        || metadata.rows.iter().any(|(index, row)| {
-            *index >= from_row
-                && *index <= to_row
-                && (row
-                    .height
-                    .is_some_and(|height| (height - 15.0).abs() > f64::EPSILON)
-                    || row.hidden)
-        })
-    {
-        return Err(Error::Reverse(format!(
-            "chart drawing in `{part}` crosses custom row heights, so its pixel height is ambiguous; remove those row heights or add explicit chart extents to the DSL"
-        )));
-    }
-    if metadata
-        .columns
-        .range(
-            u16::try_from(from_column).expect("chart column bounds were validated")
-                ..=u16::try_from(to_column).expect("chart column bounds were validated"),
+    let (cell, width, height) = if chartsheet {
+        if !anchor.chartsheet_anchor {
+            return Err(Error::Reverse(format!(
+                "chart in chartsheet `{part}` does not use a chartsheet absolute anchor; repair its drawing"
+            )));
+        }
+        if anchor.chartsheet_x != Some(0)
+            || anchor.chartsheet_y != Some(0)
+            || anchor.chartsheet_width != Some(9_308_969)
+            || anchor.chartsheet_height != Some(6_078_325)
+        {
+            return Err(Error::Reverse(format!(
+                "chartsheet chart in `{part}` uses non-default absolute geometry or portrait orientation; the DSL preserves only rust_xlsxwriter's default landscape chartsheet canvas, so restore x=0, y=0, cx=9308969, cy=6078325"
+            )));
+        }
+        ("A1".to_owned(), 480, 288)
+    } else {
+        let from_row = anchor.from_row.ok_or_else(|| {
+            Error::Reverse(format!("chart drawing in `{part}` is missing from/row"))
+        })?;
+        let from_column = anchor.from_column.ok_or_else(|| {
+            Error::Reverse(format!("chart drawing in `{part}` is missing from/col"))
+        })?;
+        let to_row = anchor.to_row.ok_or_else(|| {
+            Error::Reverse(format!("chart drawing in `{part}` is missing to/row"))
+        })?;
+        let to_column = anchor.to_column.ok_or_else(|| {
+            Error::Reverse(format!("chart drawing in `{part}` is missing to/col"))
+        })?;
+        if !anchor.from_column_offset_seen
+            || !anchor.from_row_offset_seen
+            || anchor.from_column_offset != Some(0)
+            || anchor.from_row_offset != Some(0)
+        {
+            return Err(Error::Reverse(format!(
+                "chart drawing in `{part}` is missing from/colOff or from/rowOff; repair the two-cell anchor"
+            )));
+        }
+        if to_row < from_row || to_column < from_column {
+            return Err(Error::Reverse(format!(
+                "chart drawing in `{part}` has reversed anchor coordinates; repair from/to positions"
+            )));
+        }
+        if to_row >= 1_048_576 || to_column >= 16_384 {
+            return Err(Error::Reverse(format!(
+                "chart drawing in `{part}` extends beyond Excel's worksheet grid; repair its anchor coordinates"
+            )));
+        }
+        let column_offset = anchor.to_column_offset.ok_or_else(|| {
+            Error::Reverse(format!(
+                "chart drawing in `{part}` is missing to/colOff; repair the two-cell anchor"
+            ))
+        })?;
+        let row_offset = anchor.to_row_offset.ok_or_else(|| {
+            Error::Reverse(format!(
+                "chart drawing in `{part}` is missing to/rowOff; repair the two-cell anchor"
+            ))
+        })?;
+        if column_offset % PX_EMU != 0 || row_offset % PX_EMU != 0 {
+            return Err(Error::Reverse(format!(
+                "chart drawing in `{part}` ends at fractional-pixel offsets; use whole-pixel chart dimensions"
+            )));
+        }
+        if column_offset / PX_EMU >= DEFAULT_COLUMN_PIXELS
+            || row_offset / PX_EMU >= DEFAULT_ROW_PIXELS
+        {
+            return Err(Error::Reverse(format!(
+                "chart drawing in `{part}` has end offsets outside the default worksheet grid; preserve standard row/column dimensions or extend chart geometry support"
+            )));
+        }
+        if metadata
+            .default_row_height_pixels
+            .is_some_and(|height| height != DEFAULT_ROW_PIXELS)
+            || metadata.rows.iter().any(|(index, row)| {
+                *index >= from_row
+                    && *index <= to_row
+                    && (row
+                        .height
+                        .is_some_and(|height| (height - 15.0).abs() > f64::EPSILON)
+                        || row.hidden)
+            })
+        {
+            return Err(Error::Reverse(format!(
+                "chart drawing in `{part}` crosses custom row heights, so its pixel height is ambiguous; remove those row heights or add explicit chart extents to the DSL"
+            )));
+        }
+        if metadata
+            .columns
+            .range(
+                u16::try_from(from_column).expect("chart column bounds were validated")
+                    ..=u16::try_from(to_column).expect("chart column bounds were validated"),
+            )
+            .any(|(_, column)| {
+                column
+                    .width_pixels
+                    .is_some_and(|width| width != DEFAULT_COLUMN_PIXELS)
+                    || column.hidden
+            })
+        {
+            return Err(Error::Reverse(format!(
+                "chart drawing in `{part}` crosses custom column widths, so its pixel width is ambiguous; remove those widths or add explicit chart extents to the DSL"
+            )));
+        }
+        let width = (to_column - from_column)
+            .checked_mul(DEFAULT_COLUMN_PIXELS)
+            .and_then(|value| value.checked_add(column_offset / PX_EMU))
+            .ok_or_else(|| {
+                Error::Reverse(format!(
+                    "chart width in `{part}` overflows supported pixel units"
+                ))
+            })?;
+        let height = (to_row - from_row)
+            .checked_mul(DEFAULT_ROW_PIXELS)
+            .and_then(|value| value.checked_add(row_offset / PX_EMU))
+            .ok_or_else(|| {
+                Error::Reverse(format!(
+                    "chart height in `{part}` overflows supported pixel units"
+                ))
+            })?;
+        if !(1..=1790).contains(&width) || !(1..=1790).contains(&height) {
+            return Err(Error::Reverse(format!(
+                "chart in `{part}` measures {width}×{height} pixels outside the supported 1–1790 range; resize it or extend Chart dimensions"
+            )));
+        }
+        (
+            format_a1_cell_reference(
+                from_row,
+                u16::try_from(from_column).map_err(|error| {
+                    Error::Reverse(format!(
+                        "chart drawing in `{part}` has invalid start column {from_column}: {error}"
+                    ))
+                })?,
+            ),
+            width,
+            height,
         )
-        .any(|(_, column)| {
-            column
-                .width_pixels
-                .is_some_and(|width| width != DEFAULT_COLUMN_PIXELS)
-                || column.hidden
-        })
-    {
-        return Err(Error::Reverse(format!(
-            "chart drawing in `{part}` crosses custom column widths, so its pixel width is ambiguous; remove those widths or add explicit chart extents to the DSL"
-        )));
-    }
-    let width = (to_column - from_column)
-        .checked_mul(DEFAULT_COLUMN_PIXELS)
-        .and_then(|value| value.checked_add(column_offset / PX_EMU))
-        .ok_or_else(|| {
-            Error::Reverse(format!(
-                "chart width in `{part}` overflows supported pixel units"
-            ))
-        })?;
-    let height = (to_row - from_row)
-        .checked_mul(DEFAULT_ROW_PIXELS)
-        .and_then(|value| value.checked_add(row_offset / PX_EMU))
-        .ok_or_else(|| {
-            Error::Reverse(format!(
-                "chart height in `{part}` overflows supported pixel units"
-            ))
-        })?;
-    if !(1..=1790).contains(&width) || !(1..=1790).contains(&height) {
-        return Err(Error::Reverse(format!(
-            "chart in `{part}` measures {width}×{height} pixels outside the supported 1–1790 range; resize it or extend Chart dimensions"
-        )));
-    }
+    };
 
     let allowed_tags = [
         "chartSpace",
@@ -23399,7 +23550,7 @@ fn parse_chart_xml(
     }
     Ok(WorksheetChart {
         chart_type,
-        cell: cell_reference(from_row, from_column),
+        cell,
         width,
         height,
         name: anchor.name,
@@ -25440,7 +25591,11 @@ fn validate_chart_invert_fill_extension(
     clippy::too_many_lines,
     reason = "Drawing XML parsing pairs each supported chart/picture object with its anchor and relationship."
 )]
-fn parse_chart_drawing(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<ChartAnchor>> {
+fn parse_chart_drawing(
+    xml: &str,
+    part: &str,
+    chartsheet: bool,
+) -> xlsx_jsx::Result<Vec<ChartAnchor>> {
     let mut reader = XmlReader::from_str(xml);
     let mut anchors = Vec::new();
     let mut object_ids = std::collections::HashSet::new();
@@ -25455,7 +25610,27 @@ fn parse_chart_drawing(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<ChartAncho
                 let tag_name = String::from_utf8_lossy(tag.as_ref());
                 audit_chart_drawing_element(&event, &tag_name, part, reader.decoder())?;
                 match tag.as_ref() {
+                    b"absoluteAnchor" if chartsheet => {
+                        if current.replace(ChartAnchor::default()).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "drawing `{part}` has nested anchors; repair drawing structure"
+                            )));
+                        }
+                        if let Some(anchor) = current.as_mut() {
+                            anchor.chartsheet_anchor = true;
+                        }
+                    }
+                    b"absoluteAnchor" => {
+                        return Err(Error::Reverse(format!(
+                            "drawing `{part}` uses an absolute anchor outside a chartsheet; use a two-cell worksheet anchor"
+                        )));
+                    }
                     b"twoCellAnchor" => {
+                        if chartsheet {
+                            return Err(Error::Reverse(format!(
+                                "chartsheet drawing `{part}` uses a worksheet two-cell anchor; repair it to the chartsheet absolute anchor"
+                            )));
+                        }
                         if current.replace(ChartAnchor::default()).is_some() {
                             return Err(Error::Reverse(format!(
                                 "drawing `{part}` has nested anchors; repair drawing structure"
@@ -25492,10 +25667,30 @@ fn parse_chart_drawing(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<ChartAncho
                             anchor.kind = DrawingObjectKind::Image;
                         }
                     }
-                    b"oneCellAnchor" | b"absoluteAnchor" => {
+                    b"oneCellAnchor" => {
                         return Err(Error::Reverse(format!(
                             "drawing `{part}` uses a non-two-cell chart anchor; use a two-cell anchor with integer-pixel geometry or extend chart positioning support"
                         )));
+                    }
+                    b"pos" if chartsheet => {
+                        if let Some(anchor) = current.as_mut() {
+                            anchor.chartsheet_x =
+                                chart_xml_attribute(&event, "x", reader.decoder())?
+                                    .and_then(|value| value.parse::<i64>().ok());
+                            anchor.chartsheet_y =
+                                chart_xml_attribute(&event, "y", reader.decoder())?
+                                    .and_then(|value| value.parse::<i64>().ok());
+                        }
+                    }
+                    b"ext" if chartsheet && !in_transform => {
+                        if let Some(anchor) = current.as_mut() {
+                            anchor.chartsheet_width =
+                                chart_xml_attribute(&event, "cx", reader.decoder())?
+                                    .and_then(|value| value.parse::<u64>().ok());
+                            anchor.chartsheet_height =
+                                chart_xml_attribute(&event, "cy", reader.decoder())?
+                                    .and_then(|value| value.parse::<u64>().ok());
+                        }
                     }
                     b"from" => location = Some("from"),
                     b"to" => location = Some("to"),
@@ -25697,7 +25892,7 @@ fn parse_chart_drawing(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<ChartAncho
             Ok(Event::End(event)) => match event.local_name().as_ref() {
                 b"from" | b"to" => location = None,
                 b"xfrm" => in_transform = false,
-                b"twoCellAnchor" => {
+                b"twoCellAnchor" | b"absoluteAnchor" => {
                     let anchor = current.take().ok_or_else(|| {
                         Error::Reverse(format!(
                             "drawing `{part}` closes an anchor that was not opened"
@@ -25758,6 +25953,8 @@ fn audit_chart_drawing_element(
     const ALLOWED: &[&str] = &[
         "wsDr",
         "twoCellAnchor",
+        "absoluteAnchor",
+        "pos",
         "from",
         "to",
         "col",
@@ -25768,6 +25965,7 @@ fn audit_chart_drawing_element(
         "nvGraphicFramePr",
         "cNvPr",
         "cNvGraphicFramePr",
+        "graphicFrameLocks",
         "xfrm",
         "off",
         "ext",
@@ -25808,11 +26006,12 @@ fn audit_chart_drawing_element(
             .into_owned();
         let accepted = match (tag, key.as_str()) {
             ("graphicFrame", "macro") => value.is_empty(),
+            ("graphicFrameLocks", "noGrp") | ("picLocks", "noChangeAspect") => value == "1",
             ("cNvPr", "id") => value.parse::<u32>().is_ok(),
             ("cNvPr", "name" | "descr") => !value.is_empty() && value.chars().count() <= 255,
             ("twoCellAnchor", "editAs") => matches!(value.as_str(), "oneCell" | "absolute"),
             ("off", "x" | "y") | ("ext", "cx" | "cy") => value.parse::<u64>().is_ok(),
-            ("picLocks", "noChangeAspect") => value == "1",
+            ("pos", "x" | "y") => value.parse::<i64>().is_ok(),
             ("prstGeom", "prst") => value == "rect",
             ("decorative", "val") => matches!(value.as_str(), "0" | "1"),
             ("ext", "uri") => matches!(
@@ -27692,6 +27891,14 @@ fn is_supported_part(name: &str) -> bool {
             .and_then(|name| name.strip_suffix(".xml.rels"))
             .is_some_and(|number| number.parse::<u32>().is_ok())
         || name
+            .strip_prefix("xl/chartsheets/sheet")
+            .and_then(|name| name.strip_suffix(".xml"))
+            .is_some_and(|number| number.parse::<u32>().is_ok())
+        || name
+            .strip_prefix("xl/chartsheets/_rels/sheet")
+            .and_then(|name| name.strip_suffix(".xml.rels"))
+            .is_some_and(|number| number.parse::<u32>().is_ok())
+        || name
             .strip_prefix("xl/comments")
             .and_then(|name| name.strip_suffix(".xml"))
             .is_some_and(|number| number.parse::<u32>().is_ok())
@@ -28296,7 +28503,9 @@ impl VerticalAlignment {
 }
 
 #[derive(Default)]
+#[allow(clippy::struct_excessive_bools)]
 struct WorksheetMetadata {
+    is_chartsheet: bool,
     active_worksheet: Option<()>,
     selected: Option<bool>,
     tab_selected: Option<bool>,
@@ -30109,6 +30318,97 @@ fn audit_worksheet_xml(
         )));
     }
     Ok(metadata)
+}
+
+fn audit_chartsheet_xml(xml: &str, part: &str) -> xlsx_jsx::Result<WorksheetMetadata> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut metadata = WorksheetMetadata {
+        is_chartsheet: true,
+        ..Default::default()
+    };
+    let mut drawing_seen = false;
+    let mut root_seen = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event) | Event::Empty(event)) => {
+                let tag = event.local_name();
+                let tag = String::from_utf8_lossy(tag.as_ref());
+                match tag.as_ref() {
+                    "chartsheet" => {
+                        if root_seen {
+                            return Err(Error::Reverse(format!(
+                                "chartsheet part `{part}` has multiple root elements; repair the XML"
+                            )));
+                        }
+                        root_seen = true;
+                    }
+                    "sheetPr" | "sheetViews" | "sheetView" | "pageMargins" => {}
+                    "drawing" => {
+                        if drawing_seen {
+                            return Err(Error::Reverse(format!(
+                                "chartsheet `{part}` has multiple drawings; keep one chart on the sheet"
+                            )));
+                        }
+                        drawing_seen = true;
+                        metadata.drawing_relationship_id =
+                            chart_xml_attribute(&event, "id", reader.decoder())?;
+                    }
+                    _ => {
+                        return Err(Error::Reverse(format!(
+                            "chartsheet `{part}` contains unsupported `<{tag}>` metadata; keep only the chart drawing or add explicit Chartsheet support"
+                        )));
+                    }
+                }
+                for attribute in event.attributes().with_checks(false) {
+                    let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                    if attribute.key.as_ref().starts_with(b"xmlns") {
+                        continue;
+                    }
+                    let key = attribute.key.local_name();
+                    let value = attribute
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                        .map_err(|error| Error::Reverse(error.to_string()))?;
+                    let valid = match (tag.as_ref(), key.as_ref()) {
+                        ("sheetView", b"workbookViewId") => value == "0",
+                        ("drawing", b"id") => true,
+                        (
+                            "pageMargins",
+                            b"left" | b"right" | b"top" | b"bottom" | b"header" | b"footer",
+                        ) => chartsheet_default_margin(key.as_ref()) == Some(value.as_ref()),
+                        _ => false,
+                    };
+                    if !valid {
+                        return Err(Error::Reverse(format!(
+                            "chartsheet `{part}` has unsupported `{tag}@{}` metadata; remove it or extend the Chartsheet DSL",
+                            String::from_utf8_lossy(key.as_ref())
+                        )));
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => {
+                return Err(Error::Reverse(format!(
+                    "invalid XML in chartsheet `{part}`: {error}"
+                )));
+            }
+        }
+    }
+    if !root_seen || !drawing_seen || metadata.drawing_relationship_id.is_none() {
+        return Err(Error::Reverse(format!(
+            "chartsheet `{part}` must contain exactly one drawing relationship to its chart; repair the chartsheet XML"
+        )));
+    }
+    Ok(metadata)
+}
+
+fn chartsheet_default_margin(attribute: &[u8]) -> Option<&'static str> {
+    match attribute {
+        b"left" | b"right" => Some("0.7"),
+        b"top" | b"bottom" => Some("0.75"),
+        b"header" | b"footer" => Some("0.3"),
+        _ => None,
+    }
 }
 
 fn conditional_text_operator_from_xml(
@@ -36608,15 +36908,16 @@ fn audit_workbook_xml(
                     }
                     if let Some(index) = definition.sheet_index {
                         let sheet_name = sheet_order.get(index).ok_or_else(|| Error::Reverse(format!("defined name `{}` references missing worksheet index {index}; repair localSheetId", definition.name)))?;
-                        worksheet_metadata
-                            .get_mut(sheet_name)
-                            .ok_or_else(|| {
-                                Error::Reverse(format!(
-                                    "missing worksheet metadata for `{sheet_name}`"
-                                ))
-                            })?
-                            .defined_names
-                            .push(definition);
+                        let metadata = worksheet_metadata.get_mut(sheet_name).ok_or_else(|| {
+                            Error::Reverse(format!("missing worksheet metadata for `{sheet_name}`"))
+                        })?;
+                        if metadata.is_chartsheet {
+                            return Err(Error::Reverse(format!(
+                                "chartsheet `{sheet_name}` has a sheet-local defined name `{}` that the Chartsheet DSL cannot preserve; remove it or add explicit Chartsheet defined-name support",
+                                definition.name
+                            )));
+                        }
+                        metadata.defined_names.push(definition);
                     } else {
                         workbook_properties.defined_names.push(definition);
                     }

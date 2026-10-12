@@ -32,6 +32,7 @@ xlsx-jsx spec --format json
 | Worksheet visibility | yes | yes | `visibility="hidden"` or `"veryHidden"`; first worksheet stays visible |
 | Active worksheet | yes | yes | `active={true}` selects one visible worksheet when opened; default is the first worksheet |
 | First visible tab | yes | yes | `firstTab={true}` selects one visible worksheet as the leftmost tab; default is the first worksheet |
+| Chartsheets | yes | yes (supported subset) | `<Chartsheet name="Sales"><Chart type="column">…</Chart></Chartsheet>` uses one full-sheet chart with data series referencing ordinary worksheets; worksheet anchors/size, active or grouped Chartsheet tabs, portrait canvas geometry, and extra drawing objects are rejected |
 | In-cell checkboxes | yes | yes | `Cell value={true} checkbox={true}` writes Excel 2024 checkbox metadata; boolean values stay usable in formulas and older Excel versions display TRUE/FALSE |
 | Worksheet tab color | yes | yes | `tabColor="#4472C4"` uses opaque RGB; theme/indexed colors are rejected |
 | Default row height | yes | yes | `defaultRowHeightPixels` uses integer pixels; non-representable external point values are rejected |

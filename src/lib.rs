@@ -397,6 +397,7 @@ impl IrEnvelope {
         let mut custom_property_names = std::collections::HashSet::new();
         let mut worksheet_code_names = std::collections::HashSet::new();
         let mut worksheet_index = 0;
+        let mut worksheet_names = std::collections::HashSet::new();
         validate_active_worksheet_uniqueness(&self.workbook.children)?;
         validate_default_active_selection(&self.workbook.children)?;
         validate_first_tab_uniqueness(&self.workbook.children)?;
@@ -412,6 +413,10 @@ impl IrEnvelope {
             }
             if sheet.r#type == "CustomProperty" {
                 validate_custom_property(&sheet, &mut custom_property_names)?;
+                continue;
+            }
+            if sheet.r#type == "Chartsheet" {
+                validate_chartsheet_child(&sheet, child_index, worksheet_index, &mut names)?;
                 continue;
             }
             if sheet.r#type != "Worksheet" {
@@ -450,18 +455,7 @@ impl IrEnvelope {
                     "Worksheet name `{name}` is invalid; use 1–31 characters, avoid []:*?/\\, and do not start/end with an apostrophe"
                 )));
             }
-            if let Some(auto_filter) = sheet.props.get("autoFilter") {
-                let Some(auto_filter) = auto_filter.as_str() else {
-                    return Err(Error::Compile(format!(
-                        "Worksheet.autoFilter on `{name}` must be an A1 range string such as `A1:D20`; use a quoted range"
-                    )));
-                };
-                if parse_a1_range(auto_filter).is_none() {
-                    return Err(Error::Compile(format!(
-                        "Worksheet.autoFilter `{auto_filter}` on `{name}` is not a valid ordered A1 range within Excel limits; use a range such as `A1:D20`"
-                    )));
-                }
-            }
+            validate_auto_filter_range(&sheet, name)?;
             validate_auto_filter_columns(&sheet, name)?;
             validate_freeze_panes(&sheet, name)?;
             if !names.insert(name.to_lowercase()) {
@@ -469,17 +463,116 @@ impl IrEnvelope {
                     "Worksheet name `{name}` duplicates another sheet ignoring case; choose a unique name"
                 )));
             }
+            worksheet_names.insert(name.to_lowercase());
             validate_worksheet_children(&sheet, name, &mut table_names)?;
         }
-        if names.is_empty() {
+        if worksheet_names.is_empty() {
             return Err(Error::Compile(
                 "Workbook must contain at least one Worksheet; add a worksheet alongside any DefinedName declarations".into(),
             ));
         }
-        validate_chart_sheet_references(&self.workbook.children, &names)?;
-        validate_sparkline_sheet_references(&self.workbook.children, &names)?;
+        validate_chart_sheet_references(&self.workbook.children, &worksheet_names)?;
+        validate_sparkline_sheet_references(&self.workbook.children, &worksheet_names)?;
         Ok(())
     }
+}
+
+fn validate_auto_filter_range(sheet: &Node, name: &str) -> Result<()> {
+    if let Some(auto_filter) = sheet.props.get("autoFilter") {
+        let Some(auto_filter) = auto_filter.as_str() else {
+            return Err(Error::Compile(format!(
+                "Worksheet.autoFilter on `{name}` must be an A1 range string such as `A1:D20`; use a quoted range"
+            )));
+        };
+        if parse_a1_range(auto_filter).is_none() {
+            return Err(Error::Compile(format!(
+                "Worksheet.autoFilter `{auto_filter}` on `{name}` is not a valid ordered A1 range within Excel limits; use a range such as `A1:D20`"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn validate_chartsheet_child(
+    sheet: &Node,
+    child_index: usize,
+    worksheet_index: usize,
+    names: &mut std::collections::HashSet<String>,
+) -> Result<()> {
+    if worksheet_index == 0 {
+        return Err(Error::Compile(
+            "Chartsheet must follow at least one Worksheet; put a visible Worksheet first to preserve active-sheet behavior".into(),
+        ));
+    }
+    validate_chartsheet(sheet, child_index)?;
+    let name = sheet
+        .props
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::Compile("Chartsheet requires name: string".into()))?;
+    if !names.insert(name.to_lowercase()) {
+        return Err(Error::Compile(format!(
+            "Chartsheet name `{name}` duplicates another workbook sheet ignoring case; choose a unique name"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_chartsheet(sheet: &Node, sheet_index: usize) -> Result<()> {
+    reject_unknown_props(sheet, &["name", "visibility"], "Chartsheet")?;
+    let name = sheet
+        .props
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| Error::Compile("Chartsheet requires name: string".into()))?;
+    let units = name.encode_utf16().count();
+    if !(1..=31).contains(&units)
+        || name.chars().any(|ch| "[]:*?/\\".contains(ch))
+        || name.starts_with('\'')
+        || name.ends_with('\'')
+    {
+        return Err(Error::Compile(format!(
+            "Chartsheet name `{name}` is invalid; use 1–31 UTF-16 code units, avoid []:*?/\\, and do not start/end with an apostrophe"
+        )));
+    }
+    if let Some(visibility) = sheet.props.get("visibility") {
+        if !visibility
+            .as_str()
+            .is_some_and(|value| ["visible", "hidden", "veryHidden"].contains(&value))
+        {
+            return Err(Error::Compile(format!(
+                "Chartsheet.visibility on `{name}` must be visible, hidden, or veryHidden; use a supported visibility string"
+            )));
+        }
+        if sheet_index == 0 && visibility.as_str() != Some("visible") {
+            return Err(Error::Compile(
+                "the first workbook sheet must be visible; put a visible Worksheet first".into(),
+            ));
+        }
+    }
+    if sheet.children.len() != 1 {
+        return Err(Error::Compile(format!(
+            "Chartsheet `{name}` requires exactly one Chart child; add one chart and remove other children"
+        )));
+    }
+    let chart: Node = serde_json::from_value(sheet.children[0].clone()).map_err(|error| {
+        Error::Compile(format!("Chartsheet `{name}` child is invalid: {error}"))
+    })?;
+    if chart.r#type != "Chart" {
+        return Err(Error::Compile(format!(
+            "Chartsheet `{name}` only accepts one Chart child; replace `{}` with Chart",
+            chart.r#type
+        )));
+    }
+    if ["cell", "width", "height", "movement"]
+        .iter()
+        .any(|property| chart.props.contains_key(*property))
+    {
+        return Err(Error::Compile(format!(
+            "Chart on Chartsheet `{name}` has no worksheet anchor; remove cell, width, height, and movement properties"
+        )));
+    }
+    validate_chart(&chart, 0, false)
 }
 
 fn validate_workbook_properties(workbook: &Node) -> Result<()> {
@@ -1847,7 +1940,7 @@ fn validate_worksheet_children(
                     child_index + 1
                 )));
             }
-            validate_chart(&child, child_index)?;
+            validate_chart(&child, child_index, true)?;
             chart_nodes.push(child);
             continue;
         }
@@ -2220,7 +2313,7 @@ fn is_supported_chart_type(chart_type: &str) -> bool {
     clippy::too_many_lines,
     reason = "Chart validation keeps the chart-level constraints together with its ordered children."
 )]
-fn validate_chart(chart: &Node, index: usize) -> Result<()> {
+fn validate_chart(chart: &Node, index: usize, anchor_required: bool) -> Result<()> {
     reject_unknown_props(
         chart,
         &[
@@ -2517,17 +2610,23 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
     validate_chart_value_axis_display_units(chart, chart_type)?;
     validate_chart_drop_lines(chart, chart_type)?;
     validate_chart_data_display(chart)?;
-    let cell = chart
-        .props
-        .get("cell")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            Error::Compile("Chart.cell is required; use an A1 anchor such as D2".into())
-        })?;
-    if parse_a1_cell_reference(cell).is_none() {
-        return Err(Error::Compile(format!(
-            "Chart.cell `{cell}` is not a valid A1 anchor; use a cell such as D2"
-        )));
+    if anchor_required {
+        let cell = chart
+            .props
+            .get("cell")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                Error::Compile("Chart.cell is required; use an A1 anchor such as D2".into())
+            })?;
+        if parse_a1_cell_reference(cell).is_none() {
+            return Err(Error::Compile(format!(
+                "Chart.cell `{cell}` is not a valid A1 anchor; use a cell such as D2"
+            )));
+        }
+    } else if chart.props.contains_key("cell") {
+        return Err(Error::Compile(
+            "Chart on a Chartsheet has no cell anchor; remove the cell property".into(),
+        ));
     }
     for dimension in ["width", "height"] {
         if let Some(value) = chart.props.get(dimension)
@@ -8277,7 +8376,7 @@ fn validate_chart_sheet_references(
         let sheet: Node = serde_json::from_value(sheet_value.clone()).map_err(|error| {
             Error::Compile(format!("Workbook child {sheet_index} is invalid: {error}"))
         })?;
-        if sheet.r#type != "Worksheet" {
+        if !matches!(sheet.r#type.as_str(), "Worksheet" | "Chartsheet") {
             continue;
         }
         for child_value in &sheet.children {
@@ -13759,6 +13858,74 @@ mod tests {
         ]);
 
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_one_unanchored_chart_on_a_chartsheet_after_a_worksheet() {
+        let input = workbook(vec![
+            serde_json::json!({"type":"Worksheet","props":{"name":"Data"},"children":[]}),
+            serde_json::json!({
+                "type":"Chartsheet","props":{"name":"Overview"},"children":[{
+                    "type":"Chart","props":{"type":"column"},"children":[{
+                        "type":"Series","props":{"categories":"Data!$A$1:$A$2","values":"Data!$B$1:$B$2"},"children":[]
+                    }]
+                }]
+            }),
+        ]);
+
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_a_chartsheet_before_any_worksheet_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Chartsheet","props":{"name":"Overview"},"children":[{
+                "type":"Chart","props":{"type":"column"},"children":[{
+                    "type":"Series","props":{"categories":"Data!$A$1:$A$2","values":"Data!$B$1:$B$2"},"children":[]
+                }]
+            }]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("chartsheets cannot establish the initial active sheet");
+
+        assert!(error.to_string().contains("follow at least one Worksheet"));
+    }
+
+    #[test]
+    fn rejects_chartsheets_without_exactly_one_chart() {
+        let input = workbook(vec![
+            serde_json::json!({"type":"Worksheet","props":{"name":"Data"},"children":[]}),
+            serde_json::json!({"type":"Chartsheet","props":{"name":"Overview"},"children":[]}),
+        ]);
+        let error = input
+            .validate()
+            .expect_err("chartsheets require exactly one chart");
+
+        assert!(error.to_string().contains("exactly one Chart child"));
+    }
+
+    #[test]
+    fn rejects_worksheet_anchor_properties_on_chartsheet_charts() {
+        let input = workbook(vec![
+            serde_json::json!({"type":"Worksheet","props":{"name":"Data"},"children":[]}),
+            serde_json::json!({
+                "type":"Chartsheet","props":{"name":"Overview"},"children":[{
+                    "type":"Chart","props":{"type":"column","cell":"A1"},"children":[{
+                        "type":"Series","props":{"categories":"Data!$A$1:$A$2","values":"Data!$B$1:$B$2"},"children":[]
+                    }]
+                }]
+            }),
+        ]);
+        let error = input
+            .validate()
+            .expect_err("chartsheet charts have no worksheet cell anchor");
+
+        assert!(
+            error
+                .to_string()
+                .contains("remove cell, width, height, and movement")
+        );
     }
 
     #[test]
