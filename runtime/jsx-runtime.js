@@ -5,6 +5,7 @@ function node(type, props = {}) {
 function host(type) { return props => node(type, props ?? {}); }
 export const Workbook = host("Workbook");
 export const DefinedName = host("DefinedName");
+export const CustomProperty = host("CustomProperty");
 export const Worksheet = host("Worksheet");
 export const Column = host("Column");
 export const DataValidation = host("DataValidation");

@@ -124,6 +124,7 @@ xlsx-jsx spec --format json
 | Time-only and duration display | yes | yes | numeric serial plus `numberFormat`, including elapsed-time formats |
 | Excel error cells | no | rejected with repair diagnostics | fix the error or add an explicit error-cell type |
 | Workbook document properties | yes | yes | Core: `title`, `subject`, `author`, `keywords`, `description`, `category`, `status`; extended: `manager`, `company`, `hyperlinkBase`; generated metadata is ignored, unsupported authored metadata is rejected |
+| Custom workbook document properties | yes | yes | `<CustomProperty name="Department" type="string" value="Finance" />`; supports string, integer, real, boolean and dateTime values |
 | Workbook and worksheet-scoped defined names | yes | yes | `<DefinedName name="TaxRate" formula="0.05" />` at workbook scope or inside a worksheet; names and formula text round-trip, while hidden/comment metadata is rejected |
 | Phonetics, custom package parts | no | rejected | unsupported semantics are not silently flattened or discarded |
 | Shared/data-table formulas, other custom view state, unsupported authored metadata | no | rejected with diagnostics | ordinary/legacy array formulas, screen gridline visibility, and default workbook view remain supported |

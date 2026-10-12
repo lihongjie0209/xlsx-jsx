@@ -387,6 +387,7 @@ impl IrEnvelope {
         let mut names = std::collections::HashSet::new();
         let mut table_names = std::collections::HashSet::new();
         let mut global_defined_names = std::collections::HashSet::new();
+        let mut custom_property_names = std::collections::HashSet::new();
         let mut worksheet_index = 0;
         validate_active_worksheet_uniqueness(&self.workbook.children)?;
         validate_default_active_selection(&self.workbook.children)?;
@@ -401,9 +402,13 @@ impl IrEnvelope {
                 validate_defined_name(&sheet, "Workbook", &mut global_defined_names)?;
                 continue;
             }
+            if sheet.r#type == "CustomProperty" {
+                validate_custom_property(&sheet, &mut custom_property_names)?;
+                continue;
+            }
             if sheet.r#type != "Worksheet" {
                 return Err(Error::Compile(format!(
-                    "Workbook child {child_index} is `{}`; expected Worksheet or DefinedName",
+                    "Workbook child {child_index} is `{}`; expected Worksheet, DefinedName, or CustomProperty",
                     sheet.r#type
                 )));
             }
@@ -536,6 +541,97 @@ fn validate_defined_name(
         )));
     }
     Ok(())
+}
+
+fn validate_custom_property(
+    component: &Node,
+    names: &mut std::collections::HashSet<String>,
+) -> Result<()> {
+    reject_unknown_props(component, &["name", "type", "value"], "CustomProperty")?;
+    if !component.children.is_empty() {
+        return Err(Error::Compile(
+            "CustomProperty cannot have children; remove them".into(),
+        ));
+    }
+    let name = component
+        .props
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile(
+                "CustomProperty requires name: string; provide a non-empty property name".into(),
+            )
+        })?;
+    if name.is_empty() || name.chars().count() > 255 || !name.chars().all(is_valid_xml_character) {
+        return Err(Error::Compile(
+            "CustomProperty.name must contain 1 to 255 valid XML characters; shorten it or remove control characters".into(),
+        ));
+    }
+    if !names.insert(name.to_lowercase()) {
+        return Err(Error::Compile(format!(
+            "CustomProperty `{name}` duplicates another custom property ignoring case; choose a unique name"
+        )));
+    }
+    let property_type = component
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::Compile(format!(
+                "CustomProperty `{name}` requires type: string; choose string, integer, real, boolean, or dateTime"
+            ))
+        })?;
+    let value = component.props.get("value").ok_or_else(|| {
+        Error::Compile(format!(
+            "CustomProperty `{name}` requires value; provide a value compatible with type `{property_type}`"
+        ))
+    })?;
+    match property_type {
+        "string"
+            if value
+                .as_str()
+                .is_some_and(|value| value.chars().all(is_valid_xml_character)) =>
+        {
+            Ok(())
+        }
+        "integer"
+            if value
+                .as_i64()
+                .is_some_and(|value| i32::try_from(value).is_ok()) =>
+        {
+            Ok(())
+        }
+        "real" if value.as_f64().is_some_and(f64::is_finite) => Ok(()),
+        "boolean" if value.is_boolean() => Ok(()),
+        "dateTime" => {
+            let Some(value) = value.as_str() else {
+                return Err(Error::Compile(format!(
+                    "CustomProperty `{name}` value must be a date-time string such as `2026-10-12T09:30:00Z`"
+                )));
+            };
+            rust_xlsxwriter::ExcelDateTime::parse_from_str(value).map_err(|error| {
+                Error::Compile(format!(
+                    "CustomProperty `{name}` has invalid dateTime `{value}`: {error}; use a date or date-time accepted by rust_xlsxwriter"
+                ))
+            })?;
+            Ok(())
+        }
+        "string" => Err(Error::Compile(format!(
+            "CustomProperty `{name}` value must be a valid XML string; remove non-XML characters"
+        ))),
+        "integer" => Err(Error::Compile(format!(
+            "CustomProperty `{name}` value must be a signed 32-bit integer; use an integer from -2147483648 through 2147483647"
+        ))),
+        "real" => Err(Error::Compile(format!(
+            "CustomProperty `{name}` value must be a finite number; use a finite floating-point value"
+        ))),
+        "boolean" => Err(Error::Compile(format!(
+            "CustomProperty `{name}` value must be a boolean; use true or false"
+        ))),
+        _ => Err(Error::Compile(format!(
+            "CustomProperty `{name}` has unsupported type `{property_type}`; choose string, integer, real, boolean, or dateTime"
+        ))),
+    }
 }
 
 fn validate_active_worksheet_uniqueness(sheets: &[Value]) -> Result<()> {
@@ -12036,6 +12132,44 @@ mod tests {
 
         let validation = input.validate();
         assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_all_supported_custom_property_types() {
+        let input = workbook(vec![
+            serde_json::json!({"type":"CustomProperty","props":{"name":"Department","type":"string","value":"Finance"},"children":[]}),
+            serde_json::json!({"type":"CustomProperty","props":{"name":"Count","type":"integer","value":5},"children":[]}),
+            serde_json::json!({"type":"CustomProperty","props":{"name":"Ratio","type":"real","value":0.75},"children":[]}),
+            serde_json::json!({"type":"CustomProperty","props":{"name":"Approved","type":"boolean","value":true},"children":[]}),
+            serde_json::json!({"type":"CustomProperty","props":{"name":"Reviewed","type":"dateTime","value":"2026-10-12T09:30:00Z"},"children":[]}),
+            worksheet("Data", vec![]),
+        ]);
+
+        let result = input.validate();
+
+        assert!(
+            result.is_ok(),
+            "unexpected custom property validation error: {result:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_custom_property_names_with_repair_guidance() {
+        let input = workbook(vec![
+            serde_json::json!({"type":"CustomProperty","props":{"name":"Department","type":"string","value":"Finance"},"children":[]}),
+            serde_json::json!({"type":"CustomProperty","props":{"name":"department","type":"string","value":"Legal"},"children":[]}),
+            worksheet("Data", vec![]),
+        ]);
+
+        let error = input
+            .validate()
+            .expect_err("custom property names are unique ignoring case");
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicates another custom property")
+        );
     }
 
     #[test]

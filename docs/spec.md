@@ -891,9 +891,10 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 
 ### Workbook
 
-- Children: one or more `Worksheet` components and optional global `DefinedName`
-  declarations. Names may appear before or after worksheets; source ordering is
-  retained when reversing within each scope.
+- Children: one or more `Worksheet` components plus optional global
+  `DefinedName` declarations and `CustomProperty` metadata. Names and custom
+  properties may appear before or after worksheets; source ordering is retained
+  within each corresponding scope.
 - v1 has no implicit sheet; sheets are emitted in source order.
 - Optional `title`, `subject`, `author`, `keywords`, `description`, `category`,
   and `status` string properties map to OOXML core document properties;
@@ -904,9 +905,22 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   are intentionally ignored. The reader ignores standard app properties
   generated from workbook structure and preserves `Manager`, `Company`, and
   `HyperlinkBase`; unknown authored app properties are rejected. Other
-  authored core metadata (identifiers, custom properties, and independent
-  last-modifier values) is
+  authored core metadata (identifiers and independent last-modifier values) is
   rejected because it has no lossless Workbook property in v1.
+
+### CustomProperty
+
+- A `CustomProperty` is allowed only directly under `Workbook`. Required
+  `name: string`, `type`, and `value` fields map to one OOXML custom document
+  property in source order. `type` is `string`, `integer`, `real`, `boolean`,
+  or `dateTime`; values must respectively be a string, signed 32-bit integer,
+  finite number, boolean, or ISO date/time string accepted by the pinned
+  writer and stored as a UTC filetime. Property names must be non-empty,
+  XML-safe, and unique ignoring case.
+- Children are not allowed. Reverse reads `docProps/custom.xml` without relying
+  on a manifest, preserves each property's type/value/order, and rejects
+  unsupported value types, duplicate names/IDs, malformed relationships, or
+  invalid property metadata rather than dropping it.
 
 ### DefinedName
 

@@ -8,7 +8,7 @@ use rust_xlsxwriter::{
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
     ChartLineDashType, ChartMarker, ChartMarkerType, ChartPatternFill, ChartPatternFillType,
     ChartPoint, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType, Color,
-    DocProperties as XlsxDocProperties, Image as XlsxImage, ObjectMovement,
+    DocProperties as XlsxDocProperties, ExcelDateTime, Image as XlsxImage, ObjectMovement,
     Sparkline as XlsxSparkline, SparklineType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
@@ -16,7 +16,11 @@ use tempfile::tempdir;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 #[test]
-fn workbook_category_and_status_round_trip_external_xlsx_without_manifest() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "This integration test verifies all workbook-property types through external write, reverse, and rebuild."
+)]
+fn workbook_document_properties_round_trip_external_xlsx_without_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let external = directory.path().join("metadata.xlsx");
     let mut workbook = XlsxWorkbook::new();
@@ -29,9 +33,25 @@ fn workbook_category_and_status_round_trip_external_xlsx_without_manifest() {
         .set_status("Draft")
         .set_manager("Ada Lovelace")
         .set_company("Analytical Engines")
-        .set_hyperlink_base("https://example.test/reports/");
+        .set_hyperlink_base("https://example.test/reports/")
+        .set_custom_property("Department", "Finance & Risk")
+        .set_custom_property("Empty", "")
+        .set_custom_property("Document number", 5321_i32)
+        .set_custom_property("Confidence", 0.875_f64)
+        .set_custom_property("Approved", true)
+        .set_custom_property(
+            "Reviewed at",
+            &ExcelDateTime::parse_from_str("2026-10-12T09:30:00Z").expect("valid date-time"),
+        );
     workbook.set_properties(&properties);
     workbook.save(&external).expect("external workbook saves");
+    let mut external_custom = String::new();
+    ZipArchive::new(std::fs::File::open(&external).expect("external file exists"))
+        .expect("external workbook is a ZIP package")
+        .by_name("docProps/custom.xml")
+        .expect("custom properties exist in external file")
+        .read_to_string(&mut external_custom)
+        .expect("external custom properties are UTF-8");
 
     let reversed = directory.path().join("metadata.tsx");
     Command::cargo_bin("xlsx-jsx")
@@ -54,6 +74,19 @@ fn workbook_category_and_status_round_trip_external_xlsx_without_manifest() {
         source.contains("hyperlinkBase=\"https://example.test/reports/\""),
         "{source}"
     );
+    assert!(
+        source.contains("CustomProperty"),
+        "{source}\n{external_custom}"
+    );
+    assert!(
+        source.contains("Finance & Risk"),
+        "{source}\n{external_custom}"
+    );
+    assert!(source.contains("Document number"), "{source}");
+    assert!(source.contains("Approved"), "{source}");
+    assert!(source.contains("Reviewed at"), "{source}");
+    assert!(source.contains("name={\"Empty\"}"), "{source}");
+    assert!(source.contains("value={\"\"}"), "{source}");
 
     let rebuilt = directory.path().join("rebuilt.xlsx");
     Command::cargo_bin("xlsx-jsx")
@@ -95,6 +128,51 @@ fn workbook_category_and_status_round_trip_external_xlsx_without_manifest() {
         app.contains("<HyperlinkBase>https://example.test/reports/</HyperlinkBase>"),
         "{app}"
     );
+    let mut custom = String::new();
+    archive
+        .by_name("docProps/custom.xml")
+        .expect("custom properties exist")
+        .read_to_string(&mut custom)
+        .expect("custom properties are UTF-8");
+    for value in [
+        "Finance &amp; Risk",
+        "5321",
+        "0.875",
+        "true",
+        "2026-10-12T09:30:00Z",
+    ] {
+        assert!(custom.contains(value), "missing `{value}` in {custom}");
+    }
+}
+
+#[test]
+fn reverse_rejects_inconsistent_custom_properties_relationship() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("custom-properties.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    workbook.add_worksheet();
+    workbook.set_properties(&XlsxDocProperties::new().set_custom_property("Department", "Finance"));
+    workbook.save(&external).expect("external workbook saves");
+    rewrite_part(&external, "_rels/.rels", |xml| {
+        xml.replace(
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties",
+            "urn:unsupported:custom-properties",
+        )
+    });
+
+    let output = Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .assert()
+        .failure()
+        .get_output()
+        .stderr
+        .clone();
+
+    let diagnostic = String::from_utf8(output).expect("diagnostic is UTF-8");
+    assert!(diagnostic.contains("package-level custom-properties relationship"));
+    assert!(diagnostic.contains("restore the relationship"));
 }
 
 #[test]
@@ -128,6 +206,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("manager"))
         .stdout(predicate::str::contains("company"))
         .stdout(predicate::str::contains("hyperlinkBase"))
+        .stdout(predicate::str::contains("CustomProperty"))
         .stdout(predicate::str::contains("sparklineType"))
         .stdout(predicate::str::contains("sparklineGroup"))
         .stdout(predicate::str::contains("showEmptyCellsAs"))

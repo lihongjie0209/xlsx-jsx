@@ -45,7 +45,7 @@
               }
             }
           ],
-          "items": { "oneOf": [{ "$ref": "#/$defs/worksheet" }, { "$ref": "#/$defs/definedName" }] }
+          "items": { "oneOf": [{ "$ref": "#/$defs/worksheet" }, { "$ref": "#/$defs/definedName" }, { "$ref": "#/$defs/customProperty" }] }
         }
       },
       "additionalProperties": false
@@ -288,6 +288,32 @@
             { "not": { "required": ["totalLabel", "totalFunction"] } },
             { "not": { "required": ["totalLabel", "totalFormula"] } },
             { "not": { "required": ["totalFormula", "totalFunction"] } }
+          ],
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "customProperty": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "const": "CustomProperty" },
+        "props": {
+          "type": "object",
+          "required": ["name", "type", "value"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "type": { "enum": ["string", "integer", "real", "boolean", "dateTime"] },
+            "value": { "type": ["string", "integer", "number", "boolean"] }
+          },
+          "allOf": [
+            { "if": { "properties": { "type": { "const": "string" } } }, "then": { "properties": { "value": { "type": "string" } } } },
+            { "if": { "properties": { "type": { "const": "integer" } } }, "then": { "properties": { "value": { "type": "integer", "minimum": -2147483648, "maximum": 2147483647 } } } },
+            { "if": { "properties": { "type": { "const": "real" } } }, "then": { "properties": { "value": { "type": "number" } } } },
+            { "if": { "properties": { "type": { "const": "boolean" } } }, "then": { "properties": { "value": { "type": "boolean" } } } },
+            { "if": { "properties": { "type": { "const": "dateTime" } } }, "then": { "properties": { "value": { "type": "string" } } } }
           ],
           "additionalProperties": false
         },

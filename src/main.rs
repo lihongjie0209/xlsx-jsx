@@ -270,6 +270,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     {
         properties = properties.set_hyperlink_base(value);
     }
+    properties = compile_custom_workbook_properties(properties, &ir.workbook.children)?;
     workbook.set_properties(&properties);
     let mut local_defined_names = Vec::new();
     for value in &ir.workbook.children {
@@ -291,6 +292,9 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         let sheet: Node = serde_json::from_value(sheet_value.clone())
             .map_err(|error| Error::Compile(error.to_string()))?;
         if sheet.r#type == "DefinedName" {
+            continue;
+        }
+        if sheet.r#type == "CustomProperty" {
             continue;
         }
         let name = sheet
@@ -552,6 +556,84 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         normalize_x14_icon_rules(path, &x14_icon_normalization)?;
     }
     Ok(())
+}
+
+fn compile_custom_workbook_properties(
+    mut properties: DocProperties,
+    children: &[Value],
+) -> xlsx_jsx::Result<DocProperties> {
+    for child in children {
+        let component: Node = serde_json::from_value(child.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if component.r#type != "CustomProperty" {
+            continue;
+        }
+        let name = component
+            .props
+            .get("name")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Error::Compile("CustomProperty.name must be a string".into()))?;
+        let property_type = component
+            .props
+            .get("type")
+            .and_then(Value::as_str)
+            .ok_or_else(|| Error::Compile("CustomProperty.type must be a string".into()))?;
+        let value = component
+            .props
+            .get("value")
+            .ok_or_else(|| Error::Compile(format!("CustomProperty `{name}` requires value")))?;
+        properties = match property_type {
+            "string" => properties.set_custom_property(
+                name,
+                value.as_str().ok_or_else(|| {
+                    Error::Compile(format!("CustomProperty `{name}` requires a string value"))
+                })?,
+            ),
+            "integer" => properties.set_custom_property(
+                name,
+                i32::try_from(value.as_i64().ok_or_else(|| {
+                    Error::Compile(format!("CustomProperty `{name}` requires an integer value"))
+                })?)
+                .map_err(|error| {
+                    Error::Compile(format!(
+                        "CustomProperty `{name}` integer is out of range: {error}"
+                    ))
+                })?,
+            ),
+            "real" => properties.set_custom_property(
+                name,
+                value.as_f64().ok_or_else(|| {
+                    Error::Compile(format!("CustomProperty `{name}` requires a real value"))
+                })?,
+            ),
+            "boolean" => properties.set_custom_property(
+                name,
+                value.as_bool().ok_or_else(|| {
+                    Error::Compile(format!("CustomProperty `{name}` requires a boolean value"))
+                })?,
+            ),
+            "dateTime" => {
+                let text = value.as_str().ok_or_else(|| {
+                    Error::Compile(format!(
+                        "CustomProperty `{name}` requires a dateTime string"
+                    ))
+                })?;
+                let datetime =
+                    rust_xlsxwriter::ExcelDateTime::parse_from_str(text).map_err(|error| {
+                        Error::Compile(format!(
+                            "CustomProperty `{name}` has invalid dateTime `{text}`: {error}"
+                        ))
+                    })?;
+                properties.set_custom_property(name, &datetime)
+            }
+            _ => {
+                return Err(Error::Compile(format!(
+                    "CustomProperty `{name}` has unsupported type `{property_type}`"
+                )));
+            }
+        };
+    }
+    Ok(properties)
 }
 
 #[derive(Default)]
@@ -5940,7 +6022,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         }
     }
     let mut output = String::from(
-        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, SparklineGroup, Image, BackgroundImage, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
+        "import { Workbook, Worksheet, DefinedName, CustomProperty, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, SparklineGroup, Image, BackgroundImage, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
     for (name, value) in [
         ("title", workbook_properties.title.as_deref()),
@@ -5962,6 +6044,18 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         }
     }
     output.push_str(">\n");
+    for property in &workbook_properties.custom_properties {
+        let name = serde_json::to_string(&property.name)
+            .map_err(|error| Error::Reverse(error.to_string()))?;
+        let property_type = serde_json::to_string(property.property_type)
+            .map_err(|error| Error::Reverse(error.to_string()))?;
+        let value = serde_json::to_string(&property.value)
+            .map_err(|error| Error::Reverse(error.to_string()))?;
+        let _ = writeln!(
+            output,
+            "  <CustomProperty name={{{name}}} type={{{property_type}}} value={{{value}}} />"
+        );
+    }
     for defined_name in &workbook_properties.defined_names {
         let _ = writeln!(
             output,
@@ -9224,6 +9318,7 @@ fn audit_reverse_subset(
         source,
     })?;
     let mut archive = ZipArchive::new(file).map_err(|error| Error::Reverse(error.to_string()))?;
+    validate_custom_properties_package(&mut archive)?;
     let (formats, differential_formats) = parse_style_tables(&mut archive)?;
     let workbook_xml = read_zip_part(&mut archive, "xl/workbook.xml")?;
     let relationships_xml = read_zip_part(&mut archive, "xl/_rels/workbook.xml.rels")?;
@@ -9441,6 +9536,12 @@ fn audit_reverse_subset(
             workbook_properties.manager = extended_properties.manager;
             workbook_properties.company = extended_properties.company;
             workbook_properties.hyperlink_base = extended_properties.hyperlink_base;
+        }
+        if name == "docProps/custom.xml" {
+            let mut xml = String::new();
+            std::io::Read::read_to_string(&mut part, &mut xml)
+                .map_err(|error| Error::Reverse(error.to_string()))?;
+            workbook_properties.custom_properties = audit_custom_properties(&xml, &name)?;
         }
     }
     let mut referenced_drawing_parts = std::collections::HashSet::new();
@@ -24489,6 +24590,7 @@ fn is_supported_part(name: &str) -> bool {
             | "_rels/.rels"
             | "docProps/core.xml"
             | "docProps/app.xml"
+            | "docProps/custom.xml"
             | "xl/_rels/workbook.xml.rels"
             | "xl/workbook.xml"
             | "xl/metadata.xml"
@@ -33837,7 +33939,364 @@ struct WorkbookProperties {
     manager: Option<String>,
     company: Option<String>,
     hyperlink_base: Option<String>,
+    custom_properties: Vec<ReverseCustomProperty>,
     defined_names: Vec<ReverseDefinedName>,
+}
+
+#[derive(Debug)]
+struct ReverseCustomProperty {
+    name: String,
+    property_type: &'static str,
+    value: Value,
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "Custom-property relationship and content-type presence must be checked as one package invariant."
+)]
+fn validate_custom_properties_package(
+    archive: &mut ZipArchive<std::fs::File>,
+) -> xlsx_jsx::Result<()> {
+    const RELATIONSHIP_TYPE: &str =
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties";
+    const CONTENT_TYPE: &str =
+        "application/vnd.openxmlformats-officedocument.custom-properties+xml";
+    let part_count = archive
+        .file_names()
+        .filter(|name| *name == "docProps/custom.xml")
+        .count();
+    if part_count > 1 {
+        return Err(Error::Reverse(
+            "package contains duplicate `docProps/custom.xml` parts; keep one custom-properties part".into(),
+        ));
+    }
+    let relationships = read_zip_part(archive, "_rels/.rels")?;
+    let mut custom_relationships = Vec::new();
+    let mut reader = XmlReader::from_str(&relationships);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event) | Event::Empty(event))
+                if event.local_name().as_ref() == b"Relationship" =>
+            {
+                let mut relationship_type = None;
+                let mut target = None;
+                let mut relationship_id = None;
+                for attribute in event.attributes().with_checks(false) {
+                    let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                    let value = attribute
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                        .map_err(|error| Error::Reverse(error.to_string()))?
+                        .into_owned();
+                    match attribute.key.local_name().as_ref() {
+                        b"Id" => relationship_id = Some(value),
+                        b"Type" => relationship_type = Some(value),
+                        b"Target" => target = Some(value),
+                        _ => {}
+                    }
+                }
+                if relationship_type.as_deref() == Some(RELATIONSHIP_TYPE) {
+                    if relationship_id.as_deref().is_none_or(str::is_empty) {
+                        return Err(Error::Reverse(
+                            "package-level custom-properties relationship is missing its Id; restore a unique relationship identifier".into(),
+                        ));
+                    }
+                    custom_relationships.push(target.unwrap_or_default());
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => return Err(Error::Reverse(error.to_string())),
+        }
+    }
+    let has_part = part_count == 1;
+    if has_part != (custom_relationships.len() == 1)
+        || custom_relationships.first().is_some_and(|target| {
+            !matches!(
+                target.as_str(),
+                "docProps/custom.xml" | "/docProps/custom.xml"
+            )
+        })
+    {
+        return Err(Error::Reverse(
+            "docProps/custom.xml and its package-level custom-properties relationship are inconsistent; restore the relationship to `/docProps/custom.xml` or remove the orphan part".into(),
+        ));
+    }
+
+    let content_types = read_zip_part(archive, "[Content_Types].xml")?;
+    let mut custom_content_types = Vec::new();
+    let mut reader = XmlReader::from_str(&content_types);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event) | Event::Empty(event))
+                if event.local_name().as_ref() == b"Override" =>
+            {
+                let mut part_name = None;
+                let mut content_type = None;
+                for attribute in event.attributes().with_checks(false) {
+                    let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                    let value = attribute
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                        .map_err(|error| Error::Reverse(error.to_string()))?
+                        .into_owned();
+                    match attribute.key.local_name().as_ref() {
+                        b"PartName" => part_name = Some(value),
+                        b"ContentType" => content_type = Some(value),
+                        _ => {}
+                    }
+                }
+                if part_name.as_deref() == Some("/docProps/custom.xml") {
+                    custom_content_types.push(content_type.unwrap_or_default());
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => return Err(Error::Reverse(error.to_string())),
+        }
+    }
+    if has_part
+        != (custom_content_types.len() == 1
+            && custom_content_types
+                .first()
+                .is_some_and(|value| value == CONTENT_TYPE))
+    {
+        return Err(Error::Reverse(
+            "docProps/custom.xml and its `[Content_Types].xml` override are inconsistent; restore the custom-properties content type or remove the orphan declaration".into(),
+        ));
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "The streaming XML parser keeps property nesting, scalar typing, and duplicate-ID validation in one state machine."
+)]
+fn audit_custom_properties(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<ReverseCustomProperty>> {
+    const FMTID: &str = "{D5CDD505-2E9C-101B-9397-08002B2CF9AE}";
+    let mut reader = XmlReader::from_str(xml);
+    let mut depth = 0usize;
+    let mut properties = Vec::new();
+    let mut current_name = None;
+    let mut current_type = None;
+    let mut current_value = String::new();
+    let mut property_ids = std::collections::HashSet::new();
+    let mut property_names = std::collections::HashSet::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event)) => {
+                let name = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if depth == 1 {
+                    if name != "property" {
+                        return Err(Error::Reverse(format!(
+                            "{part} contains unsupported element `<{name}>`; remove it or add explicit custom-property support"
+                        )));
+                    }
+                    let mut fmtid = None;
+                    let mut pid = None;
+                    current_name = None;
+                    for attribute in event.attributes().with_checks(false) {
+                        let attribute =
+                            attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                        let value = attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                            .map_err(|error| Error::Reverse(error.to_string()))?
+                            .into_owned();
+                        match attribute.key.local_name().as_ref() {
+                            b"fmtid" => fmtid = Some(value),
+                            b"pid" => pid = Some(value),
+                            b"name" => current_name = Some(value),
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "{part} custom property has unsupported attribute `{}`; remove it or add explicit metadata support",
+                                    String::from_utf8_lossy(attribute.key.local_name().as_ref())
+                                )));
+                            }
+                        }
+                    }
+                    if fmtid
+                        .as_deref()
+                        .is_none_or(|value| !value.eq_ignore_ascii_case(FMTID))
+                    {
+                        return Err(Error::Reverse(format!(
+                            "{part} custom property uses an unsupported format identifier; use `{FMTID}`"
+                        )));
+                    }
+                    let property_id = pid
+                        .as_deref()
+                        .and_then(|value| value.parse::<u32>().ok())
+                        .filter(|value| *value >= 2)
+                        .ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "{part} custom property has an invalid pid; use a unique integer of at least 2"
+                            ))
+                        })?;
+                    if !property_ids.insert(property_id) {
+                        return Err(Error::Reverse(format!(
+                            "{part} contains duplicate custom-property pid `{property_id}`; repair the property IDs"
+                        )));
+                    }
+                    let name = current_name.as_deref().filter(|name| {
+                        !name.is_empty()
+                            && name.chars().count() <= 255
+                            && name.chars().all(is_valid_xml_character)
+                    }).ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "{part} custom property name must contain 1 to 255 valid XML characters; repair the name"
+                        ))
+                    })?;
+                    if !property_names.insert(name.to_lowercase()) {
+                        return Err(Error::Reverse(format!(
+                            "{part} contains duplicate custom-property name `{name}` ignoring case; keep one property or use unique names"
+                        )));
+                    }
+                    current_value.clear();
+                } else if depth == 2 {
+                    if current_type.is_some() {
+                        return Err(Error::Reverse(format!(
+                            "{part} custom property `{}` has more than one value element; keep exactly one typed value",
+                            current_name.as_deref().unwrap_or("<unnamed>")
+                        )));
+                    }
+                    current_type = Some(match name.as_str() {
+                        "lpwstr" => "string",
+                        "i4" => "integer",
+                        "r8" => "real",
+                        "bool" => "boolean",
+                        "filetime" => "dateTime",
+                        _ => {
+                            return Err(Error::Reverse(format!(
+                                "{part} custom property `{}` has unsupported value type `<{name}>`; use string, i4, r8, bool, or filetime",
+                                current_name.as_deref().unwrap_or("<unnamed>")
+                            )));
+                        }
+                    });
+                } else if depth > 2 {
+                    return Err(Error::Reverse(format!(
+                        "{part} custom property contains nested XML content; use one scalar value"
+                    )));
+                }
+                depth += 1;
+            }
+            Ok(Event::Empty(event)) => {
+                let name = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if depth == 1 {
+                    return Err(Error::Reverse(format!(
+                        "{part} contains empty custom-property element `<{name}>`; repair it with a typed scalar property"
+                    )));
+                }
+                if depth == 2 && current_type.is_none() {
+                    current_type = Some(match name.as_str() {
+                        "lpwstr" => "string",
+                        "i4" => "integer",
+                        "r8" => "real",
+                        "bool" => "boolean",
+                        "filetime" => "dateTime",
+                        _ => {
+                            return Err(Error::Reverse(format!(
+                                "{part} custom property has unsupported value type `<{name}>`"
+                            )));
+                        }
+                    });
+                }
+            }
+            Ok(Event::Text(text)) if depth == 3 => {
+                let decoded = text
+                    .decode()
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                current_value.push_str(
+                    &quick_xml::escape::unescape(&decoded)
+                        .map_err(|error| Error::Reverse(error.to_string()))?,
+                );
+            }
+            Ok(Event::CData(text)) if depth == 3 => {
+                current_value.push_str(
+                    &text
+                        .decode()
+                        .map_err(|error| Error::Reverse(error.to_string()))?,
+                );
+            }
+            Ok(Event::GeneralRef(reference)) if depth == 3 => {
+                let value = reference
+                    .resolve_char_ref()
+                    .map_err(|error| Error::Reverse(error.to_string()))?
+                    .or_else(|| match &reference[..] {
+                        b"amp" => Some('&'),
+                        b"lt" => Some('<'),
+                        b"gt" => Some('>'),
+                        b"quot" => Some('"'),
+                        b"apos" => Some('\''),
+                        _ => None,
+                    })
+                    .ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "{part} contains unsupported entity `&{};`",
+                            String::from_utf8_lossy(reference.as_ref())
+                        ))
+                    })?;
+                current_value.push(value);
+            }
+            Ok(Event::End(_)) => {
+                depth = depth.saturating_sub(1);
+                if depth == 1 {
+                    let name = current_name.take().ok_or_else(|| {
+                        Error::Reverse(format!("{part} has a property value outside `<property>`"))
+                    })?;
+                    let property_type = current_type.take().ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "{part} custom property `{name}` has no typed value; add one supported value element"
+                        ))
+                    })?;
+                    let value =
+                        parse_custom_property_value(&current_value, property_type, &name, part)?;
+                    properties.push(ReverseCustomProperty {
+                        name,
+                        property_type,
+                        value,
+                    });
+                    current_value.clear();
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => return Err(Error::Reverse(format!("invalid {part}: {error}"))),
+        }
+    }
+    Ok(properties)
+}
+
+fn parse_custom_property_value(
+    value: &str,
+    property_type: &'static str,
+    name: &str,
+    part: &str,
+) -> xlsx_jsx::Result<Value> {
+    let invalid_value = || {
+        Error::Reverse(format!(
+            "{part} custom property `{name}` has invalid `{property_type}` value `{value}`; repair it to a supported scalar"
+        ))
+    };
+    match property_type {
+        "string" => Ok(Value::String(value.to_owned())),
+        "integer" => value
+            .parse::<i32>()
+            .map(|value| Value::Number(value.into()))
+            .map_err(|_| invalid_value()),
+        "real" => value
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number)
+            .ok_or_else(invalid_value),
+        "boolean" => match value {
+            "true" | "1" => Ok(Value::Bool(true)),
+            "false" | "0" => Ok(Value::Bool(false)),
+            _ => Err(invalid_value()),
+        },
+        "dateTime" => {
+            rust_xlsxwriter::ExcelDateTime::parse_from_str(value).map_err(|_| invalid_value())?;
+            Ok(Value::String(value.to_owned()))
+        }
+        _ => Err(invalid_value()),
+    }
 }
 
 fn audit_app_properties(xml: &str) -> xlsx_jsx::Result<WorkbookProperties> {
@@ -36210,6 +36669,33 @@ mod tests {
             error
                 .to_string()
                 .contains("matching Workbook metadata support")
+        );
+    }
+
+    #[test]
+    fn custom_properties_preserve_type_and_value() {
+        let xml = r#"<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Department"><vt:lpwstr>Finance &amp; Risk</vt:lpwstr></property><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="3" name="Approved"><vt:bool>true</vt:bool></property></Properties>"#;
+
+        let properties = audit_custom_properties(xml, "docProps/custom.xml")
+            .expect("supported custom properties parse");
+
+        assert_eq!(properties.len(), 2);
+        assert_eq!(properties[0].value, Value::String("Finance & Risk".into()));
+        assert_eq!(properties[1].value, Value::Bool(true));
+    }
+
+    #[test]
+    fn custom_properties_reject_unsupported_value_types_with_repair_guidance() {
+        let xml = r#"<Properties xmlns="urn:custom" xmlns:vt="urn:types"><property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="Unsupported"><vt:ui4>7</vt:ui4></property></Properties>"#;
+
+        let error = audit_custom_properties(xml, "docProps/custom.xml")
+            .expect_err("unmodeled custom property types are rejected");
+
+        assert!(error.to_string().contains("Unsupported"));
+        assert!(
+            error
+                .to_string()
+                .contains("string, i4, r8, bool, or filetime")
         );
     }
 
