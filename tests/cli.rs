@@ -4494,6 +4494,78 @@ fn reverse_external_formula_backed_chart_title_without_manifest() {
 }
 
 #[test]
+fn chart_point_label_styles_compile_and_reverse() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-point-labels.tsx");
+    let output = directory.path().join("chart-point-labels.xlsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Row, Cell, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" categories="Data!A2:A4" showValue={true} customLabels={["Start", null, null]} pointLabels={{0: {fontSize: 14, fontBold: true, fontColor: "#123456", position: "outsideEnd", fillColor: "#FFFF00"}, 2: {text: "Peak", numberFormat: "0.0", lineColor: "#654321", lineWidth: 1}}} /></Chart><Row><Cell>Category</Cell><Cell>Value</Cell></Row><Row><Cell>A</Cell><Cell value={10} /></Row><Row><Cell>B</Cell><Cell value={20} /></Row><Row><Cell>C</Cell><Cell value={30} /></Row></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&output)
+        .assert()
+        .success();
+
+    let mut archive = ZipArchive::new(std::fs::File::open(&output).expect("workbook exists"))
+        .expect("workbook is a ZIP package");
+    let mut chart_xml = String::new();
+    archive
+        .by_name("xl/charts/chart1.xml")
+        .expect("chart exists")
+        .read_to_string(&mut chart_xml)
+        .expect("chart XML reads");
+    assert!(chart_xml.contains("<c:dLbl"), "{chart_xml}");
+    assert!(
+        chart_xml.contains("<a:srgbClr val=\"123456\""),
+        "{chart_xml}"
+    );
+    assert!(
+        chart_xml.contains("<c:numFmt formatCode=\"0.0\""),
+        "{chart_xml}"
+    );
+
+    let reversed = directory.path().join("chart-point-labels-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(reversed).expect("reverse source exists");
+    assert!(source.contains("pointLabels={{0:"), "{source}");
+    assert!(source.contains("fontBold: true"), "{source}");
+    assert!(source.contains("numberFormat: \"0.0\""), "{source}");
+}
+
+#[test]
+fn chart_point_labels_reject_hidden_with_other_settings() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-point-label.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B4" pointLabels={{1: {hidden: true, fontBold: true}}} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Series.pointLabels[1].hidden=true cannot be combined",
+        ));
+}
+
+#[test]
 fn chart_title_formula_rejects_static_title_and_unknown_sheet() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-chart-title-formula.tsx");
@@ -11366,6 +11438,67 @@ fn reverse_custom_chart_data_labels_round_trips_literal_text_and_gaps() {
     assert_eq!(
         std::fs::read_to_string(second_reverse).expect("second reverse source exists"),
         source
+    );
+}
+
+#[test]
+fn reverses_external_point_chart_data_label_formatting_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-point-label.xlsx");
+    let output_path = directory.path().join("external-point-label.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+    let mut label = ChartDataLabel::new();
+    label
+        .set_value("Peak")
+        .set_position(ChartDataLabelPosition::OutsideEnd)
+        .set_font(
+            ChartFont::new()
+                .set_size(14.0)
+                .set_bold()
+                .set_color(Color::RGB(0x0012_3456)),
+        );
+    let labels = [ChartDataLabel::default(), label.to_custom()];
+    chart
+        .add_series()
+        .set_categories("Data!A2:A3")
+        .set_values("Data!B2:B3")
+        .set_custom_data_labels(&labels);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).unwrap();
+    assert!(source.contains("pointLabels={{1:"), "{source}");
+    assert!(source.contains("text: \"Peak\""), "{source}");
+    assert!(source.contains("fontSize: 14"), "{source}");
+    assert!(source.contains("fontBold: true"), "{source}");
+
+    let rebuilt_path = directory.path().join("external-point-label-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt_xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        rebuilt_xml.contains("<a:rPr lang=\"en-US\" sz=\"1400\" b=\"1\">"),
+        "{rebuilt_xml}"
+    );
+    assert!(
+        rebuilt_xml.contains("<a:srgbClr val=\"123456\"/>"),
+        "{rebuilt_xml}"
     );
 }
 

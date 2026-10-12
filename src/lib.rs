@@ -5051,6 +5051,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "labelSeparator",
                 "labelNumberFormat",
                 "customLabels",
+                "pointLabels",
                 "labelFontSize",
                 "labelFontBold",
                 "labelFontItalic",
@@ -6776,6 +6777,7 @@ fn validate_series_data_label_props(chart: &Node, series: &Node) -> Result<()> {
     validate_series_data_label_font_properties(series)?;
     validate_series_data_label_shape_format(series)?;
     validate_custom_chart_data_labels(series)?;
+    validate_chart_series_point_labels(chart, series)?;
     validate_series_data_label_flags(series)?;
     if series.props.get("showPercentage").and_then(Value::as_bool) == Some(true)
         && !matches!(
@@ -7023,6 +7025,258 @@ fn validate_custom_chart_data_labels(series: &Node) -> Result<()> {
             "Series.customLabels has {} entries but Series.values contains {point_count} points; shorten the array to at most {point_count} entries",
             labels.len()
         )));
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "Point-label validation keeps index, text, display, and writer-semantic checks together."
+)]
+fn validate_chart_series_point_labels(chart: &Node, series: &Node) -> Result<()> {
+    let Some(value) = series.props.get("pointLabels") else {
+        return Ok(());
+    };
+    let Some(labels) = value.as_object() else {
+        return Err(Error::Compile(
+            "Series.pointLabels must be an object keyed by zero-based point index; use `{0: {fontSize: 14}}`".into(),
+        ));
+    };
+    if labels.is_empty() {
+        return Err(Error::Compile(
+            "Series.pointLabels cannot be empty; add a point override or omit the property".into(),
+        ));
+    }
+    let point_count = series
+        .props
+        .get("values")
+        .and_then(Value::as_str)
+        .and_then(|formula| formula.split_once('!'))
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length)
+        .ok_or_else(|| Error::Compile(
+            "Series.pointLabels requires Series.values to be a one-dimensional A1 range; use one row or column range so indices are unambiguous".into(),
+        ))?;
+    let chart_type = chart
+        .props
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let allowed = [
+        "text",
+        "hidden",
+        "showValue",
+        "showCategoryName",
+        "showSeriesName",
+        "showPercentage",
+        "showLegendKey",
+        "showLeaderLines",
+        "position",
+        "separator",
+        "numberFormat",
+        "fontSize",
+        "fontBold",
+        "fontItalic",
+        "fontUnderline",
+        "fontColor",
+        "fontName",
+        "fontPitchFamily",
+        "fontCharset",
+        "fontRotation",
+        "fillColor",
+        "fillTransparency",
+        "lineColor",
+        "lineWidth",
+        "lineDash",
+        "lineTransparency",
+        "lineHidden",
+    ];
+    for (index_text, value) in labels {
+        let Ok(index) = index_text.parse::<usize>() else {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels key `{index_text}` must be a canonical zero-based integer; remove leading zeros"
+            )));
+        };
+        if index > 1_048_575 || index.to_string() != *index_text {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels key `{index_text}` must be a canonical index from 0 through 1,048,575"
+            )));
+        }
+        if index >= point_count as usize {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels[{index}] is outside Series.values, which contains {point_count} points; shorten the index or extend the source range"
+            )));
+        }
+        let Some(properties) = value.as_object() else {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels[{index}] must be an object; provide point label properties"
+            )));
+        };
+        if properties.is_empty() {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels[{index}] cannot be empty; add an override or remove this entry"
+            )));
+        }
+        for property in properties.keys() {
+            if !allowed.contains(&property.as_str()) {
+                return Err(Error::Compile(format!(
+                    "Series.pointLabels[{index}] has unsupported property `{property}`; remove it or check `xlsx-jsx spec`"
+                )));
+            }
+        }
+        if properties.get("hidden").and_then(Value::as_bool) == Some(true) && properties.len() != 1
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels[{index}].hidden=true cannot be combined with other point label settings; remove them or set hidden={{{{false}}}}"
+            )));
+        }
+        if let Some(text) = properties.get("text") {
+            let Some(text) = text.as_str() else {
+                return Err(Error::Compile(format!(
+                    "Series.pointLabels[{index}].text must be literal text; use a quoted XML-safe string"
+                )));
+            };
+            if text.is_empty()
+                || text.chars().count() > 255
+                || !text.chars().all(is_valid_xml_character)
+            {
+                return Err(Error::Compile(format!(
+                    "Series.pointLabels[{index}].text must contain 1–255 valid XML characters; repair or shorten it"
+                )));
+            }
+            if valid_chart_source_reference(text, false) {
+                return Err(Error::Compile(format!(
+                    "Series.pointLabels[{index}].text `{text}` looks like a sheet-qualified A1 reference that the writer interprets as a formula; rephrase it as literal text"
+                )));
+            }
+            if series
+                .props
+                .get("customLabels")
+                .and_then(Value::as_array)
+                .and_then(|items| items.get(index))
+                .is_some_and(Value::is_string)
+            {
+                return Err(Error::Compile(format!(
+                    "Series.pointLabels[{index}].text conflicts with Series.customLabels[{index}]; keep the text in one property and use the other only for formatting"
+                )));
+            }
+        }
+        for property in [
+            "hidden",
+            "showValue",
+            "showCategoryName",
+            "showSeriesName",
+            "showPercentage",
+            "showLegendKey",
+            "showLeaderLines",
+            "fontBold",
+            "fontItalic",
+            "fontUnderline",
+            "lineHidden",
+        ] {
+            if properties
+                .get(property)
+                .is_some_and(|value| !value.is_boolean())
+            {
+                return Err(Error::Compile(format!(
+                    "Series.pointLabels[{index}].{property} must be a boolean; use true or false"
+                )));
+            }
+        }
+        if let Some(position) = properties.get("position") {
+            let Some(position) = position.as_str() else {
+                return Err(Error::Compile(format!(
+                    "Series.pointLabels[{index}].position must be a string; use a supported label placement"
+                )));
+            };
+            if !chart_data_label_position_is_supported(chart_type, position) {
+                return Err(Error::Compile(format!(
+                    "Series.pointLabels[{index}].position `{position}` is not supported for Chart.type `{chart_type}`; choose a chart-valid position"
+                )));
+            }
+        }
+        if let Some(separator) = properties.get("separator")
+            && separator
+                .as_str()
+                .and_then(chart_data_label_separator_value)
+                .is_none()
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels[{index}].separator must be comma, semicolon, period, space, or newline"
+            )));
+        }
+        if let Some(format) = properties.get("numberFormat")
+            && format.as_str().is_none_or(|format| {
+                format.is_empty()
+                    || format.len() > 255
+                    || !format.chars().all(is_valid_xml_character)
+            })
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels[{index}].numberFormat must contain 1–255 valid XML characters; repair or shorten the format code"
+            )));
+        }
+        if properties.get("showPercentage").and_then(Value::as_bool) == Some(true)
+            && !matches!(chart_type, "pie" | "doughnut")
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels[{index}].showPercentage is supported only for pie/doughnut charts; remove it or use a pie/doughnut chart"
+            )));
+        }
+        if properties.get("showValue").and_then(Value::as_bool) == Some(false)
+            && properties.get("showCategoryName").and_then(Value::as_bool) != Some(true)
+            && properties.get("showPercentage").and_then(Value::as_bool) != Some(true)
+            && properties
+                .iter()
+                .any(|(property, _)| property != "showValue" && property != "hidden")
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointLabels[{index}].showValue=false cannot be combined with other settings because the writer adds value labels by default; enable showCategoryName/showPercentage or remove the conflicting settings"
+            )));
+        }
+
+        let mut mapped_props = serde_json::Map::new();
+        for (property, value) in properties {
+            let mapped = match property.as_str() {
+                "fontSize" => "labelFontSize",
+                "fontBold" => "labelFontBold",
+                "fontItalic" => "labelFontItalic",
+                "fontUnderline" => "labelFontUnderline",
+                "fontColor" => "labelFontColor",
+                "fontName" => "labelFontName",
+                "fontPitchFamily" => "labelFontPitchFamily",
+                "fontCharset" => "labelFontCharset",
+                "fontRotation" => "labelFontRotation",
+                "fillColor" => "labelFillColor",
+                "fillTransparency" => "labelFillTransparency",
+                "lineColor" => "labelLineColor",
+                "lineWidth" => "labelLineWidth",
+                "lineDash" => "labelLineDash",
+                "lineTransparency" => "labelLineTransparency",
+                "lineHidden" => "labelLineHidden",
+                _ => continue,
+            };
+            mapped_props.insert(mapped.to_owned(), value.clone());
+        }
+        let mapped_series = Node {
+            r#type: "Series".into(),
+            props: mapped_props,
+            children: Vec::new(),
+        };
+        validate_series_data_label_font_properties(&mapped_series).map_err(|error| {
+            Error::Compile(
+                error
+                    .to_string()
+                    .replace("Series.label", &format!("Series.pointLabels[{index}].")),
+            )
+        })?;
+        validate_series_data_label_shape_format(&mapped_series).map_err(|error| {
+            Error::Compile(
+                error
+                    .to_string()
+                    .replace("Series.label", &format!("Series.pointLabels[{index}].")),
+            )
+        })?;
     }
     Ok(())
 }

@@ -1659,6 +1659,53 @@
               "contains": { "type": "string", "minLength": 1 },
               "minContains": 1
             },
+            "pointLabels": {
+              "type": "object",
+              "propertyNames": {
+                "pattern": "^(0|[1-9][0-9]{0,5}|10[0-3][0-9]{4}|104[0-7][0-9]{3}|1048[0-4][0-9]{2}|10485[0-6][0-9]|104857[0-5])$"
+              },
+              "patternProperties": {
+                "^(0|[1-9][0-9]*)$": {
+                  "type": "object",
+                  "properties": {
+                    "text": { "type": "string", "minLength": 1, "maxLength": 255 },
+                    "hidden": { "type": "boolean" },
+                    "showValue": { "type": "boolean" },
+                    "showCategoryName": { "type": "boolean" },
+                    "showSeriesName": { "type": "boolean" },
+                    "showPercentage": { "type": "boolean" },
+                    "showLegendKey": { "type": "boolean" },
+                    "showLeaderLines": { "type": "boolean" },
+                    "position": { "enum": ["center", "right", "left", "above", "below", "insideBase", "insideEnd", "outsideEnd", "bestFit"] },
+                    "separator": { "enum": ["comma", "semicolon", "period", "space", "newline"] },
+                    "numberFormat": { "type": "string", "minLength": 1, "maxLength": 255 },
+                    "fontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
+                    "fontBold": { "type": "boolean" },
+                    "fontItalic": { "type": "boolean" },
+                    "fontUnderline": { "type": "boolean" },
+                    "fontColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+                    "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
+                    "fontPitchFamily": { "type": "integer", "minimum": 0, "maximum": 255 },
+                    "fontCharset": { "type": "integer", "minimum": 0, "maximum": 127 },
+                    "fontRotation": { "oneOf": [{ "type": "integer", "minimum": -90, "maximum": 90 }, { "enum": [270, 271] }] },
+                    "fillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+                    "fillTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+                    "lineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+                    "lineWidth": { "type": "number", "minimum": 0.25, "maximum": 1584, "multipleOf": 0.25 },
+                    "lineDash": { "enum": ["solid", "roundDot", "squareDot", "dash", "dashDot", "longDash", "longDashDot", "longDashDotDot"] },
+                    "lineTransparency": { "type": "integer", "minimum": 0, "maximum": 100 },
+                    "lineHidden": { "type": "boolean" }
+                  },
+                  "dependentRequired": { "fillTransparency": ["fillColor"], "lineTransparency": ["lineColor"] },
+                  "allOf": [{
+                    "if": { "properties": { "hidden": { "const": true } }, "required": ["hidden"] },
+                    "then": { "maxProperties": 1 }
+                  }],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
             "labelFontSize": { "type": "number", "minimum": 1, "maximum": 4000 },
             "labelFontBold": { "type": "boolean" },
             "labelFontItalic": { "type": "boolean" },

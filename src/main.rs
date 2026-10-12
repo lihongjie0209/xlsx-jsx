@@ -2595,20 +2595,151 @@ fn configure_chart_series_data_labels(
 }
 
 fn compile_custom_chart_data_labels(series: &Node) -> Option<Vec<ChartDataLabel>> {
-    series
-        .props
-        .get("customLabels")
-        .and_then(Value::as_array)
-        .map(|labels| {
-            labels
-                .iter()
-                .map(|label| {
-                    label.as_str().map_or_else(ChartDataLabel::default, |text| {
-                        ChartDataLabel::new().set_value(text).to_custom()
-                    })
-                })
-                .collect()
-        })
+    let labels = series.props.get("customLabels").and_then(Value::as_array);
+    let point_labels = series.props.get("pointLabels").and_then(Value::as_object);
+    if labels.is_none() && point_labels.is_none() {
+        return None;
+    }
+    let max_index = labels
+        .into_iter()
+        .flat_map(|labels| labels.iter().enumerate().map(|(index, _)| index))
+        .chain(point_labels.into_iter().flat_map(|entries| {
+            entries
+                .keys()
+                .filter_map(|index| index.parse::<usize>().ok())
+        }))
+        .max()?;
+    let mut compiled = (0..=max_index)
+        .map(|_| ChartDataLabel::default())
+        .collect::<Vec<_>>();
+    if let Some(labels) = labels {
+        for (index, label) in labels.iter().enumerate() {
+            if let Some(text) = label.as_str() {
+                compiled[index] = ChartDataLabel::new().set_value(text).to_custom();
+            }
+        }
+    }
+    if let Some(entries) = point_labels {
+        for (index, properties) in entries {
+            let Ok(index) = index.parse::<usize>() else {
+                continue;
+            };
+            let Some(properties) = properties.as_object() else {
+                continue;
+            };
+            if properties.get("hidden").and_then(Value::as_bool) == Some(true) {
+                compiled[index].set_hidden();
+                continue;
+            }
+            if let Some(text) = properties.get("text").and_then(Value::as_str) {
+                compiled[index].set_value(text);
+                compiled[index] = compiled[index].to_custom();
+            }
+            for (property, setter) in [
+                ("showValue", 0_u8),
+                ("showCategoryName", 1),
+                ("showSeriesName", 2),
+                ("showPercentage", 3),
+                ("showLegendKey", 4),
+                ("showLeaderLines", 5),
+            ] {
+                if properties.get(property).and_then(Value::as_bool) == Some(true) {
+                    match setter {
+                        0 => {
+                            compiled[index].show_value();
+                        }
+                        1 => {
+                            compiled[index].show_category_name();
+                        }
+                        2 => {
+                            compiled[index].show_series_name();
+                        }
+                        3 => {
+                            compiled[index].show_percentage();
+                        }
+                        4 => {
+                            compiled[index].show_legend_key();
+                        }
+                        _ => {
+                            compiled[index].show_leader_lines();
+                        }
+                    }
+                }
+            }
+            if let Some(position) = properties
+                .get("position")
+                .and_then(Value::as_str)
+                .and_then(chart_data_label_position)
+            {
+                compiled[index].set_position(position);
+            }
+            if let Some(separator) = properties
+                .get("separator")
+                .and_then(Value::as_str)
+                .and_then(chart_data_label_separator_value)
+            {
+                compiled[index].set_separator(separator);
+            }
+            if let Some(number_format) = properties.get("numberFormat").and_then(Value::as_str) {
+                compiled[index].set_num_format(number_format);
+            }
+            let mapped = chart_point_label_series(properties);
+            if has_chart_data_label_font(&mapped) {
+                configure_chart_data_label_font(&mut compiled[index], &mapped);
+            }
+            if let Some(mut format) = chart_shape_format(&mapped, "labelFillColor", "labelLine") {
+                compiled[index].set_format(&mut format);
+            }
+        }
+    }
+    Some(compiled)
+}
+
+fn chart_point_label_series(properties: &serde_json::Map<String, Value>) -> Node {
+    let mut mapped = serde_json::Map::new();
+    for (source, target) in [
+        ("fontSize", "labelFontSize"),
+        ("fontBold", "labelFontBold"),
+        ("fontItalic", "labelFontItalic"),
+        ("fontUnderline", "labelFontUnderline"),
+        ("fontColor", "labelFontColor"),
+        ("fontName", "labelFontName"),
+        ("fontPitchFamily", "labelFontPitchFamily"),
+        ("fontCharset", "labelFontCharset"),
+        ("fontRotation", "labelFontRotation"),
+        ("fillColor", "labelFillColor"),
+        ("fillTransparency", "labelFillTransparency"),
+        ("lineColor", "labelLineColor"),
+        ("lineWidth", "labelLineWidth"),
+        ("lineDash", "labelLineDash"),
+        ("lineTransparency", "labelLineTransparency"),
+        ("lineHidden", "labelLineHidden"),
+    ] {
+        if let Some(value) = properties.get(source) {
+            mapped.insert(target.to_owned(), value.clone());
+        }
+    }
+    Node {
+        r#type: "Series".into(),
+        props: mapped,
+        children: Vec::new(),
+    }
+}
+
+fn has_chart_data_label_font(series: &Node) -> bool {
+    [
+        "labelFontSize",
+        "labelFontBold",
+        "labelFontItalic",
+        "labelFontUnderline",
+        "labelFontColor",
+        "labelFontName",
+        "labelFontPitchFamily",
+        "labelFontCharset",
+        "labelFontRotation",
+    ]
+    .iter()
+    .any(|property| series.props.contains_key(*property))
 }
 
 fn compile_series_chart_data_label(series: &Node) -> Option<ChartDataLabel> {
@@ -7004,6 +7135,29 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 }
             }
             output.push_str(" ]}");
+        }
+        if !series.point_labels.is_empty() {
+            output.push_str(" pointLabels={{");
+            for (label_index, (index, properties)) in series.point_labels.iter().enumerate() {
+                if label_index > 0 {
+                    output.push_str(", ");
+                }
+                let _ = write!(output, "{index}: {{");
+                for (property_index, (property, value)) in properties.iter().enumerate() {
+                    if property_index > 0 {
+                        output.push_str(", ");
+                    }
+                    let _ = write!(output, "{property}: ");
+                    match value {
+                        Value::String(value) => {
+                            let _ = write!(output, "{value:?}");
+                        }
+                        _ => output.push_str(&value.to_string()),
+                    }
+                }
+                output.push('}');
+            }
+            output.push_str("}}");
         }
         append_chart_series_label_font_properties(output, series);
         if series.error_bars.is_empty() && series.trendline.is_none() {
@@ -12719,6 +12873,547 @@ fn validate_chart_axis_pair(
     clippy::too_many_lines,
     reason = "Chart XML parsing validates the complete supported chart structure in one pass."
 )]
+fn parse_chart_point_labels(
+    xml: &str,
+    part: &str,
+    series_count: usize,
+) -> xlsx_jsx::Result<Vec<BTreeMap<usize, serde_json::Map<String, Value>>>> {
+    let mut labels = (0..series_count)
+        .map(|_| BTreeMap::new())
+        .collect::<Vec<_>>();
+    let mut reader = XmlReader::from_str(xml);
+    let mut stack = Vec::<String>::new();
+    let mut series_index = None;
+    let mut active_index = None;
+    let mut properties = serde_json::Map::new();
+    let mut text = String::new();
+    let mut text_open = false;
+    loop {
+        match reader.read_event() {
+            Ok(event @ (Event::Start(_) | Event::Empty(_))) => {
+                let is_empty = matches!(event, Event::Empty(_));
+                let (Event::Start(event) | Event::Empty(event)) = event else {
+                    unreachable!()
+                };
+                let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                let in_label = stack.iter().any(|item| item == "dLbl");
+                if tag == "ser" && !in_label {
+                    let index = series_index.map_or(0, |index: usize| index + 1);
+                    if index >= series_count {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has more data series than its primary parser; repair the chart series structure"
+                        )));
+                    }
+                    series_index = Some(index);
+                }
+                if tag == "dLbl" && stack.last().is_some_and(|item| item == "dLbls") {
+                    if active_index.is_some() {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` nests point data labels; keep one `<c:dLbl>` per point"
+                        )));
+                    }
+                    active_index = None;
+                    properties.clear();
+                    text.clear();
+                } else if in_label || tag == "dLbl" {
+                    let current_series = series_index.ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "chart part `{part}` contains point data labels outside a series"
+                        ))
+                    })?;
+                    match tag.as_str() {
+                        "idx" => {
+                            let raw = chart_xml_attribute(&event, "val", reader.decoder())?
+                                .ok_or_else(|| Error::Reverse(format!(
+                                    "chart part `{part}` has a point label without `<c:idx>`; add its zero-based data point index"
+                                )))?;
+                            let index = raw.parse::<usize>().ok().filter(|index| *index <= 1_048_575)
+                                .ok_or_else(|| Error::Reverse(format!(
+                                    "chart part `{part}` has invalid point-label index `{raw}`; use a zero-based index"
+                                )))?;
+                            active_index = Some(index);
+                        }
+                        "t" if stack.iter().any(|item| item == "rich") => text_open = true,
+                        "showVal" | "showCatName" | "showSerName" | "showPercent"
+                        | "showLegendKey" | "showLeaderLines" => {
+                            let raw = chart_xml_attribute(&event, "val", reader.decoder())?
+                                .unwrap_or_else(|| "1".to_owned());
+                            let enabled =
+                                parse_xml_bool(&raw, part, "point data-label display flag")?;
+                            if !enabled {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has `{tag}=false` on a point label, which the pinned writer cannot reproduce; remove the explicit false override or choose a different data-label setting"
+                                )));
+                            }
+                            if !(tag == "showVal" && stack.iter().any(|item| item == "rich")) {
+                                let property = match tag.as_str() {
+                                    "showVal" => "showValue",
+                                    "showCatName" => "showCategoryName",
+                                    "showSerName" => "showSeriesName",
+                                    "showPercent" => "showPercentage",
+                                    "showLegendKey" => "showLegendKey",
+                                    _ => "showLeaderLines",
+                                };
+                                point_label_insert(
+                                    &mut properties,
+                                    property,
+                                    Value::Bool(true),
+                                    part,
+                                    current_series,
+                                    active_index,
+                                )?;
+                            }
+                        }
+                        "delete" => {
+                            let raw = chart_xml_attribute(&event, "val", reader.decoder())?
+                                .unwrap_or_else(|| "1".to_owned());
+                            if parse_xml_bool(&raw, part, "point data-label delete")? {
+                                point_label_insert(
+                                    &mut properties,
+                                    "hidden",
+                                    Value::Bool(true),
+                                    part,
+                                    current_series,
+                                    active_index,
+                                )?;
+                            }
+                        }
+                        "dLblPos" => {
+                            let raw = chart_xml_attribute(&event, "val", reader.decoder())?.ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has dLblPos without a value; use a supported label position"
+                            )))?;
+                            let position = chart_data_label_position_from_ooxml(&raw).ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` uses unsupported point-label position `{raw}`; use a chart-supported position"
+                            )))?;
+                            point_label_insert(
+                                &mut properties,
+                                "position",
+                                Value::String(position.to_owned()),
+                                part,
+                                current_series,
+                                active_index,
+                            )?;
+                        }
+                        "separator" => {
+                            let raw = chart_xml_attribute(&event, "val", reader.decoder())?.ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a point-label separator without a value"
+                            )))?;
+                            let raw = raw.trim_end();
+                            if let Some(separator) =
+                                raw.chars().next().and_then(chart_data_label_separator_name)
+                            {
+                                point_label_insert(
+                                    &mut properties,
+                                    "separator",
+                                    Value::String(separator.to_owned()),
+                                    part,
+                                    current_series,
+                                    active_index,
+                                )?;
+                            } else {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has an unsupported point-label separator `{raw}`; use comma, semicolon, period, space, or newline"
+                                )));
+                            }
+                        }
+                        "numFmt" => {
+                            let format = chart_xml_attribute(&event, "formatCode", reader.decoder())?.ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a point-label numFmt without formatCode"
+                            )))?;
+                            let linked =
+                                chart_xml_attribute(&event, "sourceLinked", reader.decoder())?;
+                            if linked.as_deref() != Some("0") {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a linked or implicit point-label number format; use sourceLinked=0 or remove the override"
+                                )));
+                            }
+                            point_label_insert(
+                                &mut properties,
+                                "numberFormat",
+                                Value::String(format),
+                                part,
+                                current_series,
+                                active_index,
+                            )?;
+                        }
+                        "rPr" | "defRPr" => {
+                            for (attribute, property) in
+                                [("sz", "fontSize"), ("b", "fontBold"), ("i", "fontItalic")]
+                            {
+                                if let Some(raw) =
+                                    chart_xml_attribute(&event, attribute, reader.decoder())?
+                                {
+                                    let value = if attribute == "sz" {
+                                        let size = raw.parse::<u32>().ok().filter(|size| (100..=400_000).contains(size)).ok_or_else(|| Error::Reverse(format!(
+                                            "chart part `{part}` has invalid point-label font size `{raw}`; use 1–4000 points"
+                                        )))?;
+                                        Value::from(f64::from(size) / 100.0)
+                                    } else {
+                                        Value::Bool(parse_xml_bool(
+                                            &raw,
+                                            part,
+                                            "point-label font emphasis",
+                                        )?)
+                                    };
+                                    point_label_insert(
+                                        &mut properties,
+                                        property,
+                                        value,
+                                        part,
+                                        current_series,
+                                        active_index,
+                                    )?;
+                                }
+                            }
+                            if let Some(raw) = chart_xml_attribute(&event, "u", reader.decoder())? {
+                                let underline = match raw.as_str() {
+                                    "sng" => true,
+                                    "none" => false,
+                                    _ => {
+                                        return Err(Error::Reverse(format!(
+                                            "chart part `{part}` has unsupported point-label underline `{raw}`; use single or none"
+                                        )));
+                                    }
+                                };
+                                point_label_insert(
+                                    &mut properties,
+                                    "fontUnderline",
+                                    Value::Bool(underline),
+                                    part,
+                                    current_series,
+                                    active_index,
+                                )?;
+                            }
+                        }
+                        "latin" => {
+                            for (attribute, property) in [
+                                ("typeface", "fontName"),
+                                ("pitchFamily", "fontPitchFamily"),
+                                ("charset", "fontCharset"),
+                            ] {
+                                if let Some(raw) =
+                                    chart_xml_attribute(&event, attribute, reader.decoder())?
+                                {
+                                    let value = match attribute {
+                                        "typeface" if !raw.is_empty() && raw.chars().all(is_valid_xml_character) => Value::String(raw),
+                                        "pitchFamily" => raw.parse::<u8>().ok().map(Value::from).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has invalid point-label font pitch-family `{raw}`; use 0–255")))?,
+                                        "charset" => raw.parse::<u8>().ok().filter(|value| *value <= 127).map(Value::from).ok_or_else(|| Error::Reverse(format!("chart part `{part}` has schema-invalid point-label charset `{raw}`; use 0–127")))?,
+                                        _ => return Err(Error::Reverse(format!("chart part `{part}` has an empty or invalid point-label font typeface"))),
+                                    };
+                                    point_label_insert(
+                                        &mut properties,
+                                        property,
+                                        value,
+                                        part,
+                                        current_series,
+                                        active_index,
+                                    )?;
+                                }
+                            }
+                        }
+                        "bodyPr" if stack.iter().any(|item| item == "txPr") => {
+                            let raw = chart_xml_attribute(&event, "rot", reader.decoder())?;
+                            let vertical = chart_xml_attribute(&event, "vert", reader.decoder())?;
+                            if let Some(rotation) = parse_chart_text_rotation(
+                                raw.as_deref(),
+                                vertical.as_deref(),
+                                part,
+                                "point data-label font",
+                            )? {
+                                point_label_insert(
+                                    &mut properties,
+                                    "fontRotation",
+                                    Value::from(rotation),
+                                    part,
+                                    current_series,
+                                    active_index,
+                                )?;
+                            }
+                        }
+                        "ln" => {
+                            if let Some(raw) = chart_xml_attribute(&event, "w", reader.decoder())? {
+                                let emus = raw.parse::<u32>().ok().filter(|value| *value > 0).ok_or_else(|| Error::Reverse(format!(
+                                    "chart part `{part}` has invalid point-label line width `{raw}`"
+                                )))?;
+                                let width = f64::from(emus) / 12_700.0;
+                                if (width * 4.0).fract() != 0.0 || !(0.25..=1584.0).contains(&width)
+                                {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has a point-label line width outside 0.25-point increments; use a supported ChartLine width"
+                                    )));
+                                }
+                                point_label_insert(
+                                    &mut properties,
+                                    "lineWidth",
+                                    Value::from(width),
+                                    part,
+                                    current_series,
+                                    active_index,
+                                )?;
+                            }
+                        }
+                        "prstDash" => {
+                            let raw = chart_xml_attribute(&event, "val", reader.decoder())?
+                                .ok_or_else(|| {
+                                    Error::Reverse(format!(
+                                        "chart part `{part}` has point-label prstDash without val"
+                                    ))
+                                })?;
+                            let dash = match raw.as_str() {
+                                "solid" => "solid",
+                                "sysDot" => "roundDot",
+                                "sysDash" => "squareDot",
+                                "dash" => "dash",
+                                "dashDot" => "dashDot",
+                                "lgDash" => "longDash",
+                                "lgDashDot" => "longDashDot",
+                                "lgDashDotDot" => "longDashDotDot",
+                                _ => {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has unsupported point-label dash `{raw}`"
+                                    )));
+                                }
+                            };
+                            point_label_insert(
+                                &mut properties,
+                                "lineDash",
+                                Value::String(dash.to_owned()),
+                                part,
+                                current_series,
+                                active_index,
+                            )?;
+                        }
+                        "noFill" if stack.iter().any(|item| item == "ln") => {
+                            point_label_insert(
+                                &mut properties,
+                                "lineHidden",
+                                Value::Bool(true),
+                                part,
+                                current_series,
+                                active_index,
+                            )?;
+                        }
+                        "srgbClr" => {
+                            let raw = chart_xml_attribute(&event, "val", reader.decoder())?
+                                .ok_or_else(|| {
+                                    Error::Reverse(format!(
+                                        "chart part `{part}` has point-label srgbClr without val"
+                                    ))
+                                })?;
+                            if raw.len() != 6 || !raw.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has a non-RGB point-label color; use an opaque RGB color"
+                                )));
+                            }
+                            let color = format!("#{raw}").to_ascii_uppercase();
+                            let property = if stack.iter().any(|item| item == "txPr")
+                                || stack
+                                    .iter()
+                                    .any(|item| matches!(item.as_str(), "rPr" | "defRPr"))
+                            {
+                                "fontColor"
+                            } else if stack.iter().any(|item| item == "ln") {
+                                "lineColor"
+                            } else {
+                                "fillColor"
+                            };
+                            point_label_insert(
+                                &mut properties,
+                                property,
+                                Value::String(color),
+                                part,
+                                current_series,
+                                active_index,
+                            )?;
+                        }
+                        "alpha" => {
+                            let raw = chart_xml_attribute(&event, "val", reader.decoder())?
+                                .ok_or_else(|| {
+                                    Error::Reverse(format!(
+                                        "chart part `{part}` has point-label alpha without val"
+                                    ))
+                                })?;
+                            let alpha = raw
+                                .parse::<u32>()
+                                .ok()
+                                .filter(|value| *value <= 100_000)
+                                .ok_or_else(|| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has invalid point-label alpha `{raw}`"
+                                ))
+                            })?;
+                            if alpha % 1000 != 0 {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has point-label transparency that is not a whole percentage"
+                                )));
+                            }
+                            let transparency = 100 - alpha / 1000;
+                            let property = if stack.iter().any(|item| item == "txPr")
+                                || stack
+                                    .iter()
+                                    .any(|item| matches!(item.as_str(), "rPr" | "defRPr"))
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has translucent point-label font color; only opaque RGB fonts are supported"
+                                )));
+                            } else if stack.iter().any(|item| item == "ln") {
+                                "lineTransparency"
+                            } else {
+                                "fillTransparency"
+                            };
+                            point_label_insert(
+                                &mut properties,
+                                property,
+                                Value::from(transparency),
+                                part,
+                                current_series,
+                                active_index,
+                            )?;
+                        }
+                        "dLbl" | "layout" | "tx" | "rich" | "bodyPr" | "lstStyle" | "p" | "pPr"
+                        | "r" | "t" | "txPr" | "spPr" | "solidFill" | "fill" | "line"
+                        | "noFill" | "extLst" => {}
+                        "f" | "strRef" | "strCache" => {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a formula/range-backed custom data label at a point; convert it to static text or remove the point label"
+                            )));
+                        }
+                        _ => {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported point data-label structure `<{tag}>`; remove it or extend point-label support"
+                            )));
+                        }
+                    }
+                }
+                if !is_empty {
+                    stack.push(tag);
+                } else if tag == "dLbl" {
+                    finish_chart_point_label(
+                        &mut labels,
+                        series_index,
+                        active_index,
+                        &mut properties,
+                        &mut text,
+                        part,
+                    )?;
+                    active_index = None;
+                }
+            }
+            Ok(Event::Text(value)) if text_open => {
+                text.push_str(
+                    &value
+                        .xml_content(XmlVersion::Implicit1_0)
+                        .map_err(|error| Error::Reverse(error.to_string()))?,
+                );
+            }
+            Ok(Event::GeneralRef(value)) if text_open => {
+                let entity = value
+                    .decode()
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                let resolved = value.resolve_char_ref().map_err(|error| Error::Reverse(error.to_string()))?
+                    .map_or_else(|| quick_xml::escape::resolve_predefined_entity(&entity).map(str::to_owned), |character| Some(character.to_string()))
+                    .ok_or_else(|| Error::Reverse(format!("chart part `{part}` point-label text has unsupported entity `&{entity};`")))?;
+                text.push_str(&resolved);
+            }
+            Ok(Event::End(event)) => {
+                let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if tag == "t" {
+                    text_open = false;
+                }
+                if tag == "dLbl" {
+                    finish_chart_point_label(
+                        &mut labels,
+                        series_index,
+                        active_index,
+                        &mut properties,
+                        &mut text,
+                        part,
+                    )?;
+                    active_index = None;
+                }
+                stack.pop();
+            }
+            Ok(Event::Eof) => break,
+            Err(error) => {
+                return Err(Error::Reverse(format!(
+                    "invalid chart XML in `{part}`: {error}"
+                )));
+            }
+            _ => {}
+        }
+    }
+    Ok(labels)
+}
+
+fn point_label_insert(
+    properties: &mut serde_json::Map<String, Value>,
+    property: &str,
+    value: Value,
+    part: &str,
+    series: usize,
+    index: Option<usize>,
+) -> xlsx_jsx::Result<()> {
+    let index = index.ok_or_else(|| Error::Reverse(format!(
+        "chart part `{part}` has a point-label property before its `<c:idx>`; add a zero-based point index"
+    )))?;
+    if properties
+        .get(property)
+        .is_some_and(|previous| previous != &value)
+    {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has inconsistent `{property}` values on Series {} point {index}; make them identical",
+            series + 1
+        )));
+    }
+    properties.insert(property.to_owned(), value);
+    Ok(())
+}
+
+fn finish_chart_point_label(
+    labels: &mut [BTreeMap<usize, serde_json::Map<String, Value>>],
+    series: Option<usize>,
+    index: Option<usize>,
+    properties: &mut serde_json::Map<String, Value>,
+    text: &mut String,
+    part: &str,
+) -> xlsx_jsx::Result<()> {
+    let series = series.ok_or_else(|| {
+        Error::Reverse(format!(
+            "chart part `{part}` has a point label outside a series"
+        ))
+    })?;
+    let index = index.ok_or_else(|| Error::Reverse(format!(
+        "chart part `{part}` has a point label without `<c:idx>`; add its zero-based data point index"
+    )))?;
+    if !text.is_empty() {
+        if text.chars().count() > 255 || !text.chars().all(is_valid_xml_character) {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has point-label text outside 1–255 valid XML characters; repair or shorten it"
+            )));
+        }
+        properties.insert("text".to_owned(), Value::String(std::mem::take(text)));
+        // The writer serializes showVal=1 with every custom literal label; set_value() reproduces it.
+        properties.remove("showValue");
+    }
+    let target = labels.get_mut(series).ok_or_else(|| {
+        Error::Reverse(format!(
+            "chart part `{part}` has a point label for missing Series {}",
+            series + 1
+        ))
+    })?;
+    if target.insert(index, std::mem::take(properties)).is_some() {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` repeats a point data label for Series {} point {index}; keep one `<c:dLbl>` entry",
+            series + 1
+        )));
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "Chart XML parsing remains a single structural pass so series and axis state stay synchronized."
+)]
 fn parse_chart_xml(
     xml: &str,
     part: &str,
@@ -13302,6 +13997,12 @@ fn parse_chart_xml(
                     unreachable!()
                 };
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if tag == "dLbl" || stack.iter().any(|ancestor| ancestor == "dLbl") {
+                    if !is_empty {
+                        stack.push(tag);
+                    }
+                    continue;
+                }
                 if let Some(axis_tag) = ignored_secondary_axis.as_deref() {
                     if !is_empty {
                         stack.push(tag);
@@ -16704,6 +17405,7 @@ fn parse_chart_xml(
                         point_colors: BTreeMap::new(),
                         point_color_transparencies: BTreeMap::new(),
                         custom_labels: BTreeMap::new(),
+                        point_labels: BTreeMap::new(),
                         pending_custom_label_index: None,
                         trendline: None,
                         show_value: None,
@@ -19797,6 +20499,12 @@ fn parse_chart_xml(
             }
             Ok(Event::End(event)) => {
                 let tag = String::from_utf8_lossy(event.local_name().as_ref()).into_owned();
+                if stack.iter().any(|ancestor| ancestor == "dLbl") {
+                    if stack.last().is_some_and(|parent| parent == &tag) {
+                        stack.pop();
+                    }
+                    continue;
+                }
                 if ignored_secondary_axis.as_deref() == Some(tag.as_str()) {
                     ignored_secondary_axis = None;
                     stack.pop();
@@ -20152,6 +20860,24 @@ fn parse_chart_xml(
         return Err(Error::Reverse(format!(
             "chart part `{part}` hides an axis without a supported axPos; repair the axis position"
         )));
+    }
+    let parsed_point_labels = parse_chart_point_labels(xml, part, series.len())?;
+    for (series_item, mut point_labels) in series.iter_mut().zip(parsed_point_labels) {
+        for (index, mut label) in std::mem::take(&mut point_labels) {
+            if label.len() == 1
+                && let Some(Value::String(text)) = label.remove("text")
+            {
+                if series_item.custom_labels.insert(index, text).is_some() {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` repeats a custom data label for point {index}; keep one point label"
+                    )));
+                }
+            } else if series_item.point_labels.insert(index, label).is_some() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats point-level formatting for point {index}; keep one label override"
+                )));
+            }
+        }
     }
     let chart_type = chart_type.ok_or_else(|| {
         Error::Reverse(format!(
@@ -26199,6 +26925,7 @@ struct WorksheetChartSeries {
     point_colors: BTreeMap<usize, String>,
     point_color_transparencies: BTreeMap<usize, u32>,
     custom_labels: BTreeMap<usize, String>,
+    point_labels: BTreeMap<usize, serde_json::Map<String, Value>>,
     pending_custom_label_index: Option<usize>,
     trendline: Option<WorksheetChartTrendline>,
     show_value: Option<bool>,

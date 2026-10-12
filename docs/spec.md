@@ -798,8 +798,26 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   be non-empty XML-safe text. Trailing `null` entries are omitted on reverse,
   so canonical arrays end at the last custom label. The array cannot exceed
   the one-dimensional `Series.values` point count. Reverse preserves static
-  custom text labels and rejects formula/range-backed labels, point-specific
-  formatting, and unsupported label metadata with repair guidance.
+  custom text labels and rejects formula/range-backed labels and unsupported
+  label metadata with repair guidance.
+- `Series.pointLabels?: Record<pointIndex, PointLabel>` adds sparse point-level
+  overrides by zero-based index (0–1,048,575). Each object may set literal
+  `text`, `hidden`, display flags (`showValue`, `showCategoryName`,
+  `showSeriesName`, `showPercentage`, `showLegendKey`, `showLeaderLines`),
+  `position`, `separator`, `numberFormat`, the point font subset (`fontSize`,
+  `fontBold`, `fontItalic`, `fontUnderline`, `fontColor`, `fontName`,
+  `fontPitchFamily`, `fontCharset`, `fontRotation`), and point label shape
+  subset (`fillColor`, `fillTransparency`, `lineColor`, `lineWidth`,
+  `lineDash`, `lineTransparency`, `lineHidden`). Font sizes are points;
+  rotation uses the same degree values as series labels; fill/line transparency
+  uses integer percentages; line width is 0.25–1584 points in quarter-point
+  increments. `hidden: true` is exclusive with all other point label options.
+  The `text` property accepts only literal XML-safe text; formulas and
+  multi-run content are rejected. A point's text may come from either
+  `customLabels` or `pointLabels.text`, never both. Other `pointLabels` options
+  may overlay a `customLabels` entry at the same index. Reverse preserves
+  point-level settings from external charts and rejects any setting outside
+  this subset rather than folding it into series defaults.
 - `Chart.legendOverlay?: boolean` places the visible chart legend over the plot area
   when true. Omission/false keeps the legend outside the plot area. The property
   requires the legend to remain visible (`showLegend` must not be false). Reverse
