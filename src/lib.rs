@@ -7395,6 +7395,13 @@ fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<Stri
             "showHiddenData",
             "rightToLeft",
             "showEmptyCellsAs",
+            "sparklineColor",
+            "negativePointColor",
+            "markersColor",
+            "firstPointColor",
+            "lastPointColor",
+            "highPointColor",
+            "lowPointColor",
         ],
         "Sparkline",
     )?;
@@ -7508,6 +7515,13 @@ fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Ve
             "showHiddenData",
             "rightToLeft",
             "showEmptyCellsAs",
+            "sparklineColor",
+            "negativePointColor",
+            "markersColor",
+            "firstPointColor",
+            "lastPointColor",
+            "highPointColor",
+            "lowPointColor",
         ],
         "SparklineGroup",
     )?;
@@ -7631,6 +7645,38 @@ fn validate_sparkline_options(component: &Node, name: &str) -> Result<()> {
         return Err(Error::Compile(format!(
             "{name}.showEmptyCellsAs must be gap, zero, or span; choose one of those values"
         )));
+    }
+    for (property, flag) in [
+        ("sparklineColor", None),
+        ("negativePointColor", Some("showNegativePoints")),
+        ("markersColor", Some("showMarkers")),
+        ("firstPointColor", Some("showFirstPoint")),
+        ("lastPointColor", Some("showLastPoint")),
+        ("highPointColor", Some("showHighPoint")),
+        ("lowPointColor", Some("showLowPoint")),
+    ] {
+        if let Some(value) = component.props.get(property) {
+            let Some(color) = value.as_str() else {
+                return Err(Error::Compile(format!(
+                    "{name}.{property} must be an opaque RGB color in `#RRGGBB` form"
+                )));
+            };
+            if color.len() != 7
+                || !color.starts_with('#')
+                || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return Err(Error::Compile(format!(
+                    "{name}.{property} `{color}` must be an opaque RGB color in `#RRGGBB` form"
+                )));
+            }
+            if let Some(flag) = flag
+                && component.props.get(flag).and_then(Value::as_bool) == Some(false)
+            {
+                return Err(Error::Compile(format!(
+                    "{name}.{property} enables `{flag}` in the pinned writer; remove the explicit false value or omit the color"
+                )));
+            }
+        }
     }
     Ok(())
 }

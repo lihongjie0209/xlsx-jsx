@@ -532,7 +532,14 @@
             "showAxis": { "type": "boolean" },
             "showHiddenData": { "type": "boolean" },
             "rightToLeft": { "type": "boolean" },
-            "showEmptyCellsAs": { "enum": ["gap", "zero", "span"] }
+            "showEmptyCellsAs": { "enum": ["gap", "zero", "span"] },
+            "sparklineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "negativePointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "markersColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "firstPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "lastPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "highPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "lowPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
           },
           "additionalProperties": false
         },
@@ -562,7 +569,14 @@
             "showAxis": { "type": "boolean" },
             "showHiddenData": { "type": "boolean" },
             "rightToLeft": { "type": "boolean" },
-            "showEmptyCellsAs": { "enum": ["gap", "zero", "span"] }
+            "showEmptyCellsAs": { "enum": ["gap", "zero", "span"] },
+            "sparklineColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "negativePointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "markersColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "firstPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "lastPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "highPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "lowPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
           },
           "additionalProperties": false
         },

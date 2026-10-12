@@ -1036,6 +1036,31 @@ fn apply_sparkline_options(mut sparkline: XlsxSparkline, component: &Node) -> Xl
             _ => unreachable!("validated Sparkline.showEmptyCellsAs"),
         });
     }
+    for property in [
+        "sparklineColor",
+        "negativePointColor",
+        "markersColor",
+        "firstPointColor",
+        "lastPointColor",
+        "highPointColor",
+        "lowPointColor",
+    ] {
+        if let Some(value) = component.props.get(property).and_then(Value::as_str) {
+            let color = Color::RGB(
+                u32::from_str_radix(&value[1..], 16).expect("validated Sparkline RGB color"),
+            );
+            sparkline = match property {
+                "sparklineColor" => sparkline.set_sparkline_color(color),
+                "negativePointColor" => sparkline.set_negative_points_color(color),
+                "markersColor" => sparkline.set_markers_color(color),
+                "firstPointColor" => sparkline.set_first_point_color(color),
+                "lastPointColor" => sparkline.set_last_point_color(color),
+                "highPointColor" => sparkline.set_high_point_color(color),
+                "lowPointColor" => sparkline.set_low_point_color(color),
+                _ => unreachable!("known Sparkline color property"),
+            };
+        }
+    }
     sparkline
 }
 
@@ -6376,6 +6401,19 @@ fn render_sparklines(output: &mut String, sparklines: &[WorksheetSparkline]) {
                 " showEmptyCellsAs={:?}",
                 sparkline.options.show_empty_cells_as
             );
+        }
+        for (value, property) in [
+            (&sparkline.options.colors.sparkline, "sparklineColor"),
+            (&sparkline.options.colors.negative, "negativePointColor"),
+            (&sparkline.options.colors.markers, "markersColor"),
+            (&sparkline.options.colors.first, "firstPointColor"),
+            (&sparkline.options.colors.last, "lastPointColor"),
+            (&sparkline.options.colors.high, "highPointColor"),
+            (&sparkline.options.colors.low, "lowPointColor"),
+        ] {
+            if let Some(value) = value {
+                let _ = write!(output, " {property}={value:?}");
+            }
         }
         output.push_str(" />\n");
     }
@@ -25367,7 +25405,7 @@ struct WorksheetSparkline {
     options: SparklineOptions,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 #[expect(
     clippy::struct_excessive_bools,
     reason = "These independent x14 Sparkline flags map one-to-one to writer attributes and must be retained separately."
@@ -25383,6 +25421,18 @@ struct SparklineOptions {
     show_hidden_data: bool,
     right_to_left: bool,
     show_empty_cells_as: &'static str,
+    colors: SparklineColors,
+}
+
+#[derive(Clone, Default)]
+struct SparklineColors {
+    sparkline: Option<String>,
+    negative: Option<String>,
+    markers: Option<String>,
+    first: Option<String>,
+    last: Option<String>,
+    high: Option<String>,
+    low: Option<String>,
 }
 
 impl Default for SparklineOptions {
@@ -25399,6 +25449,7 @@ impl Default for SparklineOptions {
             right_to_left: false,
             // OOXML defaults to zero when displayEmptyCellsAs is absent.
             show_empty_cells_as: "zero",
+            colors: SparklineColors::default(),
         }
     }
 }
@@ -27798,10 +27849,22 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                                 "worksheet `{part}` has misplaced or duplicate sparkline color `{tag}`; restore one writer-default color per role"
                             )));
                         }
-                        if !default_sparkline_color(&tag, &event, reader.decoder())? {
-                            return Err(Error::Reverse(format!(
-                                "worksheet `{part}` uses custom sparkline color `{tag}` that the v1 DSL cannot represent; use the writer defaults or add sparkline color properties"
-                            )));
+                        let color = parse_sparkline_color(&tag, &event, reader.decoder(), part)?;
+                        match tag.as_str() {
+                            "x14:colorSeries" => current_options.colors.sparkline = color,
+                            "x14:colorNegative" => current_options.colors.negative = color,
+                            "x14:colorMarkers" => current_options.colors.markers = color,
+                            "x14:colorFirst" => current_options.colors.first = color,
+                            "x14:colorLast" => current_options.colors.last = color,
+                            "x14:colorHigh" => current_options.colors.high = color,
+                            "x14:colorLow" => current_options.colors.low = color,
+                            "x14:colorAxis" if color.is_some() => {
+                                return Err(Error::Reverse(format!(
+                                    "worksheet `{part}` has a custom sparkline axis color, but rust_xlsxwriter 0.99.1 has no public axis-color setter; restore the default black axis color"
+                                )));
+                            }
+                            "x14:colorAxis" => {}
+                            _ => unreachable!("all Sparkline color roles were matched"),
                         }
                     }
                     b"x14:sparkline" => {
@@ -27923,7 +27986,7 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         cell: canonical_cell,
                         range: formula,
                         sparkline_type: current_type,
-                        options: current_options,
+                        options: current_options.clone(),
                     });
                     in_sparkline = false;
                 }
@@ -27932,6 +27995,44 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         return Err(Error::Reverse(format!(
                             "worksheet `{part}` sparkline group contains no sparkline entries; add at least one destination cell"
                         )));
+                    }
+                    for (color, enabled, property) in [
+                        (
+                            &current_options.colors.negative,
+                            current_options.show_negative_points,
+                            "negativePointColor",
+                        ),
+                        (
+                            &current_options.colors.markers,
+                            current_options.show_markers,
+                            "markersColor",
+                        ),
+                        (
+                            &current_options.colors.first,
+                            current_options.show_first_point,
+                            "firstPointColor",
+                        ),
+                        (
+                            &current_options.colors.last,
+                            current_options.show_last_point,
+                            "lastPointColor",
+                        ),
+                        (
+                            &current_options.colors.high,
+                            current_options.show_high_point,
+                            "highPointColor",
+                        ),
+                        (
+                            &current_options.colors.low,
+                            current_options.show_low_point,
+                            "lowPointColor",
+                        ),
+                    ] {
+                        if color.is_some() && !enabled {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` has custom `{property}` with its matching marker disabled; enable that marker or remove the custom color"
+                            )));
+                        }
                     }
                     let required_colors = [
                         "x14:colorSeries",
@@ -27987,11 +28088,12 @@ fn require_no_sparkline_attributes(
     Ok(())
 }
 
-fn default_sparkline_color(
+fn parse_sparkline_color(
     tag: &str,
     event: &BytesStart<'_>,
     decoder: quick_xml::encoding::Decoder,
-) -> xlsx_jsx::Result<bool> {
+    part: &str,
+) -> xlsx_jsx::Result<Option<String>> {
     let expected: &[(&[u8], &[u8])] = match tag {
         "x14:colorSeries" | "x14:colorMarkers" => {
             &[(b"theme", b"4"), (b"tint", b"-0.499984740745262")]
@@ -28002,7 +28104,11 @@ fn default_sparkline_color(
             &[(b"theme", b"4"), (b"tint", b"0.39997558519241921")]
         }
         "x14:colorHigh" | "x14:colorLow" => &[(b"theme", b"4")],
-        _ => return Ok(false),
+        _ => {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` sparkline has unknown color role `{tag}`; remove it or use a supported x14 color role"
+            )));
+        }
     };
     let mut attributes = Vec::new();
     for attribute in event.attributes() {
@@ -28012,12 +28118,27 @@ fn default_sparkline_color(
             .map_err(|error| Error::Reverse(error.to_string()))?;
         attributes.push((attribute.key.as_ref().to_vec(), value.into_owned()));
     }
-    Ok(attributes.len() == expected.len()
+    if attributes.len() == expected.len()
         && expected.iter().all(|(key, value)| {
             attributes.iter().any(|(actual_key, actual_value)| {
                 actual_key == key && actual_value.as_bytes() == *value
             })
-        }))
+        })
+    {
+        return Ok(None);
+    }
+    if attributes.len() == 1 && attributes[0].0 == b"rgb" {
+        let value = attributes[0].1.as_str();
+        if value.len() == 8
+            && value.starts_with("FF")
+            && value[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Ok(Some(format!("#{}", &value[2..])));
+        }
+    }
+    Err(Error::Reverse(format!(
+        "worksheet `{part}` sparkline color `{tag}` uses an unsupported encoding; use the pinned writer default or opaque RGB `FFRRGGBB`"
+    )))
 }
 
 fn parse_sparkline_bool_attribute(

@@ -7,7 +7,7 @@ use rust_xlsxwriter::{
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
     ChartLineDashType, ChartMarker, ChartMarkerType, ChartPatternFill, ChartPatternFillType,
-    ChartPoint, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType,
+    ChartPoint, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType, Color,
     Image as XlsxImage, ObjectMovement, Sparkline as XlsxSparkline, SparklineType,
     Workbook as XlsxWorkbook,
 };
@@ -168,6 +168,7 @@ fn agent_json_spec_is_valid_json_and_describes_sparkline_options() {
     let group = &schema["$defs"]["sparklineGroup"]["properties"]["props"]["properties"];
     assert_eq!(group["showMarkers"]["type"], "boolean");
     assert_eq!(group["showEmptyCellsAs"]["enum"][2], "span");
+    assert_eq!(group["sparklineColor"]["pattern"], "^#[0-9A-Fa-f]{6}$");
 }
 
 #[test]
@@ -21457,6 +21458,13 @@ fn reverses_external_sparkline_without_a_manifest() {
     let sparkline = XlsxSparkline::new()
         .set_range(("Revenue & Growth", 0, 0, 0, 2))
         .set_type(SparklineType::Column)
+        .set_sparkline_color(Color::RGB(0x0011_2233))
+        .set_negative_points_color(Color::RGB(0x0022_3344))
+        .set_markers_color(Color::RGB(0x0033_4455))
+        .set_first_point_color(Color::RGB(0x0044_5566))
+        .set_last_point_color(Color::RGB(0x0055_6677))
+        .set_high_point_color(Color::RGB(0x0066_7788))
+        .set_low_point_color(Color::RGB(0x0077_8899))
         .show_markers(true)
         .show_axis(true)
         .show_high_point(true)
@@ -21499,7 +21507,7 @@ fn reverses_external_sparkline_without_a_manifest() {
     let source = std::fs::read_to_string(&source_path).unwrap();
     assert!(
         source.contains(
-            "<Sparkline cell=\"D2\" range=\"'Revenue & Growth'!A1:C1\" sparklineType=\"column\" showHighPoint={true} showLowPoint={true} showFirstPoint={true} showLastPoint={true} showNegativePoints={true} showMarkers={true} showAxis={true} showHiddenData={true} rightToLeft={true} showEmptyCellsAs=\"span\" />"
+            "<Sparkline cell=\"D2\" range=\"'Revenue & Growth'!A1:C1\" sparklineType=\"column\" showHighPoint={true} showLowPoint={true} showFirstPoint={true} showLastPoint={true} showNegativePoints={true} showMarkers={true} showAxis={true} showHiddenData={true} rightToLeft={true} showEmptyCellsAs=\"span\" sparklineColor=\"#112233\" negativePointColor=\"#223344\" markersColor=\"#334455\" firstPointColor=\"#445566\" lastPointColor=\"#556677\" highPointColor=\"#667788\" lowPointColor=\"#778899\" />"
         ),
         "{source}"
     );
@@ -21545,6 +21553,13 @@ fn reverses_external_sparkline_without_a_manifest() {
         "displayHidden=\"1\"",
         "rightToLeft=\"1\"",
         "displayEmptyCellsAs=\"span\"",
+        "colorSeries rgb=\"FF112233\"",
+        "colorNegative rgb=\"FF223344\"",
+        "colorMarkers rgb=\"FF334455\"",
+        "colorFirst rgb=\"FF445566\"",
+        "colorLast rgb=\"FF556677\"",
+        "colorHigh rgb=\"FF667788\"",
+        "colorLow rgb=\"FF778899\"",
     ] {
         assert!(
             rebuilt_xml.contains(option),
@@ -21671,7 +21686,26 @@ fn rejects_sparkline_options_with_invalid_values_and_repair_guidance() {
 }
 
 #[test]
-fn rejects_external_sparkline_colors_that_the_dsl_cannot_represent() {
+fn rejects_sparkline_color_that_conflicts_with_its_marker_flag() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("conflicting-sparkline-color.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Sparkline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Sparkline cell="F2" range="Data!A2:D2" highPointColor="#112233" showHighPoint={false} /></Worksheet></Workbook>;"##,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("enables `showHighPoint`"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn rejects_external_custom_sparkline_axis_colors_without_a_writer_setter() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("custom-sparkline-color.xlsx");
     let output_path = directory.path().join("custom-sparkline-color.tsx");
@@ -21685,8 +21719,8 @@ fn rejects_external_sparkline_colors_that_the_dsl_cannot_represent() {
     workbook.save(&workbook_path).unwrap();
     rewrite_part(&workbook_path, "xl/worksheets/sheet1.xml", |xml| {
         xml.replace(
-            "<x14:colorSeries theme=\"4\" tint=\"-0.499984740745262\"/>",
-            "<x14:colorSeries rgb=\"FF112233\"/>",
+            "<x14:colorAxis rgb=\"FF000000\"/>",
+            "<x14:colorAxis rgb=\"FF112233\"/>",
         )
     });
 
@@ -21698,8 +21732,8 @@ fn rejects_external_sparkline_colors_that_the_dsl_cannot_represent() {
         .arg(output_path)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("custom sparkline color"))
-        .stderr(predicate::str::contains("use the writer defaults"));
+        .stderr(predicate::str::contains("custom sparkline axis color"))
+        .stderr(predicate::str::contains("no public axis-color setter"));
 }
 
 #[test]

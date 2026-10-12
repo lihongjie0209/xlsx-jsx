@@ -1137,16 +1137,24 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `showLastPoint`, `showNegativePoints`, `showMarkers`, `showAxis`,
   `showHiddenData`, `rightToLeft`, and `showEmptyCellsAs="gap" | "zero" |
   "span"`; booleans default to false and empty-cell display defaults to `gap`
-  for DSL-authored sparklines.
+  for DSL-authored sparklines. RGB roles `sparklineColor`, `negativePointColor`,
+  `markersColor`, `firstPointColor`, `lastPointColor`, `highPointColor`, and
+  `lowPointColor` accept `#RRGGBB`. The pinned writer has no axis-color setter,
+  so reverse accepts only its default axis color. Custom point colors
+  imply their matching display flag; an external custom point color with that
+  flag disabled is rejected because the writer setter would enable it.
   The source worksheet must exist. It must be declared before worksheet `Row`
   components. The default type is `line` and is omitted from JSX when applicable.
   Reverse resolves the x14 extension by destination cell
   and source formula, without relying on the embedded manifest. The pinned
-  writer's default eight theme/RGB color roles are verified; unsupported custom
-  color roles and numeric range/style options fail with repair guidance.
+  writer-default theme/RGB colors and seven public opaque RGB roles are
+  preserved; custom axis colors and other theme/indexed/alpha colors, plus
+  numeric bounds, line weight, date-axis ranges, and preset styles fail with
+  repair guidance.
 - `SparklineGroup` adds one-dimensional destination `cells` from a rectangular,
   sheet-qualified source `range` using the same `sparklineType` values as
-  `Sparkline`. The destination must be a single row or column and its length
+  `Sparkline`, and accepts the same display and color options. The destination
+  must be a single row or column and its length
   must match the source rows when `dataRowOrder` is true, or source
   columns when it is false. `dataRowOrder` defaults to `true`; true advances
   through source rows and each generated formula spans columns, while false
