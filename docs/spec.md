@@ -1775,7 +1775,9 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `justify` is
   preserved as OOXML `horizontal="justify"`; `shrinkToFit=true` cannot be
   combined with it because the writer suppresses shrink-to-fit. Fill,
-  other unmodeled alignment metadata are rejected on reverse.
+  other unmodeled alignment metadata are rejected on reverse with the exact
+  unsupported OOXML alignment attribute and a repair action, rather than a
+  generic unsupported-style summary.
   `textRotation?: integer` accepts -90 through 90 degrees
   or 270 for stacked vertical text; ordinary negative angles are preserved
   using Excel's 91–180 OOXML encoding; the default is 0 and is omitted. The OOXML value 255 (stacked vertical
@@ -1801,7 +1803,8 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   unrepresentable combinations.
 - `wrapText?: boolean` toggles cell text wrapping. `false` is the default and
   is omitted by reverse; `true` composes with horizontal and vertical alignment.
-  Reverse preserves `wrapText` and rejects other unsupported alignment metadata.
+  Reverse preserves `wrapText` and reports the exact unsupported alignment
+  attribute and repair action for other alignment metadata.
 - `shrinkToFit?: boolean` toggles shrink-to-fit for cell content. `false` is the
   default and is omitted by reverse. It composes with horizontal/vertical
   alignment, but cannot be combined with `wrapText={true}`: the locked writer

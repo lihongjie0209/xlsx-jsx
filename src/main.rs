@@ -29705,6 +29705,7 @@ struct CellFontStyle {
     number_format: Option<String>,
     horizontal_align: Option<HorizontalAlignment>,
     vertical_align: Option<VerticalAlignment>,
+    unsupported_alignment: Option<String>,
     text_rotation: Option<i16>,
     reading_direction: Option<CellReadingDirection>,
     apply_alignment: bool,
@@ -35774,6 +35775,11 @@ fn validate_default_style_index(
         ))
     })?;
     if style.support != StyleSupport::Supported {
+        if let Some(reason) = &style.unsupported_alignment {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` {location} uses unsupported {reason}; remove this alignment attribute or add matching DSL support"
+            )));
+        }
         return Err(Error::Reverse(format!(
             "worksheet `{part}` {location} uses style index {style_index} with formatting outside the lossless cell-format subset; simplify that style or add matching row/column format support"
         )));
@@ -35797,6 +35803,11 @@ fn audit_cell_style(
         ))
     })?;
     if style.support != StyleSupport::Supported {
+        if let Some(reason) = &style.unsupported_alignment {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` cell `{reference}` uses unsupported {reason}; remove this alignment attribute or add matching DSL support"
+            )));
+        }
         return Err(Error::Reverse(format!(
             "worksheet `{part}` cell `{reference}` uses a style outside the bold/italic/underline/strikethrough/script/font-name/size/family/charset/RGB-font-color/four-edge/diagonal-border/solid-fill/horizontal-alignment (left, center, centerAcross, right, justify, distributed)/indent/wrapText/shrinkToFit/number-format subset; unsupported metadata may include font sizes outside the OOXML range, patterned or gradient fill, unsupported built-in formats, theme/indexed font colors, theme/indexed border colors, or unmodeled border metadata. Remove the unsupported feature or add matching DSL support"
         )));
@@ -41193,23 +41204,26 @@ fn parse_cell_alignment(
                     "distributed" => Some(HorizontalAlignment::Distributed),
                     "general" => None,
                     _ => {
-                        style.support = StyleSupport::Unsupported;
+                        mark_unsupported_alignment(style, "horizontal", &value);
                         None
                     }
                 };
             }
             b"vertical" => {
                 parse_vertical_alignment(value.as_ref(), style);
+                if style.support == StyleSupport::Unsupported {
+                    mark_unsupported_alignment(style, "vertical", &value);
+                }
             }
             b"wrapText" => match value.as_ref() {
                 "1" | "true" => style.wrap_text = Some(true),
                 "0" | "false" => style.wrap_text = Some(false),
-                _ => style.support = StyleSupport::Unsupported,
+                _ => mark_unsupported_alignment(style, "wrapText", &value),
             },
             b"shrinkToFit" => match value.as_ref() {
                 "1" | "true" => style.shrink_to_fit = Some(true),
                 "0" | "false" => style.shrink_to_fit = Some(false),
-                _ => style.support = StyleSupport::Unsupported,
+                _ => mark_unsupported_alignment(style, "shrinkToFit", &value),
             },
             b"indent" => match value.parse::<u8>() {
                 Ok(0) => style.indent = None,
@@ -41233,10 +41247,11 @@ fn parse_cell_alignment(
                     }
                 };
             }
-            b"relativeIndent" | b"justifyLastLine" => {
-                style.support = StyleSupport::Unsupported;
-            }
-            _ => style.support = StyleSupport::Unsupported,
+            _ => mark_unsupported_alignment(
+                style,
+                &String::from_utf8_lossy(attribute.key.local_name().as_ref()),
+                &value,
+            ),
         }
     }
     if style.wrap_text == Some(true) && style.shrink_to_fit == Some(true) {
@@ -41266,6 +41281,13 @@ fn parse_cell_alignment(
         ));
     }
     Ok(())
+}
+
+fn mark_unsupported_alignment(style: &mut CellFontStyle, attribute: &str, value: &str) {
+    style.support = StyleSupport::Unsupported;
+    style.unsupported_alignment = Some(format!(
+        "OOXML alignment attribute `{attribute}` with value `{value}`"
+    ));
 }
 
 fn parse_vertical_alignment(value: &str, style: &mut CellFontStyle) {

@@ -29,6 +29,9 @@ reported as complete.
 
 ## Recently delivered
 
+- External cell/row/column alignment errors now identify the specific unsupported
+  OOXML alignment attribute and its value, with a direct removal/support
+  suggestion instead of only a broad unsupported-style list.
 - Cell, row, and column formats now preserve horizontal `centerAcross` as OOXML
   `centerContinuous`; table-column differential alignment remains unsupported.
 - Cell, row, and column formats now preserve vertical `justify` and

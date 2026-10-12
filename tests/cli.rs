@@ -22610,6 +22610,38 @@ fn reverse_rejects_unmodeled_border_metadata_instead_of_silently_dropping_it() {
 }
 
 #[test]
+fn reverse_names_unsupported_alignment_attribute_and_repair() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("relative-indent.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .add_worksheet()
+        .write_string_with_format(
+            0,
+            0,
+            "Text",
+            &rust_xlsxwriter::Format::new().set_align(rust_xlsxwriter::FormatAlign::Left),
+        )
+        .expect("formatted cell writes");
+    workbook.save(&input).expect("external workbook saves");
+    rewrite_part(&input, "xl/styles.xml", |xml| {
+        xml.replace(
+            "<alignment horizontal=\"left\"/>",
+            "<alignment horizontal=\"left\" relativeIndent=\"1\"/>",
+        )
+    });
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("relativeIndent"))
+        .stderr(predicate::str::contains("remove this alignment attribute"));
+}
+
+#[test]
 fn external_per_edge_borders_survive_recompile() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("edge-borders.xlsx");
