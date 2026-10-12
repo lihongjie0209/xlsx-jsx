@@ -34,11 +34,12 @@ use rust_xlsxwriter::{
 };
 use serde_json::Value;
 use xlsx_jsx::{
-    Error, IrEnvelope, Node, OutlineProperties, PrintRange, chart_data_label_position_is_supported,
-    chart_data_label_separator_name, chart_data_label_separator_value,
-    chart_data_table_fill_pattern_is_supported, collapsed_outline_ranges, format_a1_cell_reference,
-    format_a1_range, format_print_range, parse_a1_cell_reference, parse_a1_range,
-    parse_print_range, runtime::evaluate_entry, sparkline_style_palette,
+    CELL_ERROR_VALUES, Error, IrEnvelope, Node, OutlineProperties, PrintRange,
+    chart_data_label_position_is_supported, chart_data_label_separator_name,
+    chart_data_label_separator_value, chart_data_table_fill_pattern_is_supported,
+    collapsed_outline_ranges, format_a1_cell_reference, format_a1_range, format_print_range,
+    parse_a1_cell_reference, parse_a1_range, parse_print_range, runtime::evaluate_entry,
+    sparkline_style_palette,
 };
 use zip::{
     ZipArchive,
@@ -83,6 +84,8 @@ const FORMAT_PROPERTY_NAMES: &[&str] = &[
     "borderDiagonalColor",
     "borderDiagonalType",
 ];
+
+const LITERAL_ERROR_FORMULA_PREFIX: &str = "__XLSXJSX_LITERAL_ERROR_CELL__:";
 
 #[derive(Debug, Parser)]
 #[command(
@@ -567,8 +570,9 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         source: std::io::Error::other(error.to_string()),
     })?;
     let x14_icon_normalization = collect_x14_icon_normalization_targets(ir)?;
-    if !x14_icon_normalization.is_empty() {
-        normalize_x14_icon_rules(path, &x14_icon_normalization)?;
+    let literal_error_count = count_literal_error_cells(ir);
+    if !x14_icon_normalization.is_empty() || literal_error_count > 0 {
+        normalize_x14_icon_rules(path, &x14_icon_normalization, literal_error_count)?;
     }
     Ok(())
 }
@@ -659,6 +663,20 @@ struct X14IconRuleNormalization {
     stop_if_true: bool,
 }
 
+fn count_literal_error_cells(ir: &IrEnvelope) -> usize {
+    ir.workbook
+        .children
+        .iter()
+        .filter_map(|worksheet| serde_json::from_value::<Node>(worksheet.clone()).ok())
+        .filter(|worksheet| worksheet.r#type == "Worksheet")
+        .flat_map(|worksheet| worksheet.children)
+        .filter_map(|row| serde_json::from_value::<Node>(row).ok())
+        .flat_map(|row| row.children)
+        .filter_map(|cell| serde_json::from_value::<Node>(cell).ok())
+        .filter(|cell| cell.r#type == "Cell" && cell.props.contains_key("error"))
+        .count()
+}
+
 fn collect_x14_icon_normalization_targets(
     ir: &IrEnvelope,
 ) -> xlsx_jsx::Result<HashMap<String, HashMap<u32, X14IconRuleNormalization>>> {
@@ -738,6 +756,7 @@ fn collect_x14_icon_normalization_targets(
 fn normalize_x14_icon_rules(
     path: &std::path::Path,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
+    literal_error_count: usize,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -760,7 +779,12 @@ fn normalize_x14_icon_rules(
         })
         .ok_or_else(|| Error::Compile("cannot create a temporary XLSX normalization file beside the output; close conflicting processes or remove stale `.xlsx-jsx-*.tmp` files".into()))?;
 
-    let rewrite_result = rewrite_xlsx_with_x14_icon_rules(path, temporary_file, targets_by_part);
+    let rewrite_result = rewrite_xlsx_with_x14_icon_rules(
+        path,
+        temporary_file,
+        targets_by_part,
+        literal_error_count,
+    );
     if let Err(error) = rewrite_result {
         let _ = std::fs::remove_file(&temporary_path);
         return Err(error);
@@ -785,6 +809,7 @@ fn rewrite_xlsx_with_x14_icon_rules(
     path: &std::path::Path,
     temporary_file: std::fs::File,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
+    literal_error_count: usize,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -794,6 +819,7 @@ fn rewrite_xlsx_with_x14_icon_rules(
         .map_err(|error| Error::Compile(format!("cannot read generated XLSX package: {error}")))?;
     let mut writer = ZipWriter::new(temporary_file);
     let mut patched_parts = std::collections::HashSet::new();
+    let mut patched_error_cells = 0_usize;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(|error| {
             Error::Compile(format!("cannot read generated XLSX entry {index}: {error}"))
@@ -810,14 +836,25 @@ fn rewrite_xlsx_with_x14_icon_rules(
                 "cannot read generated XLSX entry `{name}`: {error}"
             ))
         })?;
-        if let Some(targets) = targets_by_part.get(&name) {
+        if name.starts_with("xl/worksheets/")
+            && std::path::Path::new(&name)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"))
+        {
             let xml = String::from_utf8(bytes).map_err(|error| {
                 Error::Compile(format!(
                     "generated worksheet `{name}` is not UTF-8 XML: {error}"
                 ))
             })?;
-            bytes = patch_x14_icon_rules(&xml, targets, &name)?.into_bytes();
-            patched_parts.insert(name.clone());
+            let xml = if let Some(targets) = targets_by_part.get(&name) {
+                patched_parts.insert(name.clone());
+                patch_x14_icon_rules(&xml, targets, &name)?
+            } else {
+                xml
+            };
+            let (xml, patched_count) = patch_literal_error_cells(&xml, &name)?;
+            patched_error_cells += patched_count;
+            bytes = xml.into_bytes();
         }
         writer
             .start_file(
@@ -848,6 +885,11 @@ fn rewrite_xlsx_with_x14_icon_rules(
             missing_parts[0]
         )));
     }
+    if patched_error_cells != literal_error_count {
+        return Err(Error::Compile(format!(
+            "normalized {patched_error_cells} of {literal_error_count} literal error cells; repair the worksheet serialization before building"
+        )));
+    }
     let output_file = writer.finish().map_err(|error| {
         Error::Compile(format!("cannot finalize normalized XLSX package: {error}"))
     })?;
@@ -858,6 +900,52 @@ fn rewrite_xlsx_with_x14_icon_rules(
     drop(output_file);
     drop(archive);
     Ok(())
+}
+
+fn patch_literal_error_cells(xml: &str, part: &str) -> xlsx_jsx::Result<(String, usize)> {
+    let mut output = xml.to_owned();
+    let mut patched = 0_usize;
+    for token in CELL_ERROR_VALUES {
+        let marker = format!("<f>{LITERAL_ERROR_FORMULA_PREFIX}{token}</f>");
+        while let Some(formula_start) = output.find(&marker) {
+            let cell_start = output[..formula_start].rfind("<c ").ok_or_else(|| {
+                Error::Compile(format!(
+                    "literal error marker in `{part}` is not inside a worksheet cell"
+                ))
+            })?;
+            let cell_open_end = output[cell_start..]
+                .find('>')
+                .map(|offset| cell_start + offset)
+                .ok_or_else(|| {
+                    Error::Compile(format!("unterminated cell containing error in `{part}`"))
+                })?;
+            if !output[cell_start..cell_open_end].contains("t=\"e\"") {
+                return Err(Error::Compile(format!(
+                    "literal error marker in `{part}` was not serialized as an Excel error cell"
+                )));
+            }
+            let formula_end = formula_start + marker.len();
+            let cell_end = output[formula_end..]
+                .find("</c>")
+                .map(|offset| formula_end + offset)
+                .ok_or_else(|| {
+                    Error::Compile(format!("unterminated cell containing error in `{part}`"))
+                })?;
+            if !output[formula_end..cell_end].contains("<v>") {
+                return Err(Error::Compile(format!(
+                    "literal error marker in `{part}` has no cached error value"
+                )));
+            }
+            output.replace_range(formula_start..formula_end, "");
+            patched += 1;
+        }
+    }
+    if output.contains(LITERAL_ERROR_FORMULA_PREFIX) {
+        return Err(Error::Compile(format!(
+            "unrecognized literal error marker remains in generated worksheet `{part}`"
+        )));
+    }
+    Ok((output, patched))
 }
 
 // This event loop preserves XML token order while tracking rule-local threshold indices.
@@ -5880,6 +5968,14 @@ fn write_cell(
     cell: &Node,
     format: &Format,
 ) -> xlsx_jsx::Result<()> {
+    if let Some(error) = cell.props.get("error").and_then(Value::as_str) {
+        let formula =
+            Formula::new(format!("{LITERAL_ERROR_FORMULA_PREFIX}{error}")).set_result(error);
+        worksheet
+            .write_formula_with_format(row, col, formula, format)
+            .map_err(|error| Error::Compile(format!("cannot stage literal error cell: {error}")))?;
+        return Ok(());
+    }
     if cell.children.iter().any(|child| {
         child
             .get("type")
@@ -9481,11 +9577,29 @@ fn render_cell(
             )));
         }
         Data::Error(error) => {
-            return Err(Error::Reverse(format!(
-                "cell `{reference}` on Worksheet `{sheet_name}` contains Excel error `{error}` that v1 cannot preserve; fix the formula/error or add an explicit error-cell type"
-            )));
+            render_excel_error_cell(output, error, style, sheet_name, reference)?;
         }
     }
+    Ok(())
+}
+
+fn render_excel_error_cell(
+    output: &mut String,
+    error: &calamine::CellErrorType,
+    style: &CellFontStyle,
+    sheet_name: &str,
+    reference: &str,
+) -> xlsx_jsx::Result<()> {
+    let token = error.to_string();
+    if !CELL_ERROR_VALUES.contains(&token.as_str()) {
+        return Err(Error::Reverse(format!(
+            "cell `{reference}` on Worksheet `{sheet_name}` contains unsupported Excel error `{token}`; use one of {} or repair the source cell",
+            CELL_ERROR_VALUES.join(", ")
+        )));
+    }
+    output.push_str("<Cell");
+    write_style_props(output, style);
+    let _ = write!(output, " error={token:?} />");
     Ok(())
 }
 

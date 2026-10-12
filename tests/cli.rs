@@ -15720,6 +15720,135 @@ fn external_formula_cached_results_round_trip_by_type() {
 }
 
 #[test]
+fn literal_excel_error_cells_round_trip_without_formula_or_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("error-cells.tsx");
+    let compiled = directory.path().join("error-cells.xlsx");
+    let reversed = directory.path().join("error-cells-reversed.tsx");
+    let rebuilt = directory.path().join("error-cells-rebuilt.xlsx");
+    std::fs::write(
+        &source,
+        r##"import { Workbook, Worksheet, Row, Cell } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Errors"><Row>
+  <Cell error="#NULL!" fontColor="#123456" />
+  <Cell error="#DIV/0!" />
+  <Cell error="#VALUE!" />
+  <Cell error="#REF!" />
+  <Cell error="#NAME?" />
+  <Cell error="#NUM!" />
+  <Cell error="#N/A" />
+</Row></Worksheet></Workbook>;
+"##,
+    )
+    .expect("source writes");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source)
+        .args(["-o"])
+        .arg(&compiled)
+        .assert()
+        .success();
+    let mut archive = ZipArchive::new(std::fs::File::open(&compiled).expect("XLSX exists"))
+        .expect("XLSX is a ZIP package");
+    let mut worksheet_xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .expect("worksheet XML exists")
+        .read_to_string(&mut worksheet_xml)
+        .expect("worksheet XML reads");
+    for (coordinate, token) in [
+        ("A1", "#NULL!"),
+        ("B1", "#DIV/0!"),
+        ("C1", "#VALUE!"),
+        ("D1", "#REF!"),
+        ("E1", "#NAME?"),
+        ("F1", "#NUM!"),
+        ("G1", "#N/A"),
+    ] {
+        assert!(
+            worksheet_xml.contains(&format!(r#"r="{coordinate}""#))
+                && worksheet_xml.contains(&format!("<v>{token}</v>")),
+            "compiled XML must contain error cell {coordinate}={token}: {worksheet_xml}"
+        );
+    }
+    assert!(
+        !worksheet_xml.contains("<f>"),
+        "literal error cells are not formulas"
+    );
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&compiled)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let reversed_source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    for token in [
+        "#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A",
+    ] {
+        assert!(
+            reversed_source.contains(&format!("error=\"{token}\"")),
+            "external reverse must preserve {token}: {reversed_source}"
+        );
+    }
+    assert!(
+        reversed_source.contains("fontColor={\"#123456\"}"),
+        "cell format must reverse: {reversed_source}"
+    );
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let mut rebuilt_archive =
+        ZipArchive::new(std::fs::File::open(&rebuilt).expect("rebuilt XLSX exists"))
+            .expect("rebuilt XLSX is a ZIP package");
+    let mut rebuilt_sheet = String::new();
+    rebuilt_archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .expect("rebuilt worksheet XML exists")
+        .read_to_string(&mut rebuilt_sheet)
+        .expect("rebuilt worksheet XML reads");
+    for token in [
+        "#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A",
+    ] {
+        assert!(rebuilt_sheet.contains(&format!("<v>{token}</v>")));
+    }
+    assert!(!rebuilt_sheet.contains("<f>"));
+}
+
+#[test]
+fn validate_rejects_invalid_literal_excel_error_cells_with_repair() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("invalid-error-cell.tsx");
+    std::fs::write(
+        &source,
+        r##"import { Workbook, Worksheet, Row, Cell } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Errors"><Row><Cell error="#UNKNOWN!" value="text" /></Row></Worksheet></Workbook>;
+"##,
+    )
+    .expect("source writes");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(source)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Cell.error"))
+        .stderr(predicate::str::contains("#N/A"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
 fn public_formula_results_example_builds_and_reverses() {
     let directory = tempdir().expect("temporary directory is available");
     let output = directory.path().join("formula-results.xlsx");
@@ -22623,7 +22752,7 @@ fn reverse_rejects_even_page_header_with_repair_guidance() {
 }
 
 #[test]
-fn reverse_reports_excel_error_cell_with_coordinate_and_repair() {
+fn reverse_preserves_external_excel_error_cell() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("error-cell.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
@@ -22639,14 +22768,17 @@ fn reverse_reports_excel_error_cell_with_coordinate_and_repair() {
         )
     });
 
-    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
-    command.args(["reverse"]).arg(input);
-    command
+    let reversed = directory.path().join("error-cell.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("cell `A1`"))
-        .stderr(predicate::str::contains("#DIV/0!"))
-        .stderr(predicate::str::contains("fix the formula/error"));
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("error=\"#DIV/0!\""), "{source}");
 }
 
 #[test]

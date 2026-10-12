@@ -128,7 +128,7 @@ xlsx-jsx spec --format json
 | Number formats | yes | yes | `numberFormat` preserves custom codes and common built-in formats |
 | Blank cells and special text | yes | yes | quoted, multiline, Unicode, and interior blank cells round-trip |
 | Time-only and duration display | yes | yes | numeric serial plus `numberFormat`, including elapsed-time formats |
-| Excel error cells | no | rejected with repair diagnostics | fix the error or add an explicit error-cell type |
+| Excel error cells | yes | yes | `<Cell error="#DIV/0!" />` preserves the seven supported OOXML error tokens as literal error cells without formulas |
 | Workbook document properties | yes | yes | Core: `title`, `subject`, `author`, `keywords`, `description`, `category`, `status`; extended: `manager`, `company`, `hyperlinkBase`; generated metadata is ignored, unsupported authored metadata is rejected |
 | Custom workbook document properties | yes | yes | `<CustomProperty name="Department" type="string" value="Finance" />`; supports string, integer, real, boolean and dateTime values |
 | Workbook and worksheet-scoped defined names | yes | yes | `<DefinedName name="TaxRate" formula="0.05" />` at workbook scope or inside a worksheet; names and formula text round-trip, while hidden/comment metadata is rejected |

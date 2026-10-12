@@ -256,6 +256,11 @@ const FORMAT_PROPERTIES: &[&str] = &[
     "borderDiagonalType",
 ];
 
+/// Excel error tokens supported by both the pinned writer normalization and reader.
+pub const CELL_ERROR_VALUES: &[&str] = &[
+    "#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!", "#N/A",
+];
+
 const FILL_PATTERN_NAMES: &[&str] = &[
     "none",
     "solid",
@@ -11561,6 +11566,7 @@ fn validate_row_cells(
             )));
         }
         let mut allowed_cell_props = vec![
+            "error",
             "value",
             "formula",
             "formulaResult",
@@ -11953,6 +11959,7 @@ fn validate_dynamic_array_properties(
 }
 
 fn validate_cell(cell: &Node, row: usize, column: usize) -> Result<()> {
+    validate_literal_error_cell(cell, row, column)?;
     if cell.children.iter().any(|child| {
         child
             .get("type")
@@ -11999,6 +12006,17 @@ fn validate_cell(cell: &Node, row: usize, column: usize) -> Result<()> {
             column + 1
         )));
     }
+    if let Some(formula) = formula
+        && formula
+            .as_str()
+            .is_some_and(|text| text.contains("__XLSXJSX_LITERAL_ERROR_CELL__:"))
+    {
+        return Err(Error::Compile(format!(
+            "Cell.formula at row {}, column {} uses a reserved internal marker prefix; replace it with the actual Excel formula",
+            row + 1,
+            column + 1
+        )));
+    }
     if let Some(date) = date {
         let valid = date.as_str().is_some_and(is_supported_iso_date);
         if !valid {
@@ -12031,6 +12049,74 @@ fn validate_cell(cell: &Node, row: usize, column: usize) -> Result<()> {
     }) {
         return Err(Error::Compile(format!(
             "Cell at row {}, column {} must contain a string, finite number, boolean, or null; convert dates to ISO text in v1",
+            row + 1,
+            column + 1
+        )));
+    }
+    Ok(())
+}
+
+fn validate_literal_error_cell(cell: &Node, row: usize, column: usize) -> Result<()> {
+    let Some(error) = cell.props.get("error") else {
+        return Ok(());
+    };
+    let Some(token) = error.as_str() else {
+        return Err(Error::Compile(format!(
+            "Cell.error at row {}, column {} must be a supported Excel error token; use one of {}",
+            row + 1,
+            column + 1,
+            CELL_ERROR_VALUES.join(", ")
+        )));
+    };
+    if !CELL_ERROR_VALUES.contains(&token) {
+        return Err(Error::Compile(format!(
+            "Cell.error `{token}` at row {}, column {} is unsupported; use one of {}",
+            row + 1,
+            column + 1,
+            CELL_ERROR_VALUES.join(", ")
+        )));
+    }
+    let conflicting_properties = [
+        "value",
+        "formula",
+        "formulaResult",
+        "arrayFormulaRange",
+        "dynamicArray",
+        "date",
+        "hyperlink",
+        "hyperlinkTooltip",
+        "checkbox",
+    ];
+    let conflict = conflicting_properties
+        .iter()
+        .find(|property| cell.props.contains_key(**property));
+    let merged = cell
+        .props
+        .get("rowSpan")
+        .and_then(Value::as_u64)
+        .is_some_and(|span| span > 1)
+        || cell
+            .props
+            .get("columnSpan")
+            .and_then(Value::as_u64)
+            .is_some_and(|span| span > 1);
+    if let Some(property) = conflict {
+        return Err(Error::Compile(format!(
+            "Cell.error cannot be combined with `{property}` at row {}, column {}; use one cell value representation",
+            row + 1,
+            column + 1
+        )));
+    }
+    if merged {
+        return Err(Error::Compile(format!(
+            "Cell.error cannot be combined with merged spans at row {}, column {}; use a standalone error cell or put the error in an ordinary top-left Cell value",
+            row + 1,
+            column + 1
+        )));
+    }
+    if !cell.children.is_empty() {
+        return Err(Error::Compile(format!(
+            "Cell.error cannot have children at row {}, column {}; use only the `error` property and optional cell formatting",
             row + 1,
             column + 1
         )));
@@ -12908,6 +12994,40 @@ mod tests {
             ],
         )]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_literal_excel_error_cell() {
+        let input = workbook(vec![worksheet(
+            "Data",
+            vec![serde_json::json!({
+                "type":"Row",
+                "props":{},
+                "children":[{"type":"Cell","props":{"error":"#DIV/0!","fontColor":"#123456"},"children":[]}]
+            })],
+        )]);
+        assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn rejects_invalid_or_conflicting_literal_excel_error_cells() {
+        for props in [
+            serde_json::json!({"error":"#UNKNOWN!"}),
+            serde_json::json!({"error":"#N/A","value":"value"}),
+            serde_json::json!({"error":"#N/A","formula":"=NA()"}),
+            serde_json::json!({"error":"#N/A","date":"2026-10-12"}),
+            serde_json::json!({"error":"#N/A","rowSpan":2}),
+        ] {
+            let input = workbook(vec![worksheet(
+                "Data",
+                vec![serde_json::json!({
+                    "type":"Row",
+                    "props":{},
+                    "children":[{"type":"Cell","props":props,"children":[]}]
+                })],
+            )]);
+            assert!(input.validate().is_err(), "accepted {props}");
+        }
     }
 
     #[test]

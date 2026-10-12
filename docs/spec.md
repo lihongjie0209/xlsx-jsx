@@ -1599,6 +1599,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 
 ### Cell
 
+- `error?: string` writes a literal Excel error cell without a formula. Supported
+  exact tokens are `#NULL!`, `#DIV/0!`, `#VALUE!`, `#REF!`, `#NAME?`, `#NUM!`,
+  and `#N/A`. It is mutually exclusive with `value`, `formula`,
+  `formulaResult`, `date`, `hyperlink`, children, and merged spans; ordinary
+  cell formatting remains supported. Reverse emits the same `error` token for
+  external error cells and rejects unrecognized error tokens.
 - `checkbox?: boolean` displays a boolean cell as an in-cell checkbox when true.
   It requires a boolean `value` (or boolean child), cannot be combined with a
   formula/date/hyperlink/rich text/merge, and defaults to false. Supported cell
@@ -1796,8 +1802,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   relationships rather than dropping them.
 - No additional cell properties are accepted.
 - Apart from bold/italic, font name/size/color, edge borders, alignment, number
-  formats, fill color, rich `TextRun` font formatting, the `date` property, and
-  external/internal hyperlinks, v1 does not expose Excel error values.
+  formats, fill color, rich `TextRun` font formatting, the `date` property,
+  external/internal hyperlinks, and the supported `error` tokens above, v1
+  rejects other unmodeled cell properties and error representations.
 
 ### TextRun
 
@@ -1838,7 +1845,7 @@ silently flattening or discarding them. The reader rejects common extra package
 parts, named ranges, unsupported outline settings, multi-range or non-corner active-cell selections,
 row/column styles,
 and non-default cell styles outside the bold/italic/underline/strikethrough/script/font-name/size/color/edge-border/solid-fill/alignment/wrapText/shrinkToFit/number-format subset.
-It also rejects Excel error cells, phonetic annotations, unsupported rich-text
+It also rejects phonetic annotations, unsupported rich-text
 run properties, unsupported row/column
 metadata, unsupported built-in format IDs, the 1904 date system, and formula
 structures instead of coercing or flattening them.
