@@ -74,7 +74,7 @@ and intentionally deferred lower-frequency features.
 | Auto-filter range, list, blank and custom criteria | yes | yes | `autoFilterColumns` uses zero-based relative columns; unsupported date-group filters are rejected |
 | Frozen panes | yes | yes | `freezeRows`, `freezeColumns`, optional `freezeTopLeftCell`, and supported active-pane selection; custom split panes remain rejected |
 | Merged cells | yes | yes | `Cell rowSpan={2} columnSpan={3}`; populated or differently styled merged interiors are rejected |
-| Data validation | yes | yes | Any-value rules with input prompts, list, whole-number, decimal, date, time, text-length, and custom formula rules; `formula1`/`formula2` and operators round-trip |
+| Data validation | yes | yes | Any-value rules with input prompts, list, whole-number, decimal, date, time, text-length, and custom formula rules; `formula1`/`formula2`, operators, and disjoint whitespace-separated ranges round-trip |
 | Ignored Excel errors | yes | yes | Worksheet-level `<IgnoreError range="A1:B2" errorType="numberStoredAsText" />` preserves Excel's error-checking exceptions; overlapping annotations are rejected |
 | Hyperlinks | yes | yes | External URL/URI and internal `internal:Sheet!A1` links on text cells preserve target, display text, and `hyperlinkTooltip` screen tips |
 | Legacy cell notes | yes | yes (supported subset) | `<Note cell="B3" text="Review this value" movement="moveAndSizeAfter" />` preserves author/prefix, integer-pixel dimensions, visibility, solid RGB fill, font name/size/family, alt text, and the writer's hidden-row/column anchor mode; unsupported VML shapes, rich text, or positions that cannot be regenerated from sheet geometry are rejected |

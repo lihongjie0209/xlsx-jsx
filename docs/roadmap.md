@@ -30,6 +30,8 @@ completed batch; they do not block work on the next batch.
 - External picture reverse now handles anchors crossing mixed custom/default
   row heights and column widths; exact whole-pixel anchor/transform agreement
   is still required.
+- Data validation supports disjoint multi-range `sqref` values; range order is
+  preserved and overlaps within/across rules are rejected with repair guidance.
 
 ## Deferred lower-frequency table differential formats
 

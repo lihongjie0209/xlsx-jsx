@@ -1446,7 +1446,13 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 ### DataValidation
 
 - A worksheet-level child that applies a list validation to one absolute A1
-  `range`, such as `B2:B20`. It must appear before the first `Row`.
+  `range`, such as `B2:B20`. `range` may also contain multiple disjoint A1
+  rectangles separated by ASCII whitespace (for example
+  `range="B2:B20 D2:D20"`); this maps to the OOXML `sqref` list and the
+  writer's `DataValidation::set_multi_range()`. Each rectangle must be ordered,
+  inside worksheet limits, and non-overlapping with every other rectangle in
+  the same component or another validation component. Range order is
+  preserved. It must appear before the first `Row`.
 - `type` is one of `any`, `list`, `whole`, `decimal`, `date`, `time`,
   `textLength`, or `custom`. `any` leaves values unrestricted and is useful
   with input help messages; it does not accept `source`, formulas, or an
@@ -1460,9 +1466,9 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   supports `between`, `notBetween`, `equal`, `notEqual`, `greaterThan`,
   `greaterThanOrEqual`, `lessThan`, and `lessThanOrEqual`. For custom rules,
   only `formula1` is allowed. Formulas are preserved as the exact OOXML text.
-  Reverse preserves these supported types and rejects multiple ranges,
-  extension metadata, and invalid formula/operator combinations with detailed
-  errors.
+  Reverse preserves these supported types and multi-range `sqref` values;
+  extension metadata and invalid formula/operator combinations produce
+  detailed errors.
 - `allowBlank?: boolean` defaults to `true`; `showDropDown?: boolean`,
   `showInputMessage?: boolean`, and `showErrorMessage?: boolean` default to
   `true`. The OOXML `showDropDown` flag is normalized to user-facing behavior.
@@ -1470,7 +1476,8 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `inputMessage` and `errorMessage` are at most 255 XML-valid characters.
   `errorStyle?: "stop" |
   "warning" | "information"` defaults to `"stop"`.
-- Validation ranges may not overlap. Formula-based rules use Excel formulas or
+- Validation rectangles may not overlap, including rectangles within one
+  multi-range component. Formula-based rules use Excel formulas or
   literal values as expected by the selected rule type; `formula2` is required
   for `between`/`notBetween` and forbidden for single-bound/custom/list rules.
   If `formula2` is supplied without an operator, the rule means `between`,

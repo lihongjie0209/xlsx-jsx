@@ -5560,13 +5560,22 @@ fn compile_data_validation(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     node: &Node,
 ) -> xlsx_jsx::Result<()> {
-    let (first_row, first_column, last_row, last_column) = node
+    let ranges = node
         .props
         .get("range")
         .and_then(Value::as_str)
-        .and_then(parse_a1_range)
+        .and_then(parse_a1_ranges)
         .ok_or_else(|| Error::Compile("invalid DataValidation.range".into()))?;
+    let (first_row, first_column, last_row, last_column) = ranges[0];
     let mut validation = compile_data_validation_rule(node)?;
+    if ranges.len() > 1 {
+        let multi_range = ranges
+            .iter()
+            .map(|range| format_a1_range(*range))
+            .collect::<Vec<_>>()
+            .join(" ");
+        validation = validation.set_multi_range(&multi_range);
+    }
     if let Some(value) = node.props.get("allowBlank").and_then(Value::as_bool) {
         validation = validation.ignore_blank(value);
     }
@@ -34592,12 +34601,16 @@ fn parse_data_validation_attributes(
             "worksheet `{part}` data validation is missing sqref; repair the validation range"
         ))
     })?;
-    let parsed = parse_data_validation_range(&reference).ok_or_else(|| {
+    let parsed = parse_data_validation_ranges(&reference).ok_or_else(|| {
         Error::Reverse(format!(
-            "worksheet `{part}` data validation range `{reference}` is invalid or contains multiple ranges; use one ordered A1 range"
+            "worksheet `{part}` data validation range `{reference}` is invalid; use whitespace-separated ordered A1 ranges"
         ))
     })?;
-    validation.range = format_a1_range(parsed);
+    validation.range = parsed
+        .iter()
+        .map(|range| format_a1_range(*range))
+        .collect::<Vec<_>>()
+        .join(" ");
     Ok(validation)
 }
 
@@ -34754,18 +34767,26 @@ fn validate_data_validation_ranges(
     validations: &[WorksheetDataValidation],
 ) -> xlsx_jsx::Result<()> {
     for (index, validation) in validations.iter().enumerate() {
-        let range = parse_data_validation_range(&validation.range).ok_or_else(|| {
+        let ranges = parse_data_validation_ranges(&validation.range).ok_or_else(|| {
             Error::Reverse(format!(
                 "worksheet `{part}` has an invalid data validation range; repair its sqref"
             ))
         })?;
-        if validations[..index].iter().any(|prior| {
-            parse_data_validation_range(&prior.range).is_some_and(|prior_range| {
-                range.0 <= prior_range.2
-                    && range.2 >= prior_range.0
-                    && range.1 <= prior_range.3
-                    && range.3 >= prior_range.1
-            })
+        let earlier_ranges = validations[..index]
+            .iter()
+            .filter_map(|prior| parse_data_validation_ranges(&prior.range))
+            .flatten()
+            .collect::<Vec<_>>();
+        if ranges.iter().enumerate().any(|(range_index, range)| {
+            ranges[..range_index]
+                .iter()
+                .chain(earlier_ranges.iter())
+                .any(|prior| {
+                    range.0 <= prior.2
+                        && range.2 >= prior.0
+                        && range.1 <= prior.3
+                        && range.3 >= prior.1
+                })
         }) {
             return Err(Error::Reverse(format!(
                 "worksheet `{part}` contains overlapping data validation ranges; make them disjoint or combine them into one rule"
@@ -34775,11 +34796,25 @@ fn validate_data_validation_ranges(
     Ok(())
 }
 
-fn parse_data_validation_range(reference: &str) -> Option<(u32, u16, u32, u16)> {
-    parse_a1_range(reference).or_else(|| {
-        let (row, column) = parse_a1_cell_reference(reference)?;
-        Some((row, column, row, column))
-    })
+fn parse_data_validation_ranges(reference: &str) -> Option<Vec<(u32, u16, u32, u16)>> {
+    let ranges = reference
+        .split_ascii_whitespace()
+        .map(|range| {
+            parse_a1_range(range).or_else(|| {
+                let (row, column) = parse_a1_cell_reference(range)?;
+                Some((row, column, row, column))
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!ranges.is_empty()).then_some(ranges)
+}
+
+fn parse_a1_ranges(reference: &str) -> Option<Vec<(u32, u16, u32, u16)>> {
+    let ranges = reference
+        .split_ascii_whitespace()
+        .map(parse_a1_range)
+        .collect::<Option<Vec<_>>>()?;
+    (!ranges.is_empty()).then_some(ranges)
 }
 
 fn audit_merge_cell(

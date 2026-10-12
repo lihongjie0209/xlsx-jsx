@@ -36,6 +36,14 @@ pub fn parse_a1_range(reference: &str) -> Option<(u32, u16, u32, u16)> {
     Some((first_row, first_column, last_row, last_column))
 }
 
+fn parse_a1_ranges(reference: &str) -> Option<Vec<(u32, u16, u32, u16)>> {
+    let ranges = reference
+        .split_ascii_whitespace()
+        .map(parse_a1_range)
+        .collect::<Option<Vec<_>>>()?;
+    (!ranges.is_empty()).then_some(ranges)
+}
+
 /// Formats zero-based worksheet coordinates as a canonical uppercase A1 range.
 #[must_use]
 pub fn format_a1_range(range: (u32, u16, u32, u16)) -> String {
@@ -2078,22 +2086,25 @@ fn validate_worksheet_children(
                     child_index + 1
                 )));
             }
-            let range = validate_data_validation(&child, child_index)?;
-            if validation_ranges
-                .iter()
-                .any(|prior: &(u32, u16, u32, u16)| {
-                    range.0 <= prior.2
-                        && range.2 >= prior.0
-                        && range.1 <= prior.3
-                        && range.3 >= prior.1
-                })
-            {
-                return Err(Error::Compile(format!(
-                    "DataValidation range `{}` overlaps another validation; combine the ranges or make them disjoint",
-                    format_a1_range(range)
-                )));
+            let ranges = validate_data_validation(&child, child_index)?;
+            for (range_index, range) in ranges.iter().enumerate() {
+                if ranges[..range_index]
+                    .iter()
+                    .chain(validation_ranges.iter())
+                    .any(|prior: &(u32, u16, u32, u16)| {
+                        range.0 <= prior.2
+                            && range.2 >= prior.0
+                            && range.1 <= prior.3
+                            && range.3 >= prior.1
+                    })
+                {
+                    return Err(Error::Compile(format!(
+                        "DataValidation range `{}` overlaps another validation range; combine the ranges or make them disjoint",
+                        format_a1_range(*range)
+                    )));
+                }
+                validation_ranges.push(*range);
             }
-            validation_ranges.push(range);
             continue;
         }
         if child.r#type == "ConditionalFormat" {
@@ -10446,7 +10457,7 @@ fn validate_ignore_error(
 fn validate_data_validation(
     validation: &Node,
     declaration_index: usize,
-) -> Result<(u32, u16, u32, u16)> {
+) -> Result<Vec<(u32, u16, u32, u16)>> {
     if !validation.children.is_empty() {
         return Err(Error::Compile(format!(
             "DataValidation at declaration {} cannot have children; put the validation on a worksheet metadata component",
@@ -10484,9 +10495,9 @@ fn validate_data_validation(
                 declaration_index + 1
             ))
         })?;
-    let range = parse_a1_range(range).ok_or_else(|| {
+    let ranges = parse_a1_ranges(range).ok_or_else(|| {
         Error::Compile(format!(
-            "DataValidation.range `{range}` is invalid or outside worksheet limits; use an ordered A1 range such as `B2:B20`"
+            "DataValidation.range `{range}` is invalid or outside worksheet limits; use whitespace-separated ordered A1 ranges such as `B2:B20 D2:D20`"
         ))
     })?;
     validate_data_validation_rule(validation, declaration_index)?;
@@ -10532,7 +10543,7 @@ fn validate_data_validation(
             )));
         }
     }
-    Ok(range)
+    Ok(ranges)
 }
 
 fn validate_data_validation_rule(validation: &Node, declaration_index: usize) -> Result<()> {
@@ -15713,6 +15724,37 @@ mod tests {
             .expect_err("validation ranges cannot overlap");
         assert!(error.to_string().contains("overlaps another validation"));
         assert!(error.to_string().contains("combine the ranges"));
+    }
+
+    #[test]
+    fn accepts_disjoint_multi_range_data_validation() {
+        let input = workbook(vec![worksheet(
+            "Validation",
+            vec![serde_json::json!({
+                "type":"DataValidation",
+                "props":{"range":"A1:B2 D4:E5","type":"list","source":"\"A,B\""},
+                "children":[]
+            })],
+        )]);
+        input
+            .validate()
+            .expect("disjoint A1 rectangles in one validation are supported");
+    }
+
+    #[test]
+    fn rejects_overlapping_rectangles_in_multi_range_data_validation() {
+        let input = workbook(vec![worksheet(
+            "Validation",
+            vec![serde_json::json!({
+                "type":"DataValidation",
+                "props":{"range":"A1:B2 B2:C3","type":"list","source":"\"A,B\""},
+                "children":[]
+            })],
+        )]);
+        let error = input
+            .validate()
+            .expect_err("overlapping validation areas are ambiguous");
+        assert!(error.to_string().contains("range"));
     }
 
     #[test]

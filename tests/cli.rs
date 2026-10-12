@@ -20095,6 +20095,61 @@ fn external_list_validation_reverses_and_recompiles_without_losing_options() {
 }
 
 #[test]
+fn external_multi_range_validation_reverses_and_recompiles_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("multi-range-validation.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let validation = rust_xlsxwriter::DataValidation::new()
+        .allow_list_strings(&["Open", "Closed"])
+        .expect("list validation is valid")
+        .set_multi_range("B2:B10 D2:D10");
+    workbook
+        .add_worksheet()
+        .add_data_validation(1, 1, 9, 1, &validation)
+        .expect("multi-range validation is applied");
+    workbook.save(&input).expect("workbook writes");
+
+    let reversed = directory.path().join("multi-range-validation.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("range={\"B2:B10 D2:D10\"}"), "{source}");
+
+    let regenerated = directory
+        .path()
+        .join("multi-range-validation-roundtrip.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&regenerated)
+        .assert()
+        .success();
+    let roundtrip = directory
+        .path()
+        .join("multi-range-validation-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&regenerated)
+        .args(["-o"])
+        .arg(&roundtrip)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(roundtrip).expect("roundtrip source exists"),
+        source
+    );
+}
+
+#[test]
 fn external_any_validation_preserves_prompt_metadata_without_type_attribute() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("any-validation.xlsx");
