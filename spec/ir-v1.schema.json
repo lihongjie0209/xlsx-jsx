@@ -23,7 +23,9 @@
             "subject": { "type": "string" },
             "author": { "type": "string" },
             "keywords": { "type": "string" },
-            "description": { "type": "string" }
+            "description": { "type": "string" },
+            "category": { "type": "string" },
+            "status": { "type": "string" }
           }
         },
         "children": {

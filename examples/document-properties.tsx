@@ -6,6 +6,8 @@ export default <Workbook
   author="Finance team"
   keywords="quarterly,finance"
   description="Reviewed & approved"
+  category="Finance"
+  status="Draft"
 >
   <Worksheet name="Summary">
     <Row><Cell>Revenue</Cell><Cell value={125000} /></Row>

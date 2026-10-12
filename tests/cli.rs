@@ -8,12 +8,67 @@ use rust_xlsxwriter::{
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
     ChartLineDashType, ChartMarker, ChartMarkerType, ChartPatternFill, ChartPatternFillType,
     ChartPoint, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType, Color,
-    Image as XlsxImage, ObjectMovement, Sparkline as XlsxSparkline, SparklineType,
-    Workbook as XlsxWorkbook,
+    DocProperties as XlsxDocProperties, Image as XlsxImage, ObjectMovement,
+    Sparkline as XlsxSparkline, SparklineType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+#[test]
+fn workbook_category_and_status_round_trip_external_xlsx_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("metadata.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    workbook
+        .add_worksheet()
+        .set_name("Data")
+        .expect("sheet name is valid");
+    let properties = XlsxDocProperties::new()
+        .set_category("Finance")
+        .set_status("Draft");
+    workbook.set_properties(&properties);
+    workbook.save(&external).expect("external workbook saves");
+
+    let reversed = directory.path().join("metadata.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed source exists");
+    assert!(source.contains("category=\"Finance\""), "{source}");
+    assert!(source.contains("status=\"Draft\""), "{source}");
+
+    let rebuilt = directory.path().join("rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let mut archive = ZipArchive::new(std::fs::File::open(rebuilt).expect("rebuilt XLSX exists"))
+        .expect("rebuilt XLSX is a ZIP package");
+    let mut core = String::new();
+    archive
+        .by_name("docProps/core.xml")
+        .expect("core properties exist")
+        .read_to_string(&mut core)
+        .expect("core properties are UTF-8");
+    assert!(
+        core.contains("<cp:category>Finance</cp:category>"),
+        "{core}"
+    );
+    assert!(
+        core.contains("<cp:contentStatus>Draft</cp:contentStatus>"),
+        "{core}"
+    );
+}
 
 #[test]
 #[expect(
@@ -41,6 +96,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("fontFamily"))
         .stdout(predicate::str::contains("altText"))
         .stdout(predicate::str::contains("BackgroundImage"))
+        .stdout(predicate::str::contains("category"))
+        .stdout(predicate::str::contains("status"))
         .stdout(predicate::str::contains("sparklineType"))
         .stdout(predicate::str::contains("sparklineGroup"))
         .stdout(predicate::str::contains("showEmptyCellsAs"))

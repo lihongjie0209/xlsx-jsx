@@ -250,6 +250,12 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     if let Some(value) = ir.workbook.props.get("description").and_then(Value::as_str) {
         properties = properties.set_comment(value);
     }
+    if let Some(value) = ir.workbook.props.get("category").and_then(Value::as_str) {
+        properties = properties.set_category(value);
+    }
+    if let Some(value) = ir.workbook.props.get("status").and_then(Value::as_str) {
+        properties = properties.set_status(value);
+    }
     workbook.set_properties(&properties);
     let mut local_defined_names = Vec::new();
     for value in &ir.workbook.children {
@@ -5928,6 +5934,8 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         ("author", workbook_properties.author.as_deref()),
         ("keywords", workbook_properties.keywords.as_deref()),
         ("description", workbook_properties.description.as_deref()),
+        ("category", workbook_properties.category.as_deref()),
+        ("status", workbook_properties.status.as_deref()),
     ] {
         if let Some(value) = value {
             let _ = write!(output, " {name}={value:?}");
@@ -33788,9 +33796,15 @@ struct WorkbookProperties {
     author: Option<String>,
     keywords: Option<String>,
     description: Option<String>,
+    category: Option<String>,
+    status: Option<String>,
     defined_names: Vec<ReverseDefinedName>,
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Core-property parsing must keep entity decoding and field mapping in one state machine."
+)]
 fn audit_core_properties(xml: &str) -> xlsx_jsx::Result<WorkbookProperties> {
     let mut reader = XmlReader::from_str(xml);
     let mut current_property = None;
@@ -33816,6 +33830,8 @@ fn audit_core_properties(xml: &str) -> xlsx_jsx::Result<WorkbookProperties> {
                         Some("creator") => Some(&mut properties.author),
                         Some("keywords") => Some(&mut properties.keywords),
                         Some("description") => Some(&mut properties.description),
+                        Some("category") => Some(&mut properties.category),
+                        Some("contentStatus") => Some(&mut properties.status),
                         Some("lastModifiedBy") => Some(&mut last_modified_by),
                         Some(name) if is_authored_core_property(name) => {
                             return Err(Error::Reverse(format!(
@@ -33901,8 +33917,6 @@ fn is_authored_core_property(name: &str) -> bool {
             | "creator"
             | "description"
             | "keywords"
-            | "category"
-            | "contentStatus"
             | "identifier"
             | "language"
             | "lastModifiedBy"
@@ -35986,16 +36000,26 @@ mod tests {
 
     #[test]
     fn core_properties_reject_unmodeled_authored_fields() {
-        let xml = r#"<cp:coreProperties xmlns:cp="urn:cp"><cp:category>Finance</cp:category></cp:coreProperties>"#;
+        let xml = r#"<cp:coreProperties xmlns:cp="urn:cp"><cp:identifier>urn:custom</cp:identifier></cp:coreProperties>"#;
 
-        let error = audit_core_properties(xml).expect_err("category is not modeled");
+        let error = audit_core_properties(xml).expect_err("identifier is not modeled");
 
-        assert!(error.to_string().contains("category"));
+        assert!(error.to_string().contains("identifier"));
         assert!(
             error
                 .to_string()
                 .contains("matching Workbook metadata support")
         );
+    }
+
+    #[test]
+    fn core_properties_preserve_category_and_status() {
+        let xml = r#"<cp:coreProperties xmlns:cp="urn:cp"><cp:category>Finance</cp:category><cp:contentStatus>Draft</cp:contentStatus></cp:coreProperties>"#;
+
+        let properties = audit_core_properties(xml).expect("supported properties parse");
+
+        assert_eq!(properties.category.as_deref(), Some("Finance"));
+        assert_eq!(properties.status.as_deref(), Some("Draft"));
     }
 
     #[test]

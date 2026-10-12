@@ -895,12 +895,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   declarations. Names may appear before or after worksheets; source ordering is
   retained when reversing within each scope.
 - v1 has no implicit sheet; sheets are emitted in source order.
-- Optional `title`, `subject`, `author`, `keywords`, and `description` string
+- Optional `title`, `subject`, `author`, `keywords`, `description`, `category`,
+  and `status` string
   properties map to OOXML core document properties. Empty strings are omitted.
   Reverse preserves these values; `creator` and `lastModifiedBy` must agree and
   are represented as `author`. Writer-generated creation/modification timestamps
-  are intentionally ignored. Other authored core metadata (category, status,
-  identifiers, custom properties, and independent last-modifier values) is
+  are intentionally ignored. Other authored core metadata (identifiers,
+  custom properties, and independent last-modifier values) is
   rejected because it has no lossless Workbook property in v1.
 
 ### DefinedName

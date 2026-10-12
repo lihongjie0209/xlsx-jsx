@@ -5,6 +5,7 @@ Audited against the pinned crate family declared in `Cargo.toml`.
 | Area | Status | v1 policy |
 |---|---|---|
 | Workbook and worksheets | Covered | JSX components and reverse reader |
+| Core workbook metadata category/status | Covered in this batch | `DocProperties::set_category()` / `set_status()` map to `cp:category` / `cp:contentStatus`; IR validation and reverse preserve both from external `docProps/core.xml` without a manifest. Other authored core fields remain rejected unless modeled. |
 | Workbook and worksheet-scoped defined names | Covered in this batch | `Workbook::define_name()` supports global and quoted worksheet-local names; reverse preserves scope/name/formula and rejects hidden or extra authored attributes. |
 | Worksheet visibility (visible, hidden, veryHidden) | Covered in this batch | `Worksheet::set_hidden()` and `set_very_hidden()`; reverse preserves states; first sheet must remain visible to retain deterministic active-sheet behavior |
 | Active worksheet | Covered in this batch | `Worksheet::set_active()` and workbook `activeTab`; reverse preserves a non-first active worksheet and rejects invalid indices or incompatible selection metadata |

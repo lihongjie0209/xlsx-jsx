@@ -353,6 +353,16 @@ pub struct IrEnvelope {
     pub workbook: Node,
 }
 
+const WORKBOOK_PROPERTIES: &[&str] = &[
+    "title",
+    "subject",
+    "author",
+    "keywords",
+    "description",
+    "category",
+    "status",
+];
+
 impl IrEnvelope {
     /// Validates component nesting, property names, worksheet names, and cell values.
     ///
@@ -369,11 +379,7 @@ impl IrEnvelope {
                 "Workbook must contain at least one Worksheet".into(),
             ));
         }
-        reject_unknown_props(
-            &self.workbook,
-            &["title", "subject", "author", "keywords", "description"],
-            "Workbook",
-        )?;
+        reject_unknown_props(&self.workbook, WORKBOOK_PROPERTIES, "Workbook")?;
         validate_workbook_properties(&self.workbook)?;
         let mut names = std::collections::HashSet::new();
         let mut table_names = std::collections::HashSet::new();
@@ -460,7 +466,15 @@ impl IrEnvelope {
 }
 
 fn validate_workbook_properties(workbook: &Node) -> Result<()> {
-    for property in ["title", "subject", "author", "keywords", "description"] {
+    for property in [
+        "title",
+        "subject",
+        "author",
+        "keywords",
+        "description",
+        "category",
+        "status",
+    ] {
         if let Some(value) = workbook.props.get(property)
             && !value.is_string()
         {
@@ -12005,7 +12019,9 @@ mod tests {
             "subject": "Revenue",
             "author": "Analyst",
             "keywords": "quarterly,finance",
-            "description": "Reviewed & approved"
+            "description": "Reviewed & approved",
+            "category": "Finance",
+            "status": "Draft"
         }))
         .expect("properties are a JSON object");
 
