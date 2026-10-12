@@ -38,7 +38,7 @@ use xlsx_jsx::{
     chart_data_label_separator_name, chart_data_label_separator_value,
     chart_data_table_fill_pattern_is_supported, collapsed_outline_ranges, format_a1_cell_reference,
     format_a1_range, format_print_range, parse_a1_cell_reference, parse_a1_range,
-    parse_print_range, runtime::evaluate_entry,
+    parse_print_range, runtime::evaluate_entry, sparkline_style_palette,
 };
 use zip::{
     ZipArchive,
@@ -31425,12 +31425,22 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         &sparklines[group_sparkline_count..],
                         part,
                     )?;
-                    if let Some(style) = identify_sparkline_style(&group_color_signatures) {
+                    if let Some((style, overrides)) =
+                        identify_sparkline_style(&group_color_signatures)
+                    {
                         current_options.style = (style != 1).then_some(style);
-                        current_options.colors = SparklineColors::default();
+                        current_options.colors = SparklineColors {
+                            sparkline: overrides[0].clone(),
+                            negative: overrides[1].clone(),
+                            markers: overrides[2].clone(),
+                            first: overrides[3].clone(),
+                            last: overrides[4].clone(),
+                            high: overrides[5].clone(),
+                            low: overrides[6].clone(),
+                        };
                         for sparkline in &mut sparklines[group_sparkline_count..] {
                             sparkline.options.style = current_options.style;
-                            sparkline.options.colors = SparklineColors::default();
+                            sparkline.options.colors = current_options.colors.clone();
                         }
                     } else if group_color_signatures
                         .iter()
@@ -31774,156 +31784,43 @@ fn parse_sparkline_theme_shade(theme: u8, tint: Option<&str>) -> Option<u8> {
         .and_then(|index| u8::try_from(index + 1).ok())
 }
 
-fn identify_sparkline_style(colors: &HashMap<String, String>) -> Option<u8> {
+fn identify_sparkline_style(colors: &HashMap<String, String>) -> Option<(u8, [Option<String>; 7])> {
     if colors.get("x14:colorAxis")?.as_str() != "rgb:FF000000" {
         return None;
     }
-    (1..=36).find(|style| {
-        let Some(palette) = sparkline_style_palette(*style) else {
-            return false;
-        };
-        [
-            "x14:colorSeries",
-            "x14:colorNegative",
-            "x14:colorMarkers",
-            "x14:colorFirst",
-            "x14:colorLast",
-            "x14:colorHigh",
-            "x14:colorLow",
-        ]
-        .iter()
-        .zip(palette)
-        .all(|(role, color)| colors.get(*role) == Some(&color))
-    })
-}
-
-fn sparkline_style_palette(style: u8) -> Option<[String; 7]> {
-    let theme = |color, shade| format!("theme:{color}:{shade}");
-    let rgb = |color: &str| format!("rgb:FF{color}");
-    match style {
-        1..=26 => sparkline_theme_style_palette(style, &theme),
-        27..=34 => sparkline_rgb_style_palette(style, &rgb),
-        35 | 36 => Some([
-            theme(if style == 35 { 3 } else { 1 }, 0),
-            theme(9, 0),
-            theme(8, 0),
-            theme(4, 0),
-            theme(5, 0),
-            theme(6, 0),
-            theme(7, 0),
-        ]),
-        _ => None,
-    }
-}
-
-fn sparkline_theme_style_palette(
-    style: u8,
-    theme: &impl Fn(u8, u8) -> String,
-) -> Option<[String; 7]> {
-    let palette = match style {
-        1..=6 => {
-            let color = style + 3;
-            let next = if color == 9 { 4 } else { color + 1 };
-            [
-                theme(color, 5),
-                theme(next, 0),
-                theme(color, 5),
-                theme(color, 3),
-                theme(color, 3),
-                theme(color, 0),
-                theme(color, 0),
-            ]
-        }
-        7..=12 => {
-            let color = if style == 12 { 4 } else { style - 2 };
-            let previous = if color == 4 { 9 } else { color - 1 };
-            [
-                theme(previous, 4),
-                theme(color, 0),
-                theme(color, 4),
-                theme(color, 4),
-                theme(color, 4),
-                theme(color, 4),
-                theme(color, 4),
-            ]
-        }
-        13..=18 => {
-            let color = style - 9;
-            let next = if color == 9 { 4 } else { color + 1 };
-            [
-                theme(color, 0),
-                theme(next, 0),
-                theme(color, 4),
-                theme(color, 4),
-                theme(color, 4),
-                theme(color, 4),
-                theme(color, 4),
-            ]
-        }
-        19..=24 => {
-            let color = style - 15;
-            [
-                theme(color, 3),
-                theme(0, 5),
-                theme(color, 1),
-                theme(color, 4),
-                theme(color, 4),
-                theme(color, 5),
-                theme(color, 5),
-            ]
-        }
-        25 => [
-            theme(1, 1),
-            theme(1, 3),
-            theme(1, 3),
-            theme(1, 3),
-            theme(1, 3),
-            theme(1, 3),
-            theme(1, 3),
-        ],
-        26 => [
-            theme(1, 2),
-            theme(0, 3),
-            theme(0, 3),
-            theme(0, 3),
-            theme(0, 3),
-            theme(0, 3),
-            theme(0, 3),
-        ],
-        _ => return None,
-    };
-    Some(palette)
-}
-
-fn sparkline_rgb_style_palette(style: u8, rgb: &impl Fn(&str) -> String) -> Option<[String; 7]> {
-    let colors: [&str; 7] = match style {
-        27 => [
-            "323232", "D00000", "D00000", "D00000", "D00000", "D00000", "D00000",
-        ],
-        28 => [
-            "000000", "0070C0", "0070C0", "0070C0", "0070C0", "0070C0", "0070C0",
-        ],
-        29 => [
-            "376092", "D00000", "D00000", "D00000", "D00000", "D00000", "D00000",
-        ],
-        30 => [
-            "0070C0", "000000", "000000", "000000", "000000", "000000", "000000",
-        ],
-        31 => [
-            "5F5F5F", "FFB620", "D70077", "5687C2", "359CEB", "56BE79", "FF5055",
-        ],
-        32 => [
-            "5687C2", "FFB620", "D70077", "777777", "359CEB", "56BE79", "FF5055",
-        ],
-        33 => [
-            "C6EFCE", "FFC7CE", "8CADD6", "FFDC47", "FFEB9C", "60D276", "FF5367",
-        ],
-        34 => [
-            "00B050", "FF0000", "0070C0", "FFC000", "FFC000", "00B050", "FF0000",
-        ],
-        _ => return None,
-    };
-    Some(colors.map(rgb))
+    let roles = [
+        "x14:colorSeries",
+        "x14:colorNegative",
+        "x14:colorMarkers",
+        "x14:colorFirst",
+        "x14:colorLast",
+        "x14:colorHigh",
+        "x14:colorLow",
+    ];
+    let matches: Vec<_> = (1..=36)
+        .filter_map(|style| {
+            let palette = sparkline_style_palette(style)?;
+            let mut overrides = std::array::from_fn(|_| None);
+            let mut matched_theme_color = false;
+            for (index, role) in roles.iter().enumerate() {
+                let signature = colors.get(*role)?;
+                if signature == &palette[index] {
+                    matched_theme_color |= palette[index].starts_with("theme:");
+                    continue;
+                }
+                if !palette[index].starts_with("theme:") {
+                    return None;
+                }
+                let rgb = signature.strip_prefix("rgb:FF")?;
+                overrides[index] = Some(format!("#{rgb}"));
+            }
+            if overrides.iter().any(Option::is_some) && !matched_theme_color {
+                return None;
+            }
+            Some((style, overrides))
+        })
+        .collect();
+    (matches.len() == 1).then(|| matches.into_iter().next().expect("one match"))
 }
 
 fn parse_sparkline_bool_attribute(

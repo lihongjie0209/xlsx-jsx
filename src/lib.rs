@@ -8990,30 +8990,7 @@ fn validate_sparkline_date_range(
 
 fn validate_sparkline_options(component: &Node, name: &str) -> Result<()> {
     validate_sparkline_scale(component, name)?;
-    if let Some(style) = component.props.get("style") {
-        let Some(style) = style.as_u64().filter(|style| (1..=36).contains(style)) else {
-            return Err(Error::Compile(format!(
-                "{name}.style must be an integer from 1 to 36; choose a built-in sparkline style"
-            )));
-        };
-        let color_properties = [
-            "sparklineColor",
-            "negativePointColor",
-            "markersColor",
-            "firstPointColor",
-            "lastPointColor",
-            "highPointColor",
-            "lowPointColor",
-        ];
-        if color_properties
-            .iter()
-            .any(|property| component.props.contains_key(*property))
-        {
-            return Err(Error::Compile(format!(
-                "{name}.style={style} cannot be combined with explicit sparkline color-role properties; remove the colors or omit style so reverse can preserve the exact palette"
-            )));
-        }
-    }
+    validate_sparkline_style(component, name)?;
     for property in [
         "showHighPoint",
         "showLowPoint",
@@ -9077,6 +9054,186 @@ fn validate_sparkline_options(component: &Node, name: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_sparkline_style(component: &Node, name: &str) -> Result<()> {
+    let Some(style_value) = component.props.get("style") else {
+        return Ok(());
+    };
+    let Some(style) = style_value
+        .as_u64()
+        .filter(|style| (1..=36).contains(style))
+    else {
+        return Err(Error::Compile(format!(
+            "{name}.style must be an integer from 1 to 36; choose a built-in sparkline style"
+        )));
+    };
+    let color_properties = [
+        "sparklineColor",
+        "negativePointColor",
+        "markersColor",
+        "firstPointColor",
+        "lastPointColor",
+        "highPointColor",
+        "lowPointColor",
+    ];
+    let overrides: Vec<_> = color_properties
+        .iter()
+        .filter(|property| component.props.contains_key(**property))
+        .copied()
+        .collect();
+    if overrides.is_empty() {
+        return Ok(());
+    }
+    let style = u8::try_from(style).expect("style is bounded to 1 through 36");
+    let palette = sparkline_style_palette(style).expect("validated style");
+    let candidates = (1..=36)
+        .filter_map(sparkline_style_palette)
+        .filter(|candidate| {
+            (0..7).all(|index| {
+                overrides.contains(&color_properties[index]) || candidate[index] == palette[index]
+            })
+        })
+        .count();
+    if candidates != 1 {
+        return Err(Error::Compile(format!(
+            "{name}.style={style} and its color overrides do not leave a unique built-in theme palette; reduce overrides or use explicit RGB color roles without style"
+        )));
+    }
+    Ok(())
+}
+
+/// Returns the pinned `rust_xlsxwriter` sparkline preset as canonical OOXML
+/// signatures in writer order: series, negative, markers, first, last, high,
+/// and low. Shared with reverse parsing so preset identity cannot drift.
+#[must_use]
+pub fn sparkline_style_palette(style: u8) -> Option<[String; 7]> {
+    let theme = |color, shade| format!("theme:{color}:{shade}");
+    let rgb = |color: &str| format!("rgb:FF{color}");
+    match style {
+        1..=26 => sparkline_theme_style_palette(style, &theme),
+        27..=34 => sparkline_rgb_style_palette(style, &rgb),
+        35 | 36 => Some([
+            theme(if style == 35 { 3 } else { 1 }, 0),
+            theme(9, 0),
+            theme(8, 0),
+            theme(4, 0),
+            theme(5, 0),
+            theme(6, 0),
+            theme(7, 0),
+        ]),
+        _ => None,
+    }
+}
+
+fn sparkline_theme_style_palette(
+    style: u8,
+    theme: &impl Fn(u8, u8) -> String,
+) -> Option<[String; 7]> {
+    let palette = match style {
+        1..=6 => {
+            let color = style + 3;
+            let next = if color == 9 { 4 } else { color + 1 };
+            [
+                theme(color, 5),
+                theme(next, 0),
+                theme(color, 5),
+                theme(color, 3),
+                theme(color, 3),
+                theme(color, 0),
+                theme(color, 0),
+            ]
+        }
+        7..=12 => {
+            let color = if style == 12 { 4 } else { style - 2 };
+            let previous = if color == 4 { 9 } else { color - 1 };
+            [
+                theme(previous, 4),
+                theme(color, 0),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+            ]
+        }
+        13..=18 => {
+            let color = style - 9;
+            let next = if color == 9 { 4 } else { color + 1 };
+            [
+                theme(color, 0),
+                theme(next, 0),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+            ]
+        }
+        19..=24 => {
+            let color = style - 15;
+            [
+                theme(color, 3),
+                theme(0, 5),
+                theme(color, 1),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 5),
+                theme(color, 5),
+            ]
+        }
+        25 => [
+            theme(1, 1),
+            theme(1, 3),
+            theme(1, 3),
+            theme(1, 3),
+            theme(1, 3),
+            theme(1, 3),
+            theme(1, 3),
+        ],
+        26 => [
+            theme(1, 2),
+            theme(0, 3),
+            theme(0, 3),
+            theme(0, 3),
+            theme(0, 3),
+            theme(0, 3),
+            theme(0, 3),
+        ],
+        _ => return None,
+    };
+    Some(palette)
+}
+
+fn sparkline_rgb_style_palette(style: u8, rgb: &impl Fn(&str) -> String) -> Option<[String; 7]> {
+    let colors: [&str; 7] = match style {
+        27 => [
+            "323232", "D00000", "D00000", "D00000", "D00000", "D00000", "D00000",
+        ],
+        28 => [
+            "000000", "0070C0", "0070C0", "0070C0", "0070C0", "0070C0", "0070C0",
+        ],
+        29 => [
+            "376092", "D00000", "D00000", "D00000", "D00000", "D00000", "D00000",
+        ],
+        30 => [
+            "0070C0", "000000", "000000", "000000", "000000", "000000", "000000",
+        ],
+        31 => [
+            "5F5F5F", "FFB620", "D70077", "5687C2", "359CEB", "56BE79", "FF5055",
+        ],
+        32 => [
+            "5687C2", "FFB620", "D70077", "777777", "359CEB", "56BE79", "FF5055",
+        ],
+        33 => [
+            "C6EFCE", "FFC7CE", "8CADD6", "FFDC47", "FFEB9C", "60D276", "FF5367",
+        ],
+        34 => [
+            "00B050", "FF0000", "0070C0", "FFC000", "FFC000", "00B050", "FF0000",
+        ],
+        _ => return None,
+    };
+    Some(colors.map(rgb))
 }
 
 fn validate_sparkline_scale(component: &Node, name: &str) -> Result<()> {

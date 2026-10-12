@@ -1303,17 +1303,20 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   count must match `range`; it enables the x14 date axis and is preserved as a
   group-level date formula when reversing external workbooks.
   `style` selects one of the pinned writer's 36 built-in styles (1–36), with
-  style 1 as the default and therefore omitted in reverse output. Styles map to
-  exact built-in color palettes; combining `style` with explicit color-role
-  properties is rejected because the resulting preset identity cannot always
-  be recovered from external XML.
+  style 1 as the default and therefore omitted in reverse output. Explicit RGB
+  color-role properties may override a built-in style's palette. Reverse keeps
+  the style plus only the differing RGB overrides when the remaining theme
+  palette uniquely identifies that style; ambiguous theme palettes and custom
+  colors that cannot be represented without changing theme semantics fail with
+  repair guidance. Exact built-in palettes continue to reverse as the style
+  alone.
   The source worksheet must exist. It must be declared before worksheet `Row`
   components. The default type is `line` and is omitted from JSX when applicable.
   Reverse resolves the x14 extension by destination cell
   and source formula, without relying on the embedded manifest. The pinned
   writer-default theme/RGB colors and seven public opaque RGB roles are
   preserved; custom axis colors, unmatched theme/indexed/alpha colors, and
-  custom color overrides layered on a preset fail with repair guidance.
+  ambiguous style-plus-override palettes fail with repair guidance.
 - `SparklineGroup` adds one-dimensional destination `cells` from a rectangular,
   sheet-qualified source `range` using the same `sparklineType` values as
   `Sparkline`, and accepts the same display, color, scale, style, and `dateRange`

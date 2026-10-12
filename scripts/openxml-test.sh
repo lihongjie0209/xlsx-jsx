@@ -186,6 +186,8 @@ cargo build --locked
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/notes.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/sparklines.tsx" -o "${TEMP_DIR}/sparklines.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/sparklines.xlsx"
+"${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/sparkline-style-overrides.tsx" -o "${TEMP_DIR}/sparkline-style-overrides.xlsx"
+"${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/sparkline-style-overrides.xlsx"
 
 printf '%s' 'not an XLSX package' > "${TEMP_DIR}/invalid.xlsx"
 if "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/invalid.xlsx" 2> "${TEMP_DIR}/invalid.jsonl"; then

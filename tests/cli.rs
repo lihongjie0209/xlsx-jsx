@@ -23338,6 +23338,68 @@ fn reverses_all_preset_sparkline_styles_without_a_manifest() {
 }
 
 #[test]
+fn reverses_sparkline_theme_style_with_an_rgb_color_override_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("sparkline-style-override.xlsx");
+    let source_path = directory.path().join("sparkline-style-override.tsx");
+    let rebuilt_path = directory
+        .path()
+        .join("sparkline-style-override-rebuilt.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    for (column, value) in [1.0, 3.0, 2.0].into_iter().enumerate() {
+        worksheet
+            .write_number(0, u16::try_from(column).unwrap(), value)
+            .unwrap();
+    }
+    let sparkline = XlsxSparkline::new()
+        .set_range(("Data", 0, 0, 0, 2))
+        .set_style(2)
+        .set_sparkline_color(Color::RGB(0x0011_2233));
+    worksheet.add_sparkline(1, 3, &sparkline).unwrap();
+    workbook.save(&workbook_path).unwrap();
+    let external_xml = read_zip_part_for_test(&workbook_path, "xl/worksheets/sheet1.xml");
+    assert!(
+        external_xml.contains("<x14:colorSeries rgb=\"FF112233\""),
+        "{external_xml}"
+    );
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(
+        source.contains(
+            "<Sparkline cell=\"D2\" range=\"Data!A1:C1\" style={2} sparklineColor=\"#112233\" />"
+        ),
+        "{source}"
+    );
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt = read_zip_part_for_test(&rebuilt_path, "xl/worksheets/sheet1.xml");
+    assert!(
+        rebuilt.contains("<x14:colorSeries rgb=\"FF112233\""),
+        "{rebuilt}"
+    );
+    assert!(
+        rebuilt.contains("<x14:colorNegative theme=\"6\""),
+        "{rebuilt}"
+    );
+}
+
+#[test]
 fn rejects_sparkline_group_with_mismatched_destination_length() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-sparkline-group.tsx");
@@ -23440,9 +23502,9 @@ fn rejects_invalid_sparkline_style_and_color_overrides() {
     for (name, options, expected) in [
         ("out-of-range", "style={37}", "integer from 1 to 36"),
         (
-            "color-override",
-            "style={20} sparklineColor=\"#112233\"",
-            "cannot be combined with explicit sparkline color-role properties",
+            "ambiguous-overrides",
+            "style={20} sparklineColor=\"#112233\" negativePointColor=\"#223344\" markersColor=\"#334455\" firstPointColor=\"#445566\" lastPointColor=\"#556677\" highPointColor=\"#667788\" lowPointColor=\"#778899\"",
+            "do not leave a unique built-in theme palette",
         ),
     ] {
         let input = directory.path().join(format!("{name}.tsx"));
