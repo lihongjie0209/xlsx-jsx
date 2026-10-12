@@ -589,6 +589,8 @@
             "x2AxisDisplayUnitLabel": { "type": "boolean" },
             "y2AxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
             "y2AxisDisplayUnitLabel": { "type": "boolean" },
+            "x2AxisReversed": { "type": "boolean" },
+            "y2AxisReversed": { "type": "boolean" },
             "xAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "xAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMin": { "type": "number" },
@@ -1243,7 +1245,7 @@
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }, { "required": ["xAxisLogBase"] }, { "required": ["xAxisReversed"] }, { "required": ["yAxisReversed"] }, { "required": ["xAxisDisplayUnit"] }, { "required": ["xAxisDisplayUnitLabel"] }, { "required": ["yAxisDisplayUnit"] }, { "required": ["yAxisDisplayUnitLabel"] }] } } } }
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }, { "required": ["xAxisLogBase"] }, { "required": ["xAxisReversed"] }, { "required": ["yAxisReversed"] }, { "required": ["xAxisDisplayUnit"] }, { "required": ["xAxisDisplayUnitLabel"] }, { "required": ["yAxisDisplayUnit"] }, { "required": ["yAxisDisplayUnitLabel"] }, { "required": ["x2AxisReversed"] }, { "required": ["y2AxisReversed"] }] } } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },

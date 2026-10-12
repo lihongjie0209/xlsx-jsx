@@ -50,6 +50,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("y2AxisLabelFontRotation"))
         .stdout(predicate::str::contains("secondaryValueAxisDisplayUnit"))
         .stdout(predicate::str::contains("x2AxisDisplayUnit"))
+        .stdout(predicate::str::contains("x2AxisReversed"))
         .stdout(predicate::str::contains("x2AxisMajorGridlines"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
@@ -8713,6 +8714,88 @@ fn secondary_display_unit_labels_require_units_and_matching_secondary_axes() {
         ));
 
     std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" secondaryValueAxisDisplayUnit="thousands"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#).expect("source rewrites");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("add a secondary series"));
+}
+
+#[test]
+fn reverses_independent_secondary_scatter_axis_directions_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-secondary-scatter-reversed.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-secondary-scatter-reversed.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .add_series()
+        .set_categories("Data!C2:C4")
+        .set_values("Data!D2:D4")
+        .set_secondary_axis(true);
+    chart.x2_axis().set_reverse();
+    chart.y2_axis().set_reverse();
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(source.contains("x2AxisReversed={true}"), "{source}");
+    assert!(source.contains("y2AxisReversed={true}"), "{source}");
+
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-secondary-scatter-reversed.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert_eq!(
+        xml.matches("<c:orientation val=\"maxMin\"/>").count(),
+        2,
+        "{xml}"
+    );
+}
+
+#[test]
+fn secondary_axis_reversal_properties_require_scatter_and_secondary_series() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("secondary-axis-reversal-invalid.tsx");
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" x2AxisReversed={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /><Series values="Data!C2:C4" categories="Data!A2:A4" secondaryAxis={true} /></Chart></Worksheet></Workbook>;"#).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "supported only for scatter charts",
+        ));
+
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="scatter" cell="D2" x2AxisReversed={true}><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#).expect("source rewrites");
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
         .args(["validate"])

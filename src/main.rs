@@ -2766,6 +2766,22 @@ fn configure_chart_scatter_axes_reversed(chart: &mut Chart, component: &Node) {
     {
         chart.y_axis().set_reverse();
     }
+    if component
+        .props
+        .get("x2AxisReversed")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        chart.x2_axis().set_reverse();
+    }
+    if component
+        .props
+        .get("y2AxisReversed")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        chart.y2_axis().set_reverse();
+    }
 }
 
 fn configure_chart_category_axis_intervals(chart: &mut Chart, component: &Node) {
@@ -7374,6 +7390,8 @@ fn append_chart_axis_reversal_properties(properties: &mut String, chart: &Worksh
     for (name, reversed) in [
         ("xAxisReversed", chart.x_axis_reversed),
         ("yAxisReversed", chart.y_axis_reversed),
+        ("x2AxisReversed", chart.x2_axis_reversed),
+        ("y2AxisReversed", chart.y2_axis_reversed),
     ] {
         if let Some(reversed) = reversed {
             let _ = write!(properties, " {name}={{{reversed}}}");
@@ -10376,6 +10394,8 @@ struct ParsedSecondaryChartGroups {
     secondary_value_axis_minor_unit: Option<f64>,
     secondary_value_axis_log_base: Option<u16>,
     secondary_value_axis_reversed: Option<bool>,
+    x2_axis_reversed: Option<bool>,
+    y2_axis_reversed: Option<bool>,
     x2_axis_crossing: Option<&'static str>,
     y2_axis_crossing: Option<&'static str>,
     x2_axis_crossing_value: Option<f64>,
@@ -10944,6 +10964,8 @@ fn parse_secondary_chart_groups(
     let mut secondary_value_axis_minor_unit = None;
     let mut secondary_value_axis_log_base = None;
     let mut secondary_value_axis_reversed = None;
+    let mut x2_axis_reversed = None;
+    let mut y2_axis_reversed = None;
     let mut x2_axis_crossing = None;
     let mut y2_axis_crossing = None;
     let mut x2_axis_crossing_value = None;
@@ -11239,6 +11261,14 @@ fn parse_secondary_chart_groups(
         {
             let orientation = attributes.get("val").map(String::as_str);
             match (parsed_axis.kind.as_deref(), orientation) {
+                (Some("valAx"), Some("maxMin")) if secondary_is_scatter => {
+                    let target = if is_secondary_y_value_axis {
+                        &mut y2_axis_reversed
+                    } else {
+                        &mut x2_axis_reversed
+                    };
+                    *target = Some(true);
+                }
                 (Some("valAx"), Some("maxMin")) if is_secondary_y_value_axis => {
                     secondary_value_axis_reversed = Some(true);
                 }
@@ -11375,6 +11405,8 @@ fn parse_secondary_chart_groups(
         secondary_value_axis_minor_unit,
         secondary_value_axis_log_base,
         secondary_value_axis_reversed,
+        x2_axis_reversed,
+        y2_axis_reversed,
         x2_axis_crossing,
         y2_axis_crossing,
         x2_axis_crossing_value,
@@ -20137,6 +20169,8 @@ fn parse_chart_xml(
         secondary_value_axis_minor_unit: secondary_chart_groups.secondary_value_axis_minor_unit,
         secondary_value_axis_log_base: secondary_chart_groups.secondary_value_axis_log_base,
         secondary_value_axis_reversed: secondary_chart_groups.secondary_value_axis_reversed,
+        x2_axis_reversed: secondary_chart_groups.x2_axis_reversed,
+        y2_axis_reversed: secondary_chart_groups.y2_axis_reversed,
         x2_axis_crossing: secondary_chart_groups.x2_axis_crossing,
         y2_axis_crossing: secondary_chart_groups.y2_axis_crossing,
         x2_axis_crossing_value: secondary_chart_groups.x2_axis_crossing_value,
@@ -24604,6 +24638,8 @@ struct WorksheetChart {
     secondary_value_axis_minor_unit: Option<f64>,
     secondary_value_axis_log_base: Option<u16>,
     secondary_value_axis_reversed: Option<bool>,
+    x2_axis_reversed: Option<bool>,
+    y2_axis_reversed: Option<bool>,
     x_axis_min: Option<f64>,
     x_axis_max: Option<f64>,
     x_axis_log_base: Option<u16>,

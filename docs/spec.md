@@ -126,6 +126,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   settings on a category axis. Reverse resolves secondary axes through chart
   group IDs and physical orientation; custom display-unit labels/layouts remain
   unsupported and fail with repair guidance.
+  `x2AxisReversed?: boolean` and `y2AxisReversed?: boolean` independently
+  reverse the secondary X and Y numeric scales on scatter charts. They require
+  a secondary series and are resolved by secondary axis IDs and physical
+  orientation; non-scatter chart types reject these properties rather than
+  reversing a category axis.
   `Chart.x2AxisMajorGridlines`, `x2AxisMinorGridlines`, `y2AxisMajorGridlines`,
   and `y2AxisMinorGridlines` control gridlines on the secondary horizontal and
   vertical axes. Each accepts a boolean or the same `{color, width, dash,

@@ -2069,6 +2069,8 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "yAxisLogBase",
             "xAxisReversed",
             "yAxisReversed",
+            "x2AxisReversed",
+            "y2AxisReversed",
             "valueAxisDisplayUnit",
             "valueAxisDisplayUnitLabel",
             "xAxisDisplayUnit",
@@ -3690,7 +3692,12 @@ fn validate_chart_value_axis_reversed(chart: &Node, chart_type: &str) -> Result<
 
 fn validate_chart_scatter_axes_reversed(chart: &Node, chart_type: &str) -> Result<()> {
     let scatter_chart = chart_type.starts_with("scatter");
-    for property in ["xAxisReversed", "yAxisReversed"] {
+    for property in [
+        "xAxisReversed",
+        "yAxisReversed",
+        "x2AxisReversed",
+        "y2AxisReversed",
+    ] {
         let Some(value) = chart.props.get(property) else {
             continue;
         };
@@ -3704,6 +3711,13 @@ fn validate_chart_scatter_axes_reversed(chart: &Node, chart_type: &str) -> Resul
                 "Chart.{property} is supported only for scatter charts; omit it or use a scatter chart with two numeric axes"
             )));
         }
+    }
+    if chart.props.contains_key("secondaryValueAxisReversed")
+        && chart.props.contains_key("y2AxisReversed")
+    {
+        return Err(Error::Compile(
+            "Chart.secondaryValueAxisReversed and Chart.y2AxisReversed both target the secondary Y value axis; keep only one reversal property".into(),
+        ));
     }
     Ok(())
 }
@@ -4849,6 +4863,8 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
             "x2AxisDisplayUnitLabel",
             "y2AxisDisplayUnit",
             "y2AxisDisplayUnitLabel",
+            "x2AxisReversed",
+            "y2AxisReversed",
         ]
         .iter()
         .any(|property| chart.props.contains_key(*property))
