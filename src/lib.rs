@@ -12241,17 +12241,13 @@ fn validate_row_properties(row: &Node, row_index: usize) -> Result<()> {
     if let Some(height) = row.props.get("height") {
         let Some(height) = height.as_f64() else {
             return Err(Error::Compile(format!(
-                "Row.height at row {} must be a finite number in 0.75-point steps; use a value such as `height={{22.5}}`",
+                "Row.height at row {} must be a finite number from 0.75 to 409.5 points; choose a positive Excel row height",
                 row_index + 1
             )));
         };
-        let pixels = height * 4.0 / 3.0;
-        if !height.is_finite()
-            || !(0.75..=409.5).contains(&height)
-            || (pixels - pixels.round()).abs() > 1e-9
-        {
+        if !height.is_finite() || !(0.75..=409.5).contains(&height) {
             return Err(Error::Compile(format!(
-                "Row.height at row {} must be between 0.75 and 409.5 points in 0.75-point steps; choose a representable height such as `height={{22.5}}`",
+                "Row.height at row {} must be between 0.75 and 409.5 points; choose a height within Excel's row limits",
                 row_index + 1
             )));
         }
@@ -16930,8 +16926,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unrepresentable_row_height_with_repair() {
-        for height in [0.0, 22.3, 410.25] {
+    fn accepts_fractional_point_row_height() {
+        let input = workbook(vec![worksheet(
+            "Data",
+            vec![serde_json::json!({
+                "type":"Row",
+                "props":{"height":22.3},
+                "children":[{"type":"Cell","props":{},"children":["row"]}]
+            })],
+        )]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_row_height_outside_excel_range_with_repair() {
+        for height in [0.0, 410.25] {
             let input = workbook(vec![worksheet(
                 "Data",
                 vec![serde_json::json!({
@@ -16941,7 +16950,7 @@ mod tests {
                 })],
             )]);
             let error = input.validate().expect_err("invalid row height");
-            assert!(error.to_string().contains("0.75-point step"));
+            assert!(error.to_string().contains("Row.height"));
             assert!(error.to_string().contains("409.5"));
         }
     }

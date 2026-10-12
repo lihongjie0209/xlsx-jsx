@@ -2848,7 +2848,7 @@
         "props": {
           "type": "object",
           "properties": {
-            "height": { "type": "number", "minimum": 0.75, "maximum": 409.5, "multipleOf": 0.75 },
+            "height": { "type": "number", "minimum": 0.75, "maximum": 409.5 },
             "hidden": { "type": "boolean" },
             "collapsed": { "type": "boolean" },
             "outlineLevel": { "type": "integer", "minimum": 1, "maximum": 7 }

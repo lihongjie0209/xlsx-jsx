@@ -627,12 +627,14 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     });
     let column_autofit_targets = collect_column_autofit_targets(ir);
     let column_width_targets = collect_column_width_targets(ir);
+    let row_height_targets = collect_row_height_targets(ir);
     if !x14_icon_normalization.is_empty()
         || !table_dxf_targets.is_empty()
         || !table_filter_targets.is_empty()
         || literal_error_count > 0
         || strip_autofit_flags
         || !column_width_targets.is_empty()
+        || !row_height_targets.is_empty()
     {
         normalize_generated_xlsx(
             path,
@@ -643,6 +645,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             strip_autofit_flags,
             &column_autofit_targets,
             &column_width_targets,
+            &row_height_targets,
         )?;
     }
     Ok(())
@@ -888,6 +891,115 @@ fn patch_column_width_targets(
             "patched worksheet `{part}` is not UTF-8 XML: {error}"
         ))
     })
+}
+
+fn patch_row_height_targets(
+    xml: &str,
+    part: &str,
+    targets: &BTreeMap<u32, String>,
+) -> xlsx_jsx::Result<String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut writer = XmlWriter::new(Vec::new());
+    let mut seen = BTreeSet::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(ref start)) if start.local_name().as_ref() == b"row" => {
+                let patched =
+                    rewrite_row_height_event(start, reader.decoder(), part, targets, &mut seen)?;
+                writer.write_event(Event::Start(patched)).map_err(|error| {
+                    Error::Compile(format!("cannot patch row heights in `{part}`: {error}"))
+                })?;
+            }
+            Ok(Event::Empty(ref start)) if start.local_name().as_ref() == b"row" => {
+                let patched =
+                    rewrite_row_height_event(start, reader.decoder(), part, targets, &mut seen)?;
+                writer.write_event(Event::Empty(patched)).map_err(|error| {
+                    Error::Compile(format!("cannot patch row heights in `{part}`: {error}"))
+                })?;
+            }
+            Ok(Event::Eof) => break,
+            Ok(event) => writer.write_event(event.into_owned()).map_err(|error| {
+                Error::Compile(format!("cannot patch worksheet `{part}`: {error}"))
+            })?,
+            Err(error) => {
+                return Err(Error::Compile(format!(
+                    "cannot parse generated worksheet `{part}` while patching row heights: {error}"
+                )));
+            }
+        }
+    }
+    if seen.len() != targets.len() {
+        return Err(Error::Compile(format!(
+            "generated worksheet `{part}` omitted one or more requested row heights; verify that each JSX Row is emitted in worksheet order"
+        )));
+    }
+    String::from_utf8(writer.into_inner()).map_err(|error| {
+        Error::Compile(format!(
+            "patched worksheet `{part}` is not UTF-8 XML: {error}"
+        ))
+    })
+}
+
+fn rewrite_row_height_event(
+    start: &BytesStart<'_>,
+    decoder: quick_xml::encoding::Decoder,
+    part: &str,
+    targets: &BTreeMap<u32, String>,
+    seen: &mut BTreeSet<u32>,
+) -> xlsx_jsx::Result<BytesStart<'static>> {
+    let mut row = None;
+    let mut attrs = Vec::new();
+    for attr in start.attributes().with_checks(false) {
+        let attr = attr.map_err(|error| {
+            Error::Compile(format!("malformed row metadata in `{part}`: {error}"))
+        })?;
+        let key = attr.key.as_ref().to_vec();
+        let value = attr
+            .decoded_and_normalized_value(quick_xml::XmlVersion::Implicit1_0, decoder)
+            .map_err(|error| Error::Compile(format!("invalid row metadata in `{part}`: {error}")))?
+            .into_owned();
+        if key == b"r" {
+            row = value.parse::<u32>().ok();
+        }
+        attrs.push((key, value));
+    }
+    let row_number = row.ok_or_else(|| {
+        Error::Compile(format!(
+            "generated row metadata in `{part}` is missing its row number"
+        ))
+    })?;
+    let index = row_number.checked_sub(1).ok_or_else(|| {
+        Error::Compile(format!(
+            "generated row metadata in `{part}` has invalid row number 0"
+        ))
+    })?;
+    let Some(height) = targets.get(&index) else {
+        return Ok(start.to_owned());
+    };
+    seen.insert(index);
+    let mut output = BytesStart::new("row");
+    let mut had_height = false;
+    let mut had_custom_height = false;
+    for (key, value) in attrs {
+        match key.as_slice() {
+            b"ht" => {
+                output.push_attribute(("ht", height.as_str()));
+                had_height = true;
+            }
+            b"customHeight" => {
+                output.push_attribute(("customHeight", "1"));
+                had_custom_height = true;
+            }
+            _ => output.push_attribute((std::str::from_utf8(&key).unwrap_or(""), value.as_str())),
+        }
+    }
+    if !had_height {
+        output.push_attribute(("ht", height.as_str()));
+    }
+    if !had_custom_height {
+        output.push_attribute(("customHeight", "1"));
+    }
+    Ok(output)
 }
 
 fn rewrite_column_width_event(
@@ -1476,6 +1588,43 @@ fn collect_column_width_targets(ir: &IrEnvelope) -> HashMap<String, BTreeMap<u16
     targets
 }
 
+fn collect_row_height_targets(ir: &IrEnvelope) -> HashMap<String, BTreeMap<u32, String>> {
+    let mut targets = HashMap::new();
+    let mut worksheet_index = 0_usize;
+    for sheet in &ir.workbook.children {
+        let Some(object) = sheet.as_object() else {
+            continue;
+        };
+        if object.get("type").and_then(Value::as_str) != Some("Worksheet") {
+            continue;
+        }
+        worksheet_index += 1;
+        let Some(children) = object.get("children").and_then(Value::as_array) else {
+            continue;
+        };
+        let part = format!("xl/worksheets/sheet{worksheet_index}.xml");
+        let mut row_index = 0_u32;
+        for child in children {
+            if child.get("type").and_then(Value::as_str) != Some("Row") {
+                continue;
+            }
+            if let Some(height) = child
+                .get("props")
+                .and_then(Value::as_object)
+                .and_then(|props| props.get("height"))
+                .and_then(Value::as_f64)
+            {
+                targets
+                    .entry(part.clone())
+                    .or_insert_with(BTreeMap::new)
+                    .insert(row_index, height.to_string());
+            }
+            row_index = row_index.saturating_add(1);
+        }
+    }
+    targets
+}
+
 fn reapply_column_autofit_widths(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     sheet: &Node,
@@ -1528,6 +1677,7 @@ fn normalize_generated_xlsx(
     strip_autofit_flags: bool,
     column_autofit_targets: &HashMap<String, BTreeSet<u16>>,
     column_width_targets: &HashMap<String, BTreeMap<u16, String>>,
+    row_height_targets: &HashMap<String, BTreeMap<u32, String>>,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -1560,6 +1710,7 @@ fn normalize_generated_xlsx(
         strip_autofit_flags,
         column_autofit_targets,
         column_width_targets,
+        row_height_targets,
     );
     if let Err(error) = rewrite_result {
         let _ = std::fs::remove_file(&temporary_path);
@@ -1599,6 +1750,7 @@ fn rewrite_generated_xlsx(
     strip_autofit_flags: bool,
     column_autofit_targets: &HashMap<String, BTreeSet<u16>>,
     column_width_targets: &HashMap<String, BTreeMap<u16, String>>,
+    row_height_targets: &HashMap<String, BTreeMap<u32, String>>,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -1658,6 +1810,11 @@ fn rewrite_generated_xlsx(
             };
             let xml = if let Some(targets) = column_width_targets.get(&name) {
                 patch_column_width_targets(&xml, &name, targets)?
+            } else {
+                xml
+            };
+            let xml = if let Some(targets) = row_height_targets.get(&name) {
+                patch_row_height_targets(&xml, &name, targets)?
             } else {
                 xml
             };
@@ -37597,13 +37754,9 @@ fn audit_row_attributes(
     }
     let height = match (height, custom_height) {
         (Some(height), true) => {
-            let pixels = height * 4.0 / 3.0;
-            if !height.is_finite()
-                || !(0.75..=409.5).contains(&height)
-                || (pixels - pixels.round()).abs() > 1e-9
-            {
+            if !height.is_finite() || !(0.75..=409.5).contains(&height) {
                 return Err(Error::Reverse(format!(
-                    "worksheet `{part}` row {} has height {height} points that cannot round-trip at 0.75-point precision; normalize the row height or add higher-precision height support",
+                    "worksheet `{part}` row {} has height {height} points outside the supported 0.75–409.5 point range; normalize the height or repair the row metadata",
                     row_index.unwrap_or(fallback_index) + 1
                 )));
             }

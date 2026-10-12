@@ -19046,6 +19046,71 @@ fn external_row_height_and_hidden_state_survive_recompile() {
 }
 
 #[test]
+fn compiled_fractional_point_row_height_is_restored_after_writer_rounding() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("fractional-row-height.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Row, Cell } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Heights"><Row height={18.5}><Cell>value</Cell></Row></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    let output = directory.path().join("fractional-row-height.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source)
+        .args(["-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&output, "xl/worksheets/sheet1.xml");
+    assert!(xml.contains("ht=\"18.5\""), "{xml}");
+}
+
+#[test]
+fn external_fractional_point_row_height_reverses_and_recompiles_exactly() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("external-fractional-row.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet.write_string(0, 0, "value").expect("cell writes");
+    worksheet
+        .set_row_height(0, 18.5)
+        .expect("writer rounds to pixels");
+    workbook.save(&input).expect("external workbook saves");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace("ht=\"18.75\"", "ht=\"18.5\"")
+    });
+
+    let reversed = directory.path().join("external-fractional-row.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("<Row height={18.5}>"), "{source}");
+
+    let rebuilt = directory
+        .path()
+        .join("external-fractional-row-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    assert!(xml.contains("ht=\"18.5\""), "{xml}");
+}
+
+#[test]
 fn external_expanded_row_and_column_outlines_survive_recompile() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("outlines.xlsx");

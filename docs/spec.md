@@ -1691,9 +1691,12 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 
 - Children: `Cell` components only, in column order. Empty rows are positional
   placeholders; a trailing empty row is only meaningful when it has row metadata.
-- `height?: number` sets row height in points. Values must be finite, from 0.75
-  through 409.5, and a multiple of 0.75 points so the value survives the
-  writer's pixel quantization without changing on reverse.
+- `height?: number` sets row height in points. Values must be finite and from
+  0.75 through 409.5. The compiler restores the exact OOXML height after the
+  pinned writer's pixel-based setter rounds it. Reverse preserves external
+  heights at their authored numeric precision. An image anchored to the row
+  still requires whole-pixel row geometry (a multiple of 0.75 points); otherwise
+  the image operation fails with guidance instead of rounding its anchor.
 - `hidden?: boolean` hides the row when true. False is equivalent to the default
   visible state and is omitted by reverse.
 - `outlineLevel?: integer` sets the expanded outline nesting level from 1

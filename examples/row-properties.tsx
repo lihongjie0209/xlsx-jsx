@@ -2,7 +2,7 @@ import { Workbook, Worksheet, Row, Cell } from "xlsx-jsx";
 
 export default <Workbook>
   <Worksheet name="Rows">
-    <Row height={24}>
+    <Row height={18.5}>
       <Cell>Header</Cell>
     </Row>
     <Row />
