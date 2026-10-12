@@ -915,17 +915,30 @@ fn validate_worksheet_tab_color(sheet: &Node, name: &str) -> Result<()> {
     let Some(value) = sheet.props.get("tabColor") else {
         return Ok(());
     };
-    let Some(color) = value.as_str() else {
+    if let Some(color) = value.as_str() {
+        if color.len() != 7
+            || !color.starts_with('#')
+            || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(Error::Compile(format!(
+                "Worksheet.tabColor `{color}` on `{name}` must match `#RRGGBB`; use exactly six hexadecimal digits after `#`"
+            )));
+        }
+        return Ok(());
+    }
+    let Some(object) = value.as_object() else {
         return Err(Error::Compile(format!(
-            "Worksheet.tabColor on `{name}` must be an opaque RGB string such as `#4472C4`; use exactly six hexadecimal digits"
+            "Worksheet.tabColor on `{name}` must be an opaque RGB string such as `#4472C4` or {{ theme: 0..9, shade: 0..5 }}; use RGB or a supported theme color"
         )));
     };
-    if color.len() != 7
-        || !color.starts_with('#')
-        || !color[1..].bytes().all(|byte| byte.is_ascii_hexdigit())
+    let theme = object.get("theme").and_then(Value::as_u64);
+    let shade = object.get("shade").and_then(Value::as_u64);
+    if object.len() != 2
+        || theme.is_none_or(|theme| theme > 9)
+        || shade.is_none_or(|shade| shade > 5)
     {
         return Err(Error::Compile(format!(
-            "Worksheet.tabColor `{color}` on `{name}` must match `#RRGGBB`; use exactly six hexadecimal digits after `#`"
+            "Worksheet.tabColor on `{name}` must be {{ theme: 0..9, shade: 0..5 }} with no extra fields; use a valid SpreadsheetML theme slot and writer-supported shade"
         )));
     }
     Ok(())
@@ -14445,6 +14458,14 @@ mod tests {
     }
 
     #[test]
+    fn accepts_writer_supported_theme_shade_for_worksheet_tab_color() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Themed","tabColor":{"theme":4,"shade":2}},"children":[]
+        })]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
     fn accepts_valid_worksheet_code_name() {
         let input = workbook(vec![serde_json::json!({
             "type":"Worksheet","props":{"name":"Data","codeName":"DataSheet"},"children":[]
@@ -14598,6 +14619,19 @@ mod tests {
         assert!(error.to_string().contains("Worksheet.tabColor"));
         assert!(error.to_string().contains("#RRGGBB"));
         assert!(error.to_string().contains("six hexadecimal digits"));
+    }
+
+    #[test]
+    fn rejects_unsupported_theme_worksheet_tab_color_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Themed","tabColor":{"theme":4,"shade":2,"tint":0.2}},"children":[]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("arbitrary theme tint is not supported");
+        assert!(error.to_string().contains("Worksheet.tabColor"));
+        assert!(error.to_string().contains("theme: 0..9, shade: 0..5"));
+        assert!(error.to_string().contains("no extra fields"));
     }
 
     #[test]

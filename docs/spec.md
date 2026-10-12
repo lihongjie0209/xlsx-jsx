@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.81
+Version: 1.82
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -1090,9 +1090,11 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   most one worksheet may set it to `true`, and it must be visible. When omitted,
   the first worksheet is the leftmost visible tab. Reverse preserves a
   non-first selection using `workbookView@firstSheet` and omits the default.
-- `tabColor?: string` sets the worksheet tab's opaque RGB color using exactly
-  `#RRGGBB`; reverse preserves explicit RGB values in uppercase. Theme, indexed,
-  automatic, and alpha-bearing colors are rejected rather than approximated.
+- `tabColor?: Color` sets the worksheet tab color as RGB `#RRGGBB` or a theme
+  object `{ theme: 0..9, shade: 0..5 }`. Theme shades use the exact discrete
+  tint variants supported by the pinned writer. Reverse preserves RGB values in
+  uppercase and preserves theme index/shade from external worksheets; indexed,
+  automatic, alpha-bearing, and unrecognized tint values are rejected.
 - `codeName?: string` sets the worksheet VBA/OOXML code name via
   `Worksheet::set_vba_name()`. It must be 1–31 Unicode alphanumeric or `_`
   characters and begin with a letter; code names are unique ignoring Unicode

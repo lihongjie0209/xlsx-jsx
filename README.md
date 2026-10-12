@@ -34,7 +34,7 @@ xlsx-jsx spec --format json
 | First visible tab | yes | yes | `firstTab={true}` selects one visible worksheet as the leftmost tab; default is the first worksheet |
 | Chartsheets | yes | yes (supported subset) | `<Chartsheet name="Sales"><Chart type="column">…</Chart></Chartsheet>` uses one full-sheet chart with data series referencing ordinary worksheets; worksheet anchors/size, active or grouped Chartsheet tabs, portrait canvas geometry, and extra drawing objects are rejected |
 | In-cell checkboxes | yes | yes | `Cell value={true} checkbox={true}` writes Excel 2024 checkbox metadata; boolean values stay usable in formulas and older Excel versions display TRUE/FALSE |
-| Worksheet tab color | yes | yes | `tabColor="#4472C4"` uses opaque RGB; theme/indexed colors are rejected |
+| Worksheet tab color | yes | yes | `tabColor="#4472C4"` or `tabColor={{theme: 4, shade: 2}}` preserves opaque RGB or a writer-supported theme shade; indexed/automatic colors and arbitrary tints are rejected |
 | Default row height | yes | yes | `defaultRowHeightPixels` uses integer pixels; non-representable external point values are rejected |
 | Hide unused worksheet rows | yes | yes | `hideUnusedRows` hides rows without explicit content |
 | Screen gridlines | yes | yes | `showGridlines={false}` hides on-screen worksheet gridlines; print settings are separate |

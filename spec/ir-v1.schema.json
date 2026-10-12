@@ -78,7 +78,7 @@
             "active": { "type": "boolean" },
             "selected": { "type": "boolean" },
             "firstTab": { "type": "boolean" },
-            "tabColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "tabColor": { "$ref": "#/$defs/styleColor" },
             "codeName": { "type": "string", "minLength": 1, "maxLength": 31 },
             "visibility": { "enum": ["visible", "hidden", "veryHidden"] },
             "defaultRowHeightPixels": { "type": "integer", "minimum": 1, "maximum": 545 },

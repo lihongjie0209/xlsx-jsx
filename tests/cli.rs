@@ -18144,7 +18144,7 @@ fn public_worksheet_tab_color_example_builds_and_reverses() {
         .arg(&output);
     command.assert().success();
     let xml = read_zip_part_for_test(&output, "xl/worksheets/sheet1.xml");
-    assert!(xml.contains("<tabColor rgb=\"FF4472C4\""));
+    assert!(xml.contains("<tabColor theme=\"4\" tint=\"0.59999389629810485\""));
 
     let reversed = directory.path().join("worksheet-tab-color.tsx");
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
@@ -18155,7 +18155,7 @@ fn public_worksheet_tab_color_example_builds_and_reverses() {
         .arg(&reversed);
     command.assert().success();
     let source = std::fs::read_to_string(reversed).expect("reverse output exists");
-    assert!(source.contains("tabColor=\"#4472C4\""));
+    assert!(source.contains("tabColor={{theme: 4, shade: 2}}"));
 }
 
 #[test]
@@ -18237,7 +18237,7 @@ fn public_worksheet_protection_example_builds_and_reverses() {
 }
 
 #[test]
-fn external_rgb_tab_color_round_trips_and_theme_colors_are_rejected() {
+fn external_rgb_and_theme_tab_colors_round_trip_without_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("external-tab-color.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
@@ -18258,19 +18258,71 @@ fn external_rgb_tab_color_round_trips_and_theme_colors_are_rejected() {
     assert!(source.contains("tabColor=\"#12ABEF\""));
 
     let theme_input = directory.path().join("theme-tab-color.xlsx");
+    let mut theme_workbook = rust_xlsxwriter::Workbook::new();
+    theme_workbook
+        .add_worksheet()
+        .set_tab_color(rust_xlsxwriter::Color::Theme(4, 2));
+    theme_workbook
+        .save(&theme_input)
+        .expect("theme color workbook writes");
+    let theme_reversed = directory.path().join("theme-tab-color.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&theme_input)
+        .args(["-o"])
+        .arg(&theme_reversed);
+    command.assert().success();
+    let theme_source = std::fs::read_to_string(&theme_reversed).expect("theme JSX exists");
+    assert!(
+        theme_source.contains("tabColor={{theme: 4, shade: 2}}"),
+        "{theme_source}"
+    );
+
+    let theme_rebuilt = directory.path().join("theme-tab-color-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&theme_reversed)
+        .args(["-o"])
+        .arg(&theme_rebuilt)
+        .assert()
+        .success();
+    let theme_second = directory.path().join("theme-tab-color-second.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&theme_rebuilt)
+        .args(["-o"])
+        .arg(&theme_second)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read_to_string(theme_second).unwrap(), theme_source);
+}
+
+#[test]
+fn external_tab_color_with_unrecognized_theme_tint_is_rejected() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("unsupported-theme-tab-color.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .add_worksheet()
+        .set_tab_color(rust_xlsxwriter::Color::Theme(4, 2));
+    workbook.save(&input).expect("workbook writes");
     rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
-        let modified = xml.replace("<tabColor rgb=\"FF12ABEF\"", "<tabColor theme=\"4\"");
-        assert_ne!(modified, xml, "test must replace the RGB tab color");
+        let modified = xml.replace("tint=\"0.59999389629810485\"", "tint=\"0.2\"");
+        assert_ne!(modified, xml, "writer should serialize the theme tint");
         modified
     });
-    std::fs::copy(&input, &theme_input).expect("theme test workbook copies");
+
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
-    command.args(["reverse"]).arg(theme_input);
+    command.args(["reverse"]).arg(&input);
     command
         .assert()
         .failure()
-        .stderr(predicate::str::contains("tabColor has unsupported"))
-        .stderr(predicate::str::contains("theme"));
+        .stderr(predicate::str::contains("tabColor"))
+        .stderr(predicate::str::contains("tint"))
+        .stderr(predicate::str::contains("suggestion:"));
 }
 
 #[test]

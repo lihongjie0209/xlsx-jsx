@@ -4925,13 +4925,10 @@ fn apply_worksheet_tab_color(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     sheet: &Node,
 ) -> xlsx_jsx::Result<()> {
-    let Some(color) = sheet.props.get("tabColor").and_then(Value::as_str) else {
+    let Some(color) = sheet.props.get("tabColor") else {
         return Ok(());
     };
-    let rgb = u32::from_str_radix(&color[1..], 16).map_err(|error| {
-        Error::Compile(format!("Worksheet.tabColor `{color}` is invalid: {error}"))
-    })?;
-    worksheet.set_tab_color(Color::RGB(rgb));
+    worksheet.set_tab_color(parse_style_color(color, "Worksheet.tabColor")?);
     Ok(())
 }
 
@@ -7074,8 +7071,8 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         {
             let _ = write!(output, " visibility={visibility:?}");
         }
-        if let Some(color) = sheet_metadata.and_then(|metadata| metadata.tab_color.as_deref()) {
-            let _ = write!(output, " tabColor={color:?}");
+        if let Some(color) = sheet_metadata.and_then(|metadata| metadata.tab_color.as_ref()) {
+            write_color_string_prop(&mut output, "tabColor", color);
         }
         if let Some(code_name) = sheet_metadata.and_then(|metadata| metadata.code_name.as_deref()) {
             let _ = write!(output, " codeName={code_name:?}");
@@ -28996,7 +28993,7 @@ struct WorksheetMetadata {
     tab_selected: Option<bool>,
     first_tab: Option<()>,
     visibility: WorksheetVisibility,
-    tab_color: Option<String>,
+    tab_color: Option<SpreadsheetColor>,
     code_name: Option<String>,
     default_row_height_pixels: Option<u32>,
     hide_unused_rows: bool,
@@ -36503,50 +36500,19 @@ fn audit_tab_color(
     event: &BytesStart<'_>,
     part: &str,
     decoder: quick_xml::encoding::Decoder,
-    tab_color: &mut Option<String>,
+    tab_color: &mut Option<SpreadsheetColor>,
 ) -> xlsx_jsx::Result<()> {
     if tab_color.is_some() {
         return Err(Error::Reverse(format!(
             "worksheet `{part}` repeats tabColor; keep one color or add support for duplicate metadata"
         )));
     }
-    let mut attributes = HashMap::new();
-    for attribute in event.attributes().with_checks(false) {
-        let attribute = attribute.map_err(|error| {
-            Error::Reverse(format!(
-                "worksheet `{part}` has invalid tabColor attribute: {error}"
-            ))
-        })?;
-        let key = String::from_utf8_lossy(attribute.key.local_name().as_ref()).into_owned();
-        if key != "rgb" {
-            return Err(Error::Reverse(format!(
-                "worksheet `{part}` tabColor has unsupported `{key}` metadata; use an explicit opaque RGB color or add support for theme/indexed colors"
-            )));
-        }
-        let value = attribute
-            .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
-            .map_err(|error| Error::Reverse(error.to_string()))?
-            .into_owned();
-        if attributes.insert(key.clone(), value).is_some() {
-            return Err(Error::Reverse(format!(
-                "worksheet `{part}` tabColor repeats `{key}`; remove the duplicate attribute"
-            )));
-        }
-    }
-    let rgb = attributes.get("rgb").ok_or_else(|| {
-        Error::Reverse(format!(
-            "worksheet `{part}` tabColor is missing an explicit rgb value; use opaque RGB or add support for theme/indexed colors"
-        ))
-    })?;
-    if rgb.len() != 8
-        || !rgb.bytes().all(|byte| byte.is_ascii_hexdigit())
-        || !rgb[..2].eq_ignore_ascii_case("FF")
-    {
+    let Some(BorderColor::Value(color)) = parse_border_color(event, decoder) else {
         return Err(Error::Reverse(format!(
-            "worksheet `{part}` tabColor `{rgb}` is not an opaque ARGB RGB value; use alpha FF or add explicit alpha handling"
+            "worksheet `{part}` tabColor uses an indexed/automatic color, alpha, unsupported attribute, or unrecognized theme tint; use opaque RGB or a writer-supported theme shade"
         )));
-    }
-    *tab_color = Some(format!("#{}", &rgb[2..]).to_ascii_uppercase());
+    };
+    *tab_color = Some(color);
     Ok(())
 }
 
