@@ -131,6 +131,12 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   a secondary series and are resolved by secondary axis IDs and physical
   orientation; non-scatter chart types reject these properties rather than
   reversing a category axis.
+  `x2AxisMajorTickType`, `x2AxisMinorTickType`, `y2AxisMajorTickType`, and
+  `y2AxisMinorTickType` use `cross`, `inside`, `outside`, or `none` to set tick
+  marks on the matching secondary axes. `x2AxisLabelPosition` and
+  `y2AxisLabelPosition` accept `nextTo`, `high`, `low`, or `none`. These
+  properties require a secondary series and reverse through chart-group axis
+  IDs and physical positions, including horizontal-bar handle swaps.
   `Chart.x2AxisMajorGridlines`, `x2AxisMinorGridlines`, `y2AxisMajorGridlines`,
   and `y2AxisMinorGridlines` control gridlines on the secondary horizontal and
   vertical axes. Each accepts a boolean or the same `{color, width, dash,

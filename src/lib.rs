@@ -2103,8 +2103,14 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "horizontalAxisMinorTickType",
             "verticalAxisMajorTickType",
             "verticalAxisMinorTickType",
+            "x2AxisMajorTickType",
+            "x2AxisMinorTickType",
+            "y2AxisMajorTickType",
+            "y2AxisMinorTickType",
             "horizontalAxisLabelPosition",
             "verticalAxisLabelPosition",
+            "x2AxisLabelPosition",
+            "y2AxisLabelPosition",
             "categoryAxisLabelAlignment",
             "categoryAxisOnTickMarks",
             "categoryAxisType",
@@ -4137,6 +4143,10 @@ fn validate_chart_axis_tick_types(chart: &Node, chart_type: &str) -> Result<()> 
         "horizontalAxisMinorTickType",
         "verticalAxisMajorTickType",
         "verticalAxisMinorTickType",
+        "x2AxisMajorTickType",
+        "x2AxisMinorTickType",
+        "y2AxisMajorTickType",
+        "y2AxisMinorTickType",
     ] {
         let Some(value) = chart.props.get(property) else {
             continue;
@@ -4159,7 +4169,12 @@ fn validate_chart_axis_tick_types(chart: &Node, chart_type: &str) -> Result<()> 
 }
 
 fn validate_chart_axis_label_positions(chart: &Node, chart_type: &str) -> Result<()> {
-    for property in ["horizontalAxisLabelPosition", "verticalAxisLabelPosition"] {
+    for property in [
+        "horizontalAxisLabelPosition",
+        "verticalAxisLabelPosition",
+        "x2AxisLabelPosition",
+        "y2AxisLabelPosition",
+    ] {
         let Some(value) = chart.props.get(property) else {
             continue;
         };
@@ -4865,12 +4880,18 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
             "y2AxisDisplayUnitLabel",
             "x2AxisReversed",
             "y2AxisReversed",
+            "x2AxisMajorTickType",
+            "x2AxisMinorTickType",
+            "y2AxisMajorTickType",
+            "y2AxisMinorTickType",
+            "x2AxisLabelPosition",
+            "y2AxisLabelPosition",
         ]
         .iter()
         .any(|property| chart.props.contains_key(*property))
     {
         return Err(Error::Compile(
-            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, gridlines, and crossings require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties (including secondary-axis label fonts)".into(),
+            "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, gridlines, and crossings require at least one Series with secondaryAxis={true}; add a secondary series or remove these properties (including secondary-axis label fonts, ticks, and label positions)".into(),
         ));
     }
     validate_chart_series_spacing(chart)?;

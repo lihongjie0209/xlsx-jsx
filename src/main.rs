@@ -2815,11 +2815,15 @@ fn configure_chart_category_axis_intervals(chart: &mut Chart, component: &Node) 
 }
 
 fn configure_chart_axis_tick_types(chart: &mut Chart, component: &Node) -> xlsx_jsx::Result<()> {
-    for (property, horizontal, major) in [
-        ("horizontalAxisMajorTickType", true, true),
-        ("horizontalAxisMinorTickType", true, false),
-        ("verticalAxisMajorTickType", false, true),
-        ("verticalAxisMinorTickType", false, false),
+    for (property, axis_name, major) in [
+        ("horizontalAxisMajorTickType", "x", true),
+        ("horizontalAxisMinorTickType", "x", false),
+        ("verticalAxisMajorTickType", "y", true),
+        ("verticalAxisMinorTickType", "y", false),
+        ("x2AxisMajorTickType", "x2", true),
+        ("x2AxisMinorTickType", "x2", false),
+        ("y2AxisMajorTickType", "y2", true),
+        ("y2AxisMinorTickType", "y2", false),
     ] {
         let Some(value) = component.props.get(property).and_then(Value::as_str) else {
             continue;
@@ -2835,10 +2839,12 @@ fn configure_chart_axis_tick_types(chart: &mut Chart, component: &Node) -> xlsx_
                 )));
             }
         };
-        let axis = if horizontal {
-            chart.x_axis()
-        } else {
-            chart.y_axis()
+        let axis = match axis_name {
+            "x" => chart.x_axis(),
+            "y" => chart.y_axis(),
+            "x2" => chart.x2_axis(),
+            "y2" => chart.y2_axis(),
+            _ => unreachable!(),
         };
         if major {
             axis.set_major_tick_type(tick_type);
@@ -3078,9 +3084,11 @@ fn configure_chart_axis_label_positions(
     chart: &mut Chart,
     component: &Node,
 ) -> xlsx_jsx::Result<()> {
-    for (property, horizontal) in [
-        ("horizontalAxisLabelPosition", true),
-        ("verticalAxisLabelPosition", false),
+    for (property, axis_name) in [
+        ("horizontalAxisLabelPosition", "x"),
+        ("verticalAxisLabelPosition", "y"),
+        ("x2AxisLabelPosition", "x2"),
+        ("y2AxisLabelPosition", "y2"),
     ] {
         let Some(value) = component.props.get(property).and_then(Value::as_str) else {
             continue;
@@ -3096,10 +3104,12 @@ fn configure_chart_axis_label_positions(
                 )));
             }
         };
-        let axis = if horizontal {
-            chart.x_axis()
-        } else {
-            chart.y_axis()
+        let axis = match axis_name {
+            "x" => chart.x_axis(),
+            "y" => chart.y_axis(),
+            "x2" => chart.x2_axis(),
+            "y2" => chart.y2_axis(),
+            _ => unreachable!(),
         };
         axis.set_label_position(position);
     }
@@ -6827,6 +6837,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     append_chart_axis_crossing_properties(&mut properties, chart);
     append_chart_axis_value_properties(&mut properties, chart);
     append_chart_axis_reversal_properties(&mut properties, chart);
+    append_chart_secondary_tick_properties(&mut properties, chart);
     append_chart_scatter_axis_display_unit_properties(&mut properties, chart);
     append_chart_secondary_axis_display_unit_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
@@ -7395,6 +7406,21 @@ fn append_chart_axis_reversal_properties(properties: &mut String, chart: &Worksh
     ] {
         if let Some(reversed) = reversed {
             let _ = write!(properties, " {name}={{{reversed}}}");
+        }
+    }
+}
+
+fn append_chart_secondary_tick_properties(properties: &mut String, chart: &WorksheetChart) {
+    for (name, value) in [
+        ("x2AxisMajorTickType", chart.x2_axis_major_tick_type),
+        ("x2AxisMinorTickType", chart.x2_axis_minor_tick_type),
+        ("y2AxisMajorTickType", chart.y2_axis_major_tick_type),
+        ("y2AxisMinorTickType", chart.y2_axis_minor_tick_type),
+        ("x2AxisLabelPosition", chart.x2_axis_label_position),
+        ("y2AxisLabelPosition", chart.y2_axis_label_position),
+    ] {
+        if let Some(value) = value {
+            let _ = write!(properties, " {name}=\"{value}\"");
         }
     }
 }
@@ -10386,6 +10412,12 @@ struct ParsedSecondaryChartGroups {
     x2_axis_display_unit_label: Option<bool>,
     y2_axis_display_unit: Option<&'static str>,
     y2_axis_display_unit_label: Option<bool>,
+    x2_axis_major_tick_type: Option<&'static str>,
+    x2_axis_minor_tick_type: Option<&'static str>,
+    y2_axis_major_tick_type: Option<&'static str>,
+    y2_axis_minor_tick_type: Option<&'static str>,
+    x2_axis_label_position: Option<&'static str>,
+    y2_axis_label_position: Option<&'static str>,
     secondary_gridlines: [Option<bool>; 4],
     secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4],
     secondary_value_axis_min: Option<f64>,
@@ -10966,6 +10998,12 @@ fn parse_secondary_chart_groups(
     let mut secondary_value_axis_reversed = None;
     let mut x2_axis_reversed = None;
     let mut y2_axis_reversed = None;
+    let mut x2_axis_major_tick_type = None;
+    let mut x2_axis_minor_tick_type = None;
+    let mut y2_axis_major_tick_type = None;
+    let mut y2_axis_minor_tick_type = None;
+    let mut x2_axis_label_position = None;
+    let mut y2_axis_label_position = None;
     let mut x2_axis_crossing = None;
     let mut y2_axis_crossing = None;
     let mut x2_axis_crossing_value = None;
@@ -10983,6 +11021,50 @@ fn parse_secondary_chart_groups(
             Some("l" | "r") => Some(2),
             _ => None,
         };
+        let tick_targets = match position {
+            Some("l" | "r") => (
+                &mut y2_axis_major_tick_type,
+                &mut y2_axis_minor_tick_type,
+                &mut y2_axis_label_position,
+            ),
+            _ => (
+                &mut x2_axis_major_tick_type,
+                &mut x2_axis_minor_tick_type,
+                &mut x2_axis_label_position,
+            ),
+        };
+        for (tag, target, is_tick) in [
+            ("majorTickMark", &mut *tick_targets.0, true),
+            ("minorTickMark", &mut *tick_targets.1, true),
+            ("tickLblPos", &mut *tick_targets.2, false),
+        ] {
+            let Some((_, attributes)) = parsed_axis.tags.iter().find(|(name, _)| name == tag)
+            else {
+                continue;
+            };
+            let raw = attributes.get("val").ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` secondary axis `{tag}` has no val; restore a supported tick or label position"
+            )))?;
+            let value = match (tag, raw.as_str()) {
+                ("majorTickMark" | "minorTickMark", "cross") => "cross",
+                ("majorTickMark" | "minorTickMark", "in") => "inside",
+                ("majorTickMark" | "minorTickMark", "out") => "outside",
+                ("majorTickMark" | "minorTickMark" | "tickLblPos", "none") => "none",
+                ("tickLblPos", "nextTo") => "nextTo",
+                ("tickLblPos", "high") => "high",
+                ("tickLblPos", "low") => "low",
+                _ => continue,
+            };
+            // Writer defaults (`cross` and `nextTo`) need no explicit DSL property.
+            if (is_tick && value == "cross") || (!is_tick && value == "nextTo") {
+                continue;
+            }
+            if target.replace(value).is_some() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats secondary-axis `{tag}`; retain one setting per axis"
+                )));
+            }
+        }
         let has_crossing = parsed_axis
             .tags
             .iter()
@@ -11397,6 +11479,12 @@ fn parse_secondary_chart_groups(
         x2_axis_display_unit_label,
         y2_axis_display_unit,
         y2_axis_display_unit_label,
+        x2_axis_major_tick_type,
+        x2_axis_minor_tick_type,
+        y2_axis_major_tick_type,
+        y2_axis_minor_tick_type,
+        x2_axis_label_position,
+        y2_axis_label_position,
         secondary_gridlines,
         secondary_gridline_styles,
         secondary_value_axis_min,
@@ -11437,6 +11525,8 @@ fn validate_secondary_axis_defaults(
         "delete",
         "axPos",
         "tickLblPos",
+        "majorTickMark",
+        "minorTickMark",
         "crossAx",
         "crosses",
         "crossesAt",
@@ -11494,10 +11584,10 @@ fn validate_secondary_axis_defaults(
             )));
         }
         let allowed_attributes: &[&str] = match tag.as_str() {
-            "axId" | "crossAx" | "orientation" | "delete" | "axPos" | "tickLblPos" | "crosses"
-            | "auto" | "lblAlgn" | "lblOffset" | "crossBetween" | "min" | "max" | "majorUnit"
-            | "minorUnit" | "logBase" | "crossesAt" | "srgbClr" | "alpha" | "prstDash"
-            | "builtInUnit" => &["val"],
+            "axId" | "crossAx" | "orientation" | "delete" | "axPos" | "tickLblPos"
+            | "majorTickMark" | "minorTickMark" | "crosses" | "auto" | "lblAlgn" | "lblOffset"
+            | "crossBetween" | "min" | "max" | "majorUnit" | "minorUnit" | "logBase"
+            | "crossesAt" | "srgbClr" | "alpha" | "prstDash" | "builtInUnit" => &["val"],
             "numFmt" => &["formatCode", "sourceLinked"],
             "bodyPr" => &["rot", "vert"],
             "rPr" | "defRPr" | "endParaRPr" => &["lang", "b", "i", "u", "sz", "baseline"],
@@ -11535,7 +11625,10 @@ fn validate_secondary_axis_defaults(
                 .is_some_and(|value| matches!(value.as_str(), "b" | "l" | "t" | "r")),
             "tickLblPos" => attributes
                 .get("val")
-                .is_some_and(|value| matches!(value.as_str(), "none" | "nextTo")),
+                .is_some_and(|value| matches!(value.as_str(), "none" | "nextTo" | "high" | "low")),
+            "majorTickMark" | "minorTickMark" => attributes
+                .get("val")
+                .is_some_and(|value| matches!(value.as_str(), "cross" | "in" | "out" | "none")),
             "crossesAt" => attributes
                 .get("val")
                 .and_then(|value| value.parse::<f64>().ok())
@@ -20126,6 +20219,12 @@ fn parse_chart_xml(
         y_axis_label_font,
         x2_axis_label_font: secondary_chart_groups.x2_axis_label_font,
         y2_axis_label_font: secondary_chart_groups.y2_axis_label_font,
+        x2_axis_major_tick_type: secondary_chart_groups.x2_axis_major_tick_type,
+        x2_axis_minor_tick_type: secondary_chart_groups.x2_axis_minor_tick_type,
+        y2_axis_major_tick_type: secondary_chart_groups.y2_axis_major_tick_type,
+        y2_axis_minor_tick_type: secondary_chart_groups.y2_axis_minor_tick_type,
+        x2_axis_label_position: secondary_chart_groups.x2_axis_label_position,
+        y2_axis_label_position: secondary_chart_groups.y2_axis_label_position,
         secondary_value_axis_display_unit: secondary_chart_groups.secondary_value_axis_display_unit,
         secondary_value_axis_display_unit_label: secondary_chart_groups
             .secondary_value_axis_display_unit_label,
@@ -24596,6 +24695,12 @@ struct WorksheetChart {
     y_axis_label_font: WorksheetChartAxisFont,
     x2_axis_label_font: WorksheetChartAxisFont,
     y2_axis_label_font: WorksheetChartAxisFont,
+    x2_axis_major_tick_type: Option<&'static str>,
+    x2_axis_minor_tick_type: Option<&'static str>,
+    y2_axis_major_tick_type: Option<&'static str>,
+    y2_axis_minor_tick_type: Option<&'static str>,
+    x2_axis_label_position: Option<&'static str>,
+    y2_axis_label_position: Option<&'static str>,
     secondary_value_axis_display_unit: Option<&'static str>,
     secondary_value_axis_display_unit_label: Option<bool>,
     x2_axis_display_unit: Option<&'static str>,

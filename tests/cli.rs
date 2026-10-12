@@ -51,6 +51,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("secondaryValueAxisDisplayUnit"))
         .stdout(predicate::str::contains("x2AxisDisplayUnit"))
         .stdout(predicate::str::contains("x2AxisReversed"))
+        .stdout(predicate::str::contains("x2AxisMajorTickType"))
         .stdout(predicate::str::contains("x2AxisMajorGridlines"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
@@ -4397,6 +4398,27 @@ fn secondary_axis_gridlines_require_a_secondary_series() {
         .stderr(predicate::str::contains(
             "secondary-axis titles, number formats, bounds, units, logarithmic base, reversal, gridlines, and crossings require at least one Series with secondaryAxis={true}",
         ));
+}
+
+#[test]
+fn secondary_axis_tick_properties_are_validated_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("invalid-secondary-tick.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" x2AxisMajorTickType="diagonal"><Series values="Data!B2:B4" /><Series values="Data!C2:C4" secondaryAxis={true} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(source)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.x2AxisMajorTickType must be cross, inside, outside, or none",
+        ))
+        .stderr(predicate::str::contains("choose one of these tick types"));
 }
 
 #[test]
@@ -8803,6 +8825,127 @@ fn secondary_axis_reversal_properties_require_scatter_and_secondary_series() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("add a secondary series"));
+}
+
+#[test]
+fn secondary_axis_tick_types_and_label_positions_round_trip_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-secondary-axis-ticks.xlsx");
+    let output_path = directory.path().join("external-secondary-axis-ticks.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_values("Data!B2:B4")
+        .set_categories("Data!A2:A4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_categories("Data!A2:A4")
+        .set_secondary_axis(true);
+    chart
+        .x2_axis()
+        .set_major_tick_type(ChartAxisTickType::Inside)
+        .set_label_position(ChartAxisLabelPosition::High);
+    chart
+        .y2_axis()
+        .set_minor_tick_type(ChartAxisTickType::Outside)
+        .set_label_position(ChartAxisLabelPosition::Low);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(
+        source.contains("x2AxisMajorTickType=\"inside\""),
+        "{source}"
+    );
+    assert!(source.contains("x2AxisLabelPosition=\"high\""), "{source}");
+    assert!(
+        source.contains("y2AxisMinorTickType=\"outside\""),
+        "{source}"
+    );
+    assert!(source.contains("y2AxisLabelPosition=\"low\""), "{source}");
+
+    let rebuilt_path = directory.path().join("rebuilt-secondary-axis-ticks.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(
+        xml.contains("<c:majorTickMark val=\"in\"/>")
+            || xml.contains("<c:majorTickMark val=\"inside\"/>"),
+        "{xml}"
+    );
+    assert!(xml.contains("<c:tickLblPos val=\"high\"/>"), "{xml}");
+    assert!(
+        xml.contains("<c:minorTickMark val=\"out\"/>")
+            || xml.contains("<c:minorTickMark val=\"outside\"/>"),
+        "{xml}"
+    );
+    assert!(xml.contains("<c:tickLblPos val=\"low\"/>"), "{xml}");
+}
+
+#[test]
+fn secondary_axis_tick_properties_map_horizontal_bar_handles_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-secondary-bar-ticks.xlsx");
+    let output_path = directory.path().join("external-secondary-bar-ticks.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Bar);
+    chart
+        .add_series()
+        .set_values("Data!B2:B4")
+        .set_categories("Data!A2:A4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_categories("Data!A2:A4")
+        .set_secondary_axis(true);
+    chart
+        .x2_axis()
+        .set_major_tick_type(ChartAxisTickType::Inside)
+        .set_label_position(ChartAxisLabelPosition::High);
+    chart
+        .y2_axis()
+        .set_minor_tick_type(ChartAxisTickType::Outside)
+        .set_label_position(ChartAxisLabelPosition::Low);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(
+        source.contains("x2AxisMajorTickType=\"inside\""),
+        "{source}"
+    );
+    assert!(source.contains("x2AxisLabelPosition=\"high\""), "{source}");
+    assert!(
+        source.contains("y2AxisMinorTickType=\"outside\""),
+        "{source}"
+    );
+    assert!(source.contains("y2AxisLabelPosition=\"low\""), "{source}");
 }
 
 #[test]
