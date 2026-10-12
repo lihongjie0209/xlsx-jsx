@@ -748,7 +748,7 @@ export default <Workbook><Worksheet name="Images"><Image cell="A1" fit="contain"
 }
 
 #[test]
-fn rejects_fit_to_custom_cell_dimensions_with_actionable_guidance() {
+fn validates_fit_to_custom_cell_dimensions() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("custom-cell-image-fit.tsx");
     std::fs::write(
@@ -762,9 +762,7 @@ export default <Workbook><Worksheet name="Images"><Column min={1} max={1} widthP
         .args(["validate"])
         .arg(input)
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("custom row/column dimensions"))
-        .stderr(predicate::str::contains("remove the intersecting"));
+        .success();
 }
 
 #[test]
@@ -1437,7 +1435,7 @@ export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} hei
 }
 
 #[test]
-fn validates_image_offsets_inside_the_default_cell() {
+fn validates_image_offsets_inside_the_target_cell() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("out-of-cell-image-offset.tsx");
     std::fs::write(
@@ -1453,7 +1451,7 @@ export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} hei
         .assert()
         .failure()
         .stderr(predicate::str::contains("Image.offsetX"))
-        .stderr(predicate::str::contains("0 through 63 pixels"));
+        .stderr(predicate::str::contains("64×20-pixel target cell"));
 }
 
 #[test]
@@ -1646,6 +1644,121 @@ fn reverses_external_fit_to_cell_images_as_explicit_geometry() {
             && roundtrip_source.contains("offsetX={22}"),
         "{roundtrip_source}"
     );
+}
+
+#[test]
+fn reverses_fitted_images_in_custom_sized_cells_without_geometry_loss() {
+    let image_bytes = BASE64_STANDARD
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==")
+        .expect("PNG fixture decodes");
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("custom-sized-fitted-images.xlsx");
+    let image = XlsxImage::new_from_buffer(&image_bytes).expect("PNG bytes are valid");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook
+        .add_worksheet()
+        .set_name("Images")
+        .expect("sheet name is valid");
+    worksheet
+        .set_column_width_pixels(0, 200)
+        .expect("custom column width is valid");
+    worksheet
+        .set_row_height_pixels(0, 60)
+        .expect("custom first row height is valid");
+    worksheet
+        .set_row_height_pixels(1, 45)
+        .expect("custom second row height is valid");
+    worksheet
+        .insert_image_fit_to_cell(0, 0, &image, false)
+        .expect("stretched image inserts");
+    worksheet
+        .insert_image_fit_to_cell_centered(1, 0, &image)
+        .expect("centered image inserts");
+    workbook.save(&external).expect("external workbook saves");
+
+    let reversed = directory.path().join("custom-sized-fitted-images.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(
+        source.contains("cell={\"A1\"} width={200} height={60}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("cell={\"A2\"} width={45} height={45}"),
+        "{source}"
+    );
+    assert!(source.contains("offsetX={77}"), "{source}");
+
+    let rebuilt = directory
+        .path()
+        .join("custom-sized-fitted-images-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let roundtrip = directory
+        .path()
+        .join("custom-sized-fitted-images-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&roundtrip)
+        .assert()
+        .success();
+    let roundtrip_source = std::fs::read_to_string(roundtrip).expect("roundtrip JSX exists");
+    assert!(
+        roundtrip_source.contains("cell={\"A1\"} width={200} height={60}"),
+        "{roundtrip_source}"
+    );
+    assert!(
+        roundtrip_source.contains("cell={\"A2\"} width={45} height={45}"),
+        "{roundtrip_source}"
+    );
+    assert!(
+        roundtrip_source.contains("offsetX={77}"),
+        "{roundtrip_source}"
+    );
+}
+
+#[test]
+fn builds_fit_images_after_applying_custom_row_and_column_dimensions() {
+    let directory = tempdir().expect("temporary directory is available");
+    let output = directory.path().join("custom-cell-fit.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build", "examples/image-fit-custom-cells.tsx", "-o"])
+        .arg(&output)
+        .assert()
+        .success();
+
+    let reversed = directory.path().join("custom-cell-fit.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(reversed).expect("reversed JSX exists");
+    assert!(
+        source.contains("cell={\"A1\"} width={60} height={60}"),
+        "{source}"
+    );
+    assert!(source.contains("offsetX={70}"), "{source}");
 }
 
 #[test]

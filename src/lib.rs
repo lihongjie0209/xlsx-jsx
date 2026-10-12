@@ -1882,6 +1882,10 @@ fn validate_worksheet_children(
     let mut header_footer_images = Vec::new();
     let mut chart_custom_width_ranges = Vec::new();
     let mut chart_custom_height_rows = std::collections::HashSet::new();
+    let mut image_column_width_pixels = std::collections::BTreeMap::new();
+    let mut image_row_heights_points = std::collections::HashMap::new();
+    let mut image_hidden_columns = std::collections::HashSet::new();
+    let mut image_hidden_rows = std::collections::HashSet::new();
     let mut saw_row = false;
     let mut row_index = 0;
     for (child_index, child_value) in sheet.children.iter().enumerate() {
@@ -2025,6 +2029,9 @@ fn validate_worksheet_children(
                     Error::Compile(format!("Column outline coordinate is invalid: {error}"))
                 })?;
                 column_outline.insert(coordinate, outline);
+                if child.props.get("hidden").and_then(Value::as_bool) == Some(true) {
+                    image_hidden_columns.insert(column - 1);
+                }
             }
             if column_ranges
                 .iter()
@@ -2043,6 +2050,11 @@ fn validate_worksheet_children(
                 || child.props.get("hidden").and_then(Value::as_bool) == Some(true)
             {
                 chart_custom_width_ranges.push((min, max));
+            }
+            if let Some(width) = child.props.get("widthPixels").and_then(Value::as_u64) {
+                for column in min..=max {
+                    image_column_width_pixels.insert(column - 1, width);
+                }
             }
             continue;
         }
@@ -2146,6 +2158,12 @@ fn validate_worksheet_children(
             )));
         }
         validate_row_properties(&child, current_row_index)?;
+        if let Some(height) = child.props.get("height").and_then(Value::as_f64) {
+            image_row_heights_points.insert(current_row_index, height);
+        }
+        if child.props.get("hidden").and_then(Value::as_bool) == Some(true) {
+            image_hidden_rows.insert(current_row_index);
+        }
         if child
             .props
             .get("height")
@@ -2213,17 +2231,20 @@ fn validate_worksheet_children(
             .is_some_and(|height| height != 20),
         sheet_name,
     )?;
-    validate_image_layouts(
-        &image_nodes,
-        &chart_custom_width_ranges,
-        &chart_custom_height_rows,
-        sheet
+    let image_geometry = ImageGeometryContext {
+        custom_width_ranges: &chart_custom_width_ranges,
+        custom_height_rows: &chart_custom_height_rows,
+        column_width_pixels: &image_column_width_pixels,
+        row_heights_points: &image_row_heights_points,
+        hidden_columns: &image_hidden_columns,
+        hidden_rows: &image_hidden_rows,
+        default_row_height_pixels: sheet
             .props
             .get("defaultRowHeightPixels")
             .and_then(Value::as_u64)
-            .is_some_and(|height| height != 20),
-        sheet_name,
-    )?;
+            .unwrap_or(20),
+    };
+    validate_image_layouts(&image_nodes, &image_geometry, sheet_name)?;
     for (range, header_row) in table_ranges {
         if range.2 as usize >= row_index {
             return Err(Error::Compile(format!(
@@ -8639,12 +8660,12 @@ fn validate_image_geometry(image: &Node) -> Result<()> {
             }
         }
     }
-    for (property, maximum) in [("offsetX", 63), ("offsetY", 19)] {
+    for (property, maximum) in [("offsetX", 1790), ("offsetY", 1790)] {
         if let Some(value) = image.props.get(property)
             && value.as_u64().is_none_or(|value| value > maximum)
         {
             return Err(Error::Compile(format!(
-                "Image.{property} must be an integer from 0 through {maximum} pixels within the anchored cell"
+                "Image.{property} must be an integer from 0 through {maximum} pixels; the offset must also fit inside the target cell"
             )));
         }
     }
@@ -8765,60 +8786,119 @@ fn validate_background_image(image: &Node, index: usize) -> Result<()> {
     })
 }
 
+struct ImageGeometryContext<'a> {
+    custom_width_ranges: &'a [(u64, u64)],
+    custom_height_rows: &'a std::collections::HashSet<usize>,
+    column_width_pixels: &'a std::collections::BTreeMap<u64, u64>,
+    row_heights_points: &'a std::collections::HashMap<usize, f64>,
+    hidden_columns: &'a std::collections::HashSet<u64>,
+    hidden_rows: &'a std::collections::HashSet<usize>,
+    default_row_height_pixels: u64,
+}
+
 fn validate_image_layouts(
     images: &[Node],
-    custom_width_ranges: &[(u64, u64)],
-    custom_height_rows: &std::collections::HashSet<usize>,
-    has_custom_default_height: bool,
+    geometry: &ImageGeometryContext<'_>,
     sheet_name: &str,
 ) -> Result<()> {
     for image in images {
         let cell = image.props["cell"].as_str().expect("validated Image.cell");
         let (first_row, first_column) =
             parse_a1_cell_reference(cell).expect("validated Image.cell");
+        let offset_x = image
+            .props
+            .get("offsetX")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let offset_y = image
+            .props
+            .get("offsetY")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let first_column = u64::from(first_column);
+        let first_row = usize::try_from(first_row).unwrap_or_default();
+        if geometry.hidden_columns.contains(&first_column)
+            || geometry.hidden_rows.contains(&first_row)
+        {
+            return Err(Error::Compile(format!(
+                "Image at {cell} on Worksheet `{sheet_name}` targets a hidden row or column; choose a visible cell so its anchor geometry is well-defined"
+            )));
+        }
+        let target_column_width = geometry
+            .column_width_pixels
+            .get(&first_column)
+            .copied()
+            .unwrap_or(64);
+        let target_row_height = geometry
+            .row_heights_points
+            .get(&first_row)
+            .map(|height| image_row_height_pixels(*height, sheet_name))
+            .transpose()?
+            .unwrap_or(geometry.default_row_height_pixels);
         let width = image
             .props
             .get("width")
             .and_then(Value::as_u64)
-            .unwrap_or(64);
+            .unwrap_or(target_column_width);
         let height = image
             .props
             .get("height")
             .and_then(Value::as_u64)
-            .unwrap_or(20);
-        let width_with_offset = image
-            .props
-            .get("offsetX")
-            .and_then(Value::as_u64)
-            .unwrap_or_default()
-            + width;
-        let height_with_offset = image
-            .props
-            .get("offsetY")
-            .and_then(Value::as_u64)
-            .unwrap_or_default()
-            + height;
-        let last_column = u64::from(first_column) + (width_with_offset - 1) / 64;
-        let last_row = usize::try_from(first_row).unwrap_or_default()
-            + usize::try_from((height_with_offset - 1) / 20).unwrap_or_default();
+            .unwrap_or(target_row_height);
+        if offset_x >= target_column_width || offset_y >= target_row_height {
+            let property = if offset_x >= target_column_width {
+                "offsetX"
+            } else {
+                "offsetY"
+            };
+            return Err(Error::Compile(format!(
+                "Image.{property} at {cell} on Worksheet `{sheet_name}` is outside its {target_column_width}×{target_row_height}-pixel target cell; reduce the offset or move the image"
+            )));
+        }
+        let contained_in_target_cell =
+            offset_x + width <= target_column_width && offset_y + height <= target_row_height;
+        let width_with_offset = offset_x + width;
+        let height_with_offset = offset_y + height;
+        let last_column = first_column + (width_with_offset - 1) / 64;
+        let last_row =
+            first_row + usize::try_from((height_with_offset - 1) / 20).unwrap_or_default();
         if last_column >= 16_384 || last_row >= 1_048_576 {
             return Err(Error::Compile(format!(
                 "Image at {cell} on Worksheet `{sheet_name}` extends beyond Excel's worksheet grid; move it up/left or reduce its pixel dimensions"
             )));
         }
-        let crosses_custom_width = custom_width_ranges
+        let crosses_custom_width = geometry
+            .custom_width_ranges
             .iter()
-            .any(|(first, last)| *first <= last_column + 1 && *last > u64::from(first_column));
-        let crosses_custom_height = custom_height_rows
+            .any(|(first, last)| *first <= last_column + 1 && *last > first_column);
+        let crosses_custom_height = geometry
+            .custom_height_rows
             .iter()
-            .any(|row| *row >= first_row as usize && *row <= last_row);
-        if crosses_custom_width || crosses_custom_height || has_custom_default_height {
+            .any(|row| *row >= first_row && *row <= last_row);
+        if (crosses_custom_width
+            || crosses_custom_height
+            || geometry.default_row_height_pixels != 20)
+            && !contained_in_target_cell
+        {
             return Err(Error::Compile(format!(
-                "Image at {cell} on Worksheet `{sheet_name}` crosses custom row/column dimensions; external image reverse requires standard 64×20-pixel cells in the image footprint. Move it or remove the intersecting custom widths/heights"
+                "Image at {cell} on Worksheet `{sheet_name}` crosses custom row/column dimensions; keep it within the target cell or move it so its geometry does not cross resized cells"
             )));
         }
     }
     Ok(())
+}
+
+fn image_row_height_pixels(height_points: f64, sheet_name: &str) -> Result<u64> {
+    let pixels = height_points * 4.0 / 3.0;
+    let rounded = pixels.round();
+    if !rounded.is_finite() || (pixels - rounded).abs() > f64::EPSILON || rounded < 1.0 {
+        return Err(Error::Compile(format!(
+            "Image target row height {height_points} points on Worksheet `{sheet_name}` is not a positive whole-pixel size; use a multiple of 0.75 points"
+        )));
+    }
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let pixels = rounded as u64;
+    Ok(pixels)
 }
 
 #[expect(

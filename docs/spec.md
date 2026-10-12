@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.84
+Version: 1.85
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -41,26 +41,27 @@ relationships and drawing anchors without relying on a private manifest.
   a private manifest. Unsupported or malformed relationship metadata is
   rejected.
 - `offsetX?: integer` and `offsetY?: integer` position the image from the
-  top-left of `cell`, in pixels. They default to zero and must be less than
-  the default cell dimensions (64×20 pixels) so the anchor remains
-  unambiguous.
+  top-left of `cell`, in pixels. They default to zero and must be less than the
+  actual target cell dimensions.
 - `fit?: "stretch" | "contain" | "containCenter"` scales the image to one
-  default-size cell (64×20 pixels). `stretch` fills the cell and may change the
+  target cell. `stretch` fills the cell and may change the
   aspect ratio; `contain` preserves the ratio and anchors at the cell's top
   left; `containCenter` preserves the ratio and centers within the cell. When
   `fit` is present, omit `width`, `height`, `offsetX`, and `offsetY`. Reverse
   emits the resulting explicit pixel geometry because OOXML does not preserve
-  the authoring fit mode. Fitting is currently limited to default-size cells;
-  custom row/column dimensions in the target cell are rejected with guidance.
+  the authoring fit mode. Fitting uses the worksheet's effective row height and
+  column width; images on hidden rows/columns or in dimensions that cannot be
+  represented as whole pixels are rejected with guidance.
 - `movement?: "moveAndSize" | "moveOnly" | "fixed"` controls how the picture
   responds to cell edits. The default is `moveOnly`, matching
   `Image::new_from_buffer()`. These map to the OOXML two-cell anchor's default,
   `editAs="oneCell"`, and `editAs="absolute"` modes respectively.
-- Images are direct worksheet children before rows. Reverse supports the
-  writer's two-cell anchors on the default 64×20-pixel row/column grid, zero
-  start offsets, whole-pixel dimensions, and default rectangular stretch
-  geometry. Unsupported crops, custom transforms/effects, drawing
-  shapes, or geometry that cannot be represented exactly fail with guidance.
+- Images are direct worksheet children before rows. Reverse computes anchors
+  from effective row heights and column widths; when an image touches custom
+  dimensions it must fit wholly inside one cell. Images spanning multiple
+  custom-sized cells, fractional-pixel dimensions, unsupported crops,
+  transforms/effects, drawing shapes, or other geometry that cannot be
+  represented exactly fail with guidance.
 - Data URIs make reverse output self-contained and recompilable; authored file
   paths and remote fetches are not part of this interface.
 

@@ -362,6 +362,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         apply_worksheet_visibility(worksheet, &sheet)?;
         apply_worksheet_tab_color(worksheet, &sheet)?;
         apply_default_row_height(worksheet, &sheet)?;
+        preapply_image_cell_dimensions(worksheet, &sheet)?;
         apply_hide_unused_rows(worksheet, &sheet)?;
         apply_show_gridlines(worksheet, &sheet)?;
         apply_worksheet_reading_direction(worksheet, &sheet);
@@ -593,6 +594,59 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             literal_error_count,
             &table_dxf_targets,
         )?;
+    }
+    Ok(())
+}
+
+fn preapply_image_cell_dimensions(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    sheet: &Node,
+) -> xlsx_jsx::Result<()> {
+    let mut row_index = 0_u32;
+    for child_value in &sheet.children {
+        let child: Node = serde_json::from_value(child_value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if child.r#type == "Column" {
+            let min_number = child.props.get("min").and_then(Value::as_u64).unwrap_or(1);
+            let max_number = child
+                .props
+                .get("max")
+                .and_then(Value::as_u64)
+                .unwrap_or(min_number);
+            let min = u16::try_from(min_number - 1)
+                .map_err(|error| Error::Compile(format!("invalid Column.min: {error}")))?;
+            let max = u16::try_from(max_number - 1)
+                .map_err(|error| Error::Compile(format!("invalid Column.max: {error}")))?;
+            if let Some(width) = child.props.get("widthPixels").and_then(Value::as_u64) {
+                let width = u32::try_from(width).map_err(|error| {
+                    Error::Compile(format!("invalid Column.widthPixels: {error}"))
+                })?;
+                for column in min..=max {
+                    worksheet
+                        .set_column_width_pixels(column, width)
+                        .map_err(|error| Error::Compile(error.to_string()))?;
+                }
+            }
+            if child.props.get("hidden").and_then(Value::as_bool) == Some(true) {
+                for column in min..=max {
+                    worksheet
+                        .set_column_hidden(column)
+                        .map_err(|error| Error::Compile(error.to_string()))?;
+                }
+            }
+        } else if child.r#type == "Row" {
+            if let Some(height) = child.props.get("height").and_then(Value::as_f64) {
+                worksheet
+                    .set_row_height(row_index, height)
+                    .map_err(|error| Error::Compile(error.to_string()))?;
+            }
+            if child.props.get("hidden").and_then(Value::as_bool) == Some(true) {
+                worksheet
+                    .set_row_hidden(row_index)
+                    .map_err(|error| Error::Compile(error.to_string()))?;
+            }
+            row_index += 1;
+        }
     }
     Ok(())
 }
@@ -24591,7 +24645,8 @@ fn parse_drawing_image(
             "image part `{part}` extension does not match its raster bytes; repair the package content type or embedded media"
         )));
     }
-    let (cell, width, height, offset_x, offset_y) = validate_image_anchor(&anchor, metadata, part)?;
+    let (cell, width, height, offset_x, offset_y) =
+        validate_image_anchor(&anchor, metadata, part, anchor.edit_as.is_none())?;
     let object_id = anchor.object_id.ok_or_else(|| {
         Error::Reverse(format!(
             "picture in `{part}` is missing cNvPr@id; repair picture metadata"
@@ -24666,10 +24721,9 @@ fn validate_image_anchor(
     anchor: &ChartAnchor,
     metadata: &WorksheetMetadata,
     part: &str,
+    move_and_size: bool,
 ) -> xlsx_jsx::Result<(String, u32, u32, u32, u32)> {
     const PX_EMU: u64 = 9_525;
-    const COLUMN_PIXELS: u32 = 64;
-    const ROW_PIXELS: u32 = 20;
     let from_row = anchor.from_row.ok_or_else(|| {
         Error::Reverse(format!(
             "picture in `{part}` is missing from/row; repair its anchor"
@@ -24715,13 +24769,9 @@ fn validate_image_anchor(
             "picture in `{part}` is missing from/rowOff; repair its anchor"
         ))
     })?);
-    if from_column_offset % PX_EMU != 0
-        || from_row_offset % PX_EMU != 0
-        || from_column_offset / PX_EMU >= u64::from(COLUMN_PIXELS)
-        || from_row_offset / PX_EMU >= u64::from(ROW_PIXELS)
-    {
+    if from_column_offset % PX_EMU != 0 || from_row_offset % PX_EMU != 0 {
         return Err(Error::Reverse(format!(
-            "picture in `{part}` has fractional-pixel or out-of-cell start offsets; use whole-pixel offsets within a 64×20-pixel cell"
+            "picture in `{part}` has fractional-pixel start offsets; use whole-pixel offsets"
         )));
     }
     let to_column_offset = u64::from(anchor.to_column_offset.ok_or_else(|| {
@@ -24739,31 +24789,84 @@ fn validate_image_anchor(
             "picture in `{part}` ends at fractional-pixel offsets; use whole-pixel image dimensions"
         )));
     }
-    if to_column_offset / PX_EMU >= u64::from(COLUMN_PIXELS)
-        || to_row_offset / PX_EMU >= u64::from(ROW_PIXELS)
-    {
+    if to_column_offset % PX_EMU != 0 || to_row_offset % PX_EMU != 0 {
         return Err(Error::Reverse(format!(
-            "picture in `{part}` has an unnormalized end offset; use a standard two-cell anchor"
+            "picture in `{part}` ends at fractional-pixel offsets; use whole-pixel image dimensions"
         )));
     }
-    let width = u64::from(to_column - from_column)
-        .checked_mul(u64::from(COLUMN_PIXELS))
-        .and_then(|pixels| pixels.checked_add(to_column_offset / PX_EMU))
-        .and_then(|pixels| pixels.checked_sub(from_column_offset / PX_EMU))
-        .ok_or_else(|| Error::Reverse(format!("picture width in `{part}` overflows pixels")))?;
-    let height = u64::from(to_row - from_row)
-        .checked_mul(u64::from(ROW_PIXELS))
-        .and_then(|pixels| pixels.checked_add(to_row_offset / PX_EMU))
-        .and_then(|pixels| pixels.checked_sub(from_row_offset / PX_EMU))
-        .ok_or_else(|| Error::Reverse(format!("picture height in `{part}` overflows pixels")))?;
+    let start_column_width = image_column_width_pixels(metadata, from_column, move_and_size);
+    let start_row_height = image_row_height_pixels(metadata, from_row, move_and_size, part)?;
+    let end_column_width = image_column_width_pixels(metadata, to_column, move_and_size);
+    let end_row_height = image_row_height_pixels(metadata, to_row, move_and_size, part)?;
+    let from_x = from_column_offset / PX_EMU;
+    let from_y = from_row_offset / PX_EMU;
+    let to_x = to_column_offset / PX_EMU;
+    let to_y = to_row_offset / PX_EMU;
+    if metadata
+        .columns
+        .get(&u16::try_from(from_column).expect("validated Excel column bounds"))
+        .is_some_and(|properties| properties.hidden)
+        || metadata
+            .rows
+            .get(&from_row)
+            .is_some_and(|properties| properties.hidden)
+    {
+        return Err(Error::Reverse(format!(
+            "picture in `{part}` is anchored to a hidden row or column; move it to a visible cell so its geometry can be represented consistently"
+        )));
+    }
+    if start_column_width == 0
+        || start_row_height == 0
+        || from_x >= start_column_width
+        || from_y >= start_row_height
+    {
+        return Err(Error::Reverse(format!(
+            "picture in `{part}` starts inside a hidden or zero-sized cell; move it to a visible cell with positive dimensions"
+        )));
+    }
+    if end_column_width == 0
+        || end_row_height == 0
+        || to_x >= end_column_width
+        || to_y >= end_row_height
+    {
+        return Err(Error::Reverse(format!(
+            "picture in `{part}` ends at an unnormalized cell offset; use a standard two-cell anchor aligned to whole pixels"
+        )));
+    }
+    let start_x = image_column_prefix_pixels(metadata, from_column, move_and_size)
+        .checked_add(from_x)
+        .ok_or_else(|| {
+            Error::Reverse(format!("picture x position in `{part}` overflows pixels"))
+        })?;
+    let end_x = image_column_prefix_pixels(metadata, to_column, move_and_size)
+        .checked_add(to_x)
+        .ok_or_else(|| {
+            Error::Reverse(format!("picture x endpoint in `{part}` overflows pixels"))
+        })?;
+    let start_y = image_row_prefix_pixels(metadata, from_row, move_and_size, part)?
+        .checked_add(from_y)
+        .ok_or_else(|| {
+            Error::Reverse(format!("picture y position in `{part}` overflows pixels"))
+        })?;
+    let end_y = image_row_prefix_pixels(metadata, to_row, move_and_size, part)?
+        .checked_add(to_y)
+        .ok_or_else(|| {
+            Error::Reverse(format!("picture y endpoint in `{part}` overflows pixels"))
+        })?;
+    let width = end_x
+        .checked_sub(start_x)
+        .ok_or_else(|| Error::Reverse(format!("picture width in `{part}` is negative")))?;
+    let height = end_y
+        .checked_sub(start_y)
+        .ok_or_else(|| Error::Reverse(format!("picture height in `{part}` is negative")))?;
     if !(1..=1790).contains(&width) || !(1..=1790).contains(&height) {
         return Err(Error::Reverse(format!(
             "picture in `{part}` measures {width}×{height} pixels outside the supported 1–1790 range; resize it or extend Image dimensions"
         )));
     }
-    if metadata
+    let intersects_custom_geometry = metadata
         .default_row_height_pixels
-        .is_some_and(|value| value != ROW_PIXELS)
+        .is_some_and(|value| value != 20)
         || metadata.rows.iter().any(|(row, properties)| {
             *row >= from_row
                 && *row <= to_row
@@ -24772,32 +24875,24 @@ fn validate_image_anchor(
                     .is_some_and(|value| (value - 15.0).abs() > f64::EPSILON)
                     || properties.hidden)
         })
+        || metadata
+            .columns
+            .range(
+                u16::try_from(from_column).expect("validated Excel column bounds")
+                    ..=u16::try_from(to_column).expect("validated Excel column bounds"),
+            )
+            .any(|(_, properties)| {
+                properties.width_pixels.is_some_and(|value| value != 64) || properties.hidden
+            });
+    if intersects_custom_geometry
+        && (from_x + width > start_column_width || from_y + height > start_row_height)
     {
         return Err(Error::Reverse(format!(
-            "picture in `{part}` crosses custom row heights, so its pixel size is ambiguous; use default row heights or extend image geometry support"
+            "picture in `{part}` spans custom row/column dimensions; keep it wholly inside one resized cell or use standard-size cells for the full image"
         )));
     }
-    if metadata
-        .columns
-        .range(
-            u16::try_from(from_column).expect("validated Excel column bounds")
-                ..=u16::try_from(to_column).expect("validated Excel column bounds"),
-        )
-        .any(|(_, properties)| {
-            properties
-                .width_pixels
-                .is_some_and(|value| value != COLUMN_PIXELS)
-                || properties.hidden
-        })
-    {
-        return Err(Error::Reverse(format!(
-            "picture in `{part}` crosses custom column widths, so its pixel size is ambiguous; use default column widths or extend image geometry support"
-        )));
-    }
-    let expected_x =
-        (u64::from(from_column) * u64::from(COLUMN_PIXELS) + from_column_offset / PX_EMU) * PX_EMU;
-    let expected_y =
-        (u64::from(from_row) * u64::from(ROW_PIXELS) + from_row_offset / PX_EMU) * PX_EMU;
+    let expected_x = start_x * PX_EMU;
+    let expected_y = start_y * PX_EMU;
     if anchor.absolute_x != Some(expected_x)
         || anchor.absolute_y != Some(expected_y)
         || anchor.transform_width != Some(width * PX_EMU)
@@ -24834,6 +24929,84 @@ fn validate_image_anchor(
         offset_x,
         offset_y,
     ))
+}
+
+fn image_column_width_pixels(
+    metadata: &WorksheetMetadata,
+    column: u32,
+    move_and_size: bool,
+) -> u64 {
+    let properties = metadata
+        .columns
+        .get(&u16::try_from(column).unwrap_or(u16::MAX));
+    if properties.is_some_and(|properties| properties.hidden) && !move_and_size {
+        return 0;
+    }
+    properties
+        .and_then(|properties| properties.width_pixels)
+        .map_or(64, u64::from)
+}
+
+fn image_column_prefix_pixels(
+    metadata: &WorksheetMetadata,
+    column: u32,
+    move_and_size: bool,
+) -> u64 {
+    let mut pixels = u64::from(column) * 64;
+    for (index, properties) in metadata
+        .columns
+        .range(..u16::try_from(column).unwrap_or(u16::MAX))
+    {
+        let actual = if properties.hidden && !move_and_size {
+            0
+        } else {
+            properties.width_pixels.map_or(64, u64::from)
+        };
+        pixels = pixels - 64 + actual;
+        let _ = index;
+    }
+    pixels
+}
+
+fn image_row_height_pixels(
+    metadata: &WorksheetMetadata,
+    row: u32,
+    move_and_size: bool,
+    part: &str,
+) -> xlsx_jsx::Result<u64> {
+    let properties = metadata.rows.get(&row);
+    if properties.is_some_and(|properties| properties.hidden) && !move_and_size {
+        return Ok(0);
+    }
+    let Some(height) = properties.and_then(|properties| properties.height) else {
+        return Ok(u64::from(metadata.default_row_height_pixels.unwrap_or(20)));
+    };
+    let pixels = height * 4.0 / 3.0;
+    let rounded = pixels.round();
+    if !rounded.is_finite() || (pixels - rounded).abs() > f64::EPSILON || rounded < 1.0 {
+        return Err(Error::Reverse(format!(
+            "picture in `{part}` intersects row {row} with non-whole-pixel height {height} points; use a height multiple of 0.75 points"
+        )));
+    }
+    #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let pixels = rounded as u64;
+    Ok(pixels)
+}
+
+fn image_row_prefix_pixels(
+    metadata: &WorksheetMetadata,
+    row: u32,
+    move_and_size: bool,
+    part: &str,
+) -> xlsx_jsx::Result<u64> {
+    let default = u64::from(metadata.default_row_height_pixels.unwrap_or(20));
+    let mut pixels = u64::from(row) * default;
+    for (index, properties) in metadata.rows.iter().filter(|(index, _)| **index < row) {
+        let actual = image_row_height_pixels(metadata, *index, move_and_size, part)?;
+        pixels = pixels - default + actual;
+        let _ = properties;
+    }
+    Ok(pixels)
 }
 
 fn chart_formula_sheet_name(formula: &str) -> Option<String> {
