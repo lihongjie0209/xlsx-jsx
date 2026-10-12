@@ -9928,6 +9928,13 @@ fn validate_table_column_format_property(
         {
             Ok(())
         }
+        "fontScheme"
+            if value
+                .as_str()
+                .is_some_and(|scheme| ["none", "body", "headings"].contains(&scheme)) =>
+        {
+            Ok(())
+        }
         "numberFormat" => validate_table_column_number_format(value, property),
         "fontName" | "fontSize" | "fontFamily" | "fontCharset" => {
             validate_table_column_font_property(key, value, property)
@@ -9991,6 +9998,9 @@ fn validate_table_column_format_property(
         "script" => Err(Error::Compile(format!(
             "TableColumn.{property}.script must be `superscript` or `subscript`; choose one of the OOXML vertAlign values supported by the writer"
         ))),
+        "fontScheme" => Err(Error::Compile(format!(
+            "TableColumn.{property}.fontScheme must be `none`, `body`, or `headings`; choose one of the supported theme-font schemes"
+        ))),
         "borderDiagonal" | "borderDiagonalColor" => Err(Error::Compile(format!(
             "TableColumn.{property}.{key} is not serializable by the pinned writer in a differential format; use borderDiagonalType only or move the style to a worksheet Cell"
         ))),
@@ -9998,7 +10008,7 @@ fn validate_table_column_format_property(
             "TableColumn.{property}.{key} must be true; table differential formats can add emphasis but cannot encode a false override"
         ))),
         _ => Err(Error::Compile(format!(
-            "TableColumn.{property}.{key} is not supported; use font name/size/family/charset, bold/italic/strikethrough, underline, script, RGB colors, numberFormat, or supported edge borders"
+            "TableColumn.{property}.{key} is not supported; use font scheme/name/size/family/charset, bold/italic/strikethrough, underline, script, RGB colors, numberFormat, or supported edge borders"
         ))),
     }
 }
@@ -15858,7 +15868,7 @@ mod tests {
         let input = workbook(vec![serde_json::json!({
             "type":"Worksheet", "props":{"name":"Sales"}, "children":[
                 {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[
-                    {"type":"TableColumn","props":{"format":{"fontName":"Aptos","fontSize":12.5,"fontFamily":3,"fontCharset":128}},"children":[]}
+                    {"type":"TableColumn","props":{"format":{"fontScheme":"headings","fontName":"Aptos","fontSize":12.5,"fontFamily":3,"fontCharset":128}},"children":[]}
                 ]},
                 {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Amount"]}]},
                 {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":[12]}]}
@@ -15867,6 +15877,28 @@ mod tests {
         input
             .validate()
             .expect("the compiler restores font metadata in data differential styles");
+    }
+
+    #[test]
+    fn rejects_unsupported_table_column_font_scheme_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Sales"}, "children":[
+                {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[
+                    {"type":"TableColumn","props":{"format":{"fontScheme":"display"}},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Value"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":[12]}]}
+            ]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("unsupported theme schemes must be rejected");
+
+        assert!(error.to_string().contains("fontScheme"), "{error}");
+        assert!(
+            error.to_string().contains("none`, `body`, or `headings"),
+            "{error}"
+        );
     }
 
     #[test]

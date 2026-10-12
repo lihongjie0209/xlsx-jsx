@@ -17015,7 +17015,7 @@ fn table_column_font_metadata_survives_compile_reverse_and_rebuild() {
         r#"import { Workbook, Worksheet, Table, TableColumn, Row, Cell } from "xlsx-jsx";
 export default <Workbook><Worksheet name="Fonts">
   <Table range="A1:A2" name="FontTable">
-    <TableColumn format={{fontName:"Aptos & Serif",fontSize:12.5,fontFamily:3,fontCharset:128}} />
+    <TableColumn format={{fontScheme:"headings",fontName:"Aptos & Serif",fontSize:12.5,fontFamily:3,fontCharset:128}} />
   </Table>
   <Row><Cell>Value</Cell></Row><Row><Cell value={42} /></Row>
 </Worksheet></Workbook>;
@@ -17038,6 +17038,7 @@ export default <Workbook><Worksheet name="Fonts">
         "<sz val=\"12.5\"/>",
         "<family val=\"3\"/>",
         "<charset val=\"128\"/>",
+        "<scheme val=\"major\"/>",
     ] {
         assert!(styles.contains(expected), "missing {expected} in {styles}");
     }
@@ -17052,7 +17053,14 @@ export default <Workbook><Worksheet name="Fonts">
         .assert()
         .success();
     let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
-    for expected in ["Aptos & Serif", "fontSize", "fontFamily", "fontCharset"] {
+    for expected in [
+        "Aptos & Serif",
+        "fontScheme",
+        "headings",
+        "fontSize",
+        "fontFamily",
+        "fontCharset",
+    ] {
         assert!(source.contains(expected), "missing {expected} in {source}");
     }
 
@@ -17071,6 +17079,7 @@ export default <Workbook><Worksheet name="Fonts">
         "<sz val=\"12.5\"/>",
         "<family val=\"3\"/>",
         "<charset val=\"128\"/>",
+        "<scheme val=\"major\"/>",
     ] {
         assert!(
             rebuilt_styles.contains(expected),
@@ -17266,6 +17275,154 @@ fn external_table_column_font_metadata_round_trips_without_manifest() {
             "missing {expected} in {rebuilt_styles}"
         );
     }
+}
+
+#[test]
+fn table_column_theme_font_schemes_survive_compile_reverse_and_rebuild() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source_path = directory.path().join("table-font-schemes.tsx");
+    std::fs::write(
+        &source_path,
+        r#"import { Workbook, Worksheet, Table, TableColumn, Row, Cell } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Fonts">
+  <Table range="A1:C2" name="FontSchemes">
+    <TableColumn format={{fontScheme:"headings"}} />
+    <TableColumn format={{fontScheme:"body"}} />
+    <TableColumn format={{fontScheme:"none"}} />
+  </Table>
+  <Row><Cell>Major</Cell><Cell>Minor</Cell><Cell>None</Cell></Row>
+  <Row><Cell value={1} /><Cell value={2} /><Cell value={3} /></Row>
+</Worksheet></Workbook>;
+"#,
+    )
+    .expect("temporary JSX source writes");
+    let output = directory.path().join("table-font-schemes.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&output)
+        .assert()
+        .success();
+    let styles = read_zip_part_for_test(&output, "xl/styles.xml");
+    for expected in [
+        "<scheme val=\"major\"/>",
+        "<scheme val=\"minor\"/>",
+        "<scheme val=\"none\"/>",
+    ] {
+        assert!(styles.contains(expected), "missing {expected} in {styles}");
+    }
+
+    let reversed = directory.path().join("table-font-schemes-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    for expected in [
+        r#""fontScheme":"headings""#,
+        r#""fontScheme":"body""#,
+        r#""fontScheme":"none""#,
+    ] {
+        assert!(source.contains(expected), "missing {expected} in {source}");
+    }
+
+    let rebuilt = directory.path().join("table-font-schemes-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second_reverse = directory.path().join("table-font-schemes-second.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&second_reverse)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(second_reverse).expect("second reverse output exists"),
+        source
+    );
+}
+
+#[test]
+fn external_table_column_font_scheme_round_trips_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("table-font-scheme-external.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_string(0, 0, "Value")
+        .expect("header writes");
+    worksheet.write_number(1, 0, 42).expect("value writes");
+    let format = rust_xlsxwriter::Format::new()
+        .set_bold()
+        .set_font_scheme(rust_xlsxwriter::FontScheme::Headings);
+    let columns = [rust_xlsxwriter::TableColumn::new()
+        .set_header("Value")
+        .set_format(format)];
+    let table = rust_xlsxwriter::Table::new()
+        .set_name("FontScheme")
+        .set_columns(&columns);
+    worksheet.add_table(0, 0, 1, 0, &table).expect("table adds");
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/styles.xml", |xml| {
+        xml.replace(
+            "<dxf><font><b/></font></dxf>",
+            "<dxf><font><b/><scheme val=\"major\"/></font></dxf>",
+        )
+    });
+
+    let reversed = directory.path().join("table-font-scheme-external.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains(r#""fontScheme":"headings""#), "{source}");
+
+    let rebuilt = directory.path().join("table-font-scheme-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_styles = read_zip_part_for_test(&rebuilt, "xl/styles.xml");
+    assert!(
+        rebuilt_styles.contains("<scheme val=\"major\"/>"),
+        "{rebuilt_styles}"
+    );
+    let second_reverse = directory.path().join("table-font-scheme-second.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&second_reverse)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(second_reverse).expect("second reverse output exists"),
+        source
+    );
 }
 
 #[test]

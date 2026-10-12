@@ -776,6 +776,7 @@ fn collect_x14_icon_normalization_targets(
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct TableDxfFontMetadata {
     script: Option<String>,
+    scheme: Option<String>,
     name: Option<String>,
     size: Option<String>,
     family: Option<String>,
@@ -785,6 +786,7 @@ struct TableDxfFontMetadata {
 impl TableDxfFontMetadata {
     fn is_empty(&self) -> bool {
         self.script.is_none()
+            && self.scheme.is_none()
             && self.name.is_none()
             && self.size.is_none()
             && self.family.is_none()
@@ -821,6 +823,16 @@ fn collect_table_script_targets(
                     script: format
                         .get("script")
                         .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    scheme: format
+                        .get("fontScheme")
+                        .and_then(Value::as_str)
+                        .map(|scheme| match scheme {
+                            "none" => "none",
+                            "body" => "minor",
+                            "headings" => "major",
+                            _ => unreachable!("validated table font scheme"),
+                        })
                         .map(str::to_owned),
                     name: format
                         .get("fontName")
@@ -1261,14 +1273,23 @@ fn append_dxf_font_metadata(
             index,
         )?;
     }
+    if let Some(scheme) = &metadata.scheme {
+        append_font_tag(&mut font, "scheme", scheme, &[], index)?;
+    }
     if let Some(name) = &metadata.name {
-        append_font_tag(&mut font, "name", name, &["family", "charset"], index)?;
+        append_font_tag(
+            &mut font,
+            "name",
+            name,
+            &["family", "charset", "scheme"],
+            index,
+        )?;
     }
     if let Some(family) = &metadata.family {
-        append_font_tag(&mut font, "family", family, &["charset"], index)?;
+        append_font_tag(&mut font, "family", family, &["charset", "scheme"], index)?;
     }
     if let Some(charset) = &metadata.charset {
-        append_font_tag(&mut font, "charset", charset, &[], index)?;
+        append_font_tag(&mut font, "charset", charset, &["scheme"], index)?;
     }
     Ok(font)
 }
@@ -9221,6 +9242,15 @@ fn table_column_format_value(style: &CellFontStyle) -> Value {
     if let Some(script) = &style.script {
         props.insert("script".into(), Value::String(script.clone()));
     }
+    if let Some(font_scheme) = &style.font_scheme {
+        let scheme = match font_scheme.as_str() {
+            "none" => "none",
+            "minor" => "body",
+            "major" => "headings",
+            _ => unreachable!("font scheme parser validates values"),
+        };
+        props.insert("fontScheme".into(), Value::String(scheme.into()));
+    }
     if let Some(font_name) = &style.font_name {
         props.insert("fontName".into(), Value::String(font_name.clone()));
     }
@@ -11653,12 +11683,7 @@ fn parse_table_xml(
                                 })?;
                                 if style.support == StyleSupport::Unsupported {
                                     return Err(Error::Reverse(format!(
-                                        "table part `{part}` column uses a differential format outside the supported font emphasis/decoration/script/color, fill, number-format, and edge-border subset; simplify the table format or add explicit DSL and reverse support"
-                                    )));
-                                }
-                                if style.font_scheme.is_some() {
-                                    return Err(Error::Reverse(format!(
-                                        "table part `{part}` column uses a differential font scheme that TableColumn.format cannot represent; remove the theme scheme or use a regular cell/row/column style"
+                                        "table part `{part}` column uses a differential format outside the supported theme/literal font metadata, emphasis/decoration/script/color, fill, number-format, and edge-border subset; simplify the table format or add explicit DSL and reverse support"
                                     )));
                                 }
                                 Ok(style.clone())
@@ -38665,6 +38690,9 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                             reader.decoder(),
                         )?;
                     }
+                    b"scheme" if in_font => {
+                        parse_font_scheme(&event, style, reader.decoder(), false)?;
+                    }
                     b"numFmt" if in_dxf => {
                         if number_format_seen {
                             style.support = StyleSupport::Unsupported;
@@ -38735,6 +38763,7 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         || style.font_size.is_some()
                         || style.font_family.is_some()
                         || style.font_charset.is_some()
+                        || style.font_scheme.is_some()
                         || style.font_color.is_some()
                         || style.fill_color.is_some()
                         || style.fill_pattern.is_some()

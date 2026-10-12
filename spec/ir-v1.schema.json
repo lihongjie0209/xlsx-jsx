@@ -491,6 +491,7 @@
         "strikethrough": { "const": true },
         "underline": { "enum": ["single", "double", "singleAccounting", "doubleAccounting"] },
         "script": { "enum": ["superscript", "subscript"] },
+        "fontScheme": { "enum": ["none", "body", "headings"] },
         "fontName": { "type": "string", "minLength": 1, "maxLength": 255 },
         "fontSize": { "type": "number", "minimum": 1, "maximum": 409 },
         "fontFamily": { "type": "integer", "minimum": 0, "maximum": 5 },
