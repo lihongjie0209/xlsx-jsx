@@ -7422,6 +7422,7 @@ fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<Stri
             "minAxisType",
             "maxAxisType",
             "dateRange",
+            "style",
         ],
         "Sparkline",
     )?;
@@ -7556,6 +7557,7 @@ fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Ve
             "minAxisType",
             "maxAxisType",
             "dateRange",
+            "style",
         ],
         "SparklineGroup",
     )?;
@@ -7698,6 +7700,30 @@ fn validate_sparkline_date_range(
 
 fn validate_sparkline_options(component: &Node, name: &str) -> Result<()> {
     validate_sparkline_scale(component, name)?;
+    if let Some(style) = component.props.get("style") {
+        let Some(style) = style.as_u64().filter(|style| (1..=36).contains(style)) else {
+            return Err(Error::Compile(format!(
+                "{name}.style must be an integer from 1 to 36; choose a built-in sparkline style"
+            )));
+        };
+        let color_properties = [
+            "sparklineColor",
+            "negativePointColor",
+            "markersColor",
+            "firstPointColor",
+            "lastPointColor",
+            "highPointColor",
+            "lowPointColor",
+        ];
+        if color_properties
+            .iter()
+            .any(|property| component.props.contains_key(*property))
+        {
+            return Err(Error::Compile(format!(
+                "{name}.style={style} cannot be combined with explicit sparkline color-role properties; remove the colors or omit style so reverse can preserve the exact palette"
+            )));
+        }
+    }
     for property in [
         "showHighPoint",
         "showLowPoint",

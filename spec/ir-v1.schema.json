@@ -545,7 +545,8 @@
             "min": { "type": "number" },
             "max": { "type": "number" },
             "minAxisType": { "enum": ["individual", "group", "custom"] },
-            "maxAxisType": { "enum": ["individual", "group", "custom"] }
+            "maxAxisType": { "enum": ["individual", "group", "custom"] },
+            "style": { "type": "integer", "minimum": 1, "maximum": 36 }
           },
           "additionalProperties": false
         },
@@ -588,7 +589,8 @@
             "max": { "type": "number" },
             "minAxisType": { "enum": ["individual", "group", "custom"] },
             "maxAxisType": { "enum": ["individual", "group", "custom"] },
-            "dateRange": { "type": "string", "minLength": 3, "maxLength": 255 }
+            "dateRange": { "type": "string", "minLength": 3, "maxLength": 255 },
+            "style": { "type": "integer", "minimum": 1, "maximum": 36 }
           },
           "additionalProperties": false
         },

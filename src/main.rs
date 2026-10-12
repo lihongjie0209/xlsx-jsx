@@ -1261,6 +1261,9 @@ fn compile_sparkline(
             _ => unreachable!("validated Sparkline.sparklineType"),
         });
     }
+    if let Some(style) = component.props.get("style").and_then(Value::as_u64) {
+        sparkline = sparkline.set_style(u8::try_from(style).expect("validated Sparkline.style"));
+    }
     if let Some(date_range) = component.props.get("dateRange").and_then(Value::as_str) {
         sparkline = sparkline.set_date_range(date_range);
     }
@@ -1295,6 +1298,10 @@ fn compile_sparkline_group(
             "winLoss" => SparklineType::WinLose,
             _ => unreachable!("validated SparklineGroup.sparklineType"),
         });
+    }
+    if let Some(style) = component.props.get("style").and_then(Value::as_u64) {
+        sparkline =
+            sparkline.set_style(u8::try_from(style).expect("validated SparklineGroup.style"));
     }
     if component.props.get("dataRowOrder").and_then(Value::as_bool) == Some(false) {
         sparkline = sparkline.set_column_order(true);
@@ -6401,6 +6408,9 @@ fn render_sparklines(output: &mut String, sparklines: &[WorksheetSparkline]) {
         }
         if let Some(date_range) = &sparkline.options.date_range {
             let _ = write!(output, " dateRange={date_range:?}");
+        }
+        if let Some(style) = sparkline.options.style {
+            let _ = write!(output, " style={{{style}}}");
         }
         for (enabled, property) in [
             (sparkline.options.show_high_point, "showHighPoint"),
@@ -25468,6 +25478,7 @@ struct SparklineOptions {
     min_axis_type: &'static str,
     max_axis_type: &'static str,
     date_range: Option<String>,
+    style: Option<u8>,
     colors: SparklineColors,
 }
 
@@ -25502,6 +25513,7 @@ impl Default for SparklineOptions {
             min_axis_type: "individual",
             max_axis_type: "individual",
             date_range: None,
+            style: None,
             colors: SparklineColors::default(),
         }
     }
@@ -27727,6 +27739,7 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
     let mut sparklines = Vec::new();
     let mut destination_cells = std::collections::HashSet::new();
     let mut group_colors = std::collections::HashSet::new();
+    let mut group_color_signatures = HashMap::new();
     loop {
         match reader.read_event() {
             Ok(Event::Start(event) | Event::Empty(event)) => {
@@ -27816,6 +27829,7 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         current_options = SparklineOptions::default();
                         current_date_axis = false;
                         group_colors.clear();
+                        group_color_signatures.clear();
                         for attribute in event.attributes() {
                             let attribute = attribute.map_err(|error| Error::Reverse(format!(
                                 "worksheet `{part}` has invalid sparkline group metadata: {error}"
@@ -27930,7 +27944,9 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                                 "worksheet `{part}` has misplaced or duplicate sparkline color `{tag}`; restore one writer-default color per role"
                             )));
                         }
-                        let color = parse_sparkline_color(&tag, &event, reader.decoder(), part)?;
+                        let (color, signature) =
+                            parse_sparkline_color(&tag, &event, reader.decoder(), part)?;
+                        group_color_signatures.insert(tag.clone(), signature.clone());
                         match tag.as_str() {
                             "x14:colorSeries" => current_options.colors.sparkline = color,
                             "x14:colorNegative" => current_options.colors.negative = color,
@@ -27939,9 +27955,9 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                             "x14:colorLast" => current_options.colors.last = color,
                             "x14:colorHigh" => current_options.colors.high = color,
                             "x14:colorLow" => current_options.colors.low = color,
-                            "x14:colorAxis" if color.is_some() => {
+                            "x14:colorAxis" if signature != "rgb:FF000000" => {
                                 return Err(Error::Reverse(format!(
-                                    "worksheet `{part}` has a custom sparkline axis color, but rust_xlsxwriter 0.99.1 has no public axis-color setter; restore the default black axis color"
+                                    "worksheet `{part}` has a non-default sparkline axis color, but rust_xlsxwriter 0.99.1 has no public axis-color setter; restore the default black axis color"
                                 )));
                             }
                             "x14:colorAxis" => {}
@@ -28102,6 +28118,21 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         &sparklines[group_sparkline_count..],
                         part,
                     )?;
+                    if let Some(style) = identify_sparkline_style(&group_color_signatures) {
+                        current_options.style = (style != 1).then_some(style);
+                        current_options.colors = SparklineColors::default();
+                        for sparkline in &mut sparklines[group_sparkline_count..] {
+                            sparkline.options.style = current_options.style;
+                            sparkline.options.colors = SparklineColors::default();
+                        }
+                    } else if group_color_signatures
+                        .iter()
+                        .any(|(role, color)| role != "x14:colorAxis" && color.starts_with("theme:"))
+                    {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` sparkline group uses theme colors that do not match one of the 36 pinned built-in styles; preserve a complete built-in palette or use opaque RGB colors"
+                        )));
+                    }
                     for (color, enabled, property) in [
                         (
                             &current_options.colors.negative,
@@ -28334,23 +28365,22 @@ fn parse_sparkline_color(
     event: &BytesStart<'_>,
     decoder: quick_xml::encoding::Decoder,
     part: &str,
-) -> xlsx_jsx::Result<Option<String>> {
-    let expected: &[(&[u8], &[u8])] = match tag {
-        "x14:colorSeries" | "x14:colorMarkers" => {
-            &[(b"theme", b"4"), (b"tint", b"-0.499984740745262")]
-        }
-        "x14:colorNegative" => &[(b"theme", b"5")],
-        "x14:colorAxis" => &[(b"rgb", b"FF000000")],
-        "x14:colorFirst" | "x14:colorLast" => {
-            &[(b"theme", b"4"), (b"tint", b"0.39997558519241921")]
-        }
-        "x14:colorHigh" | "x14:colorLow" => &[(b"theme", b"4")],
-        _ => {
-            return Err(Error::Reverse(format!(
-                "worksheet `{part}` sparkline has unknown color role `{tag}`; remove it or use a supported x14 color role"
-            )));
-        }
-    };
+) -> xlsx_jsx::Result<(Option<String>, String)> {
+    if !matches!(
+        tag,
+        "x14:colorSeries"
+            | "x14:colorNegative"
+            | "x14:colorAxis"
+            | "x14:colorMarkers"
+            | "x14:colorFirst"
+            | "x14:colorLast"
+            | "x14:colorHigh"
+            | "x14:colorLow"
+    ) {
+        return Err(Error::Reverse(format!(
+            "worksheet `{part}` sparkline has unknown color role `{tag}`; remove it or use a supported x14 color role"
+        )));
+    }
     let mut attributes = Vec::new();
     for attribute in event.attributes() {
         let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
@@ -28359,27 +28389,234 @@ fn parse_sparkline_color(
             .map_err(|error| Error::Reverse(error.to_string()))?;
         attributes.push((attribute.key.as_ref().to_vec(), value.into_owned()));
     }
-    if attributes.len() == expected.len()
-        && expected.iter().all(|(key, value)| {
-            attributes.iter().any(|(actual_key, actual_value)| {
-                actual_key == key && actual_value.as_bytes() == *value
-            })
-        })
-    {
-        return Ok(None);
-    }
     if attributes.len() == 1 && attributes[0].0 == b"rgb" {
         let value = attributes[0].1.as_str();
         if value.len() == 8
             && value.starts_with("FF")
             && value[2..].bytes().all(|byte| byte.is_ascii_hexdigit())
         {
-            return Ok(Some(format!("#{}", &value[2..])));
+            let value = value.to_ascii_uppercase();
+            let color = if tag == "x14:colorAxis" && value == "FF000000" {
+                None
+            } else {
+                Some(format!("#{}", &value[2..]))
+            };
+            return Ok((color, format!("rgb:{value}")));
         }
     }
+    let theme = attributes
+        .iter()
+        .find(|(key, _)| key == b"theme")
+        .and_then(|(_, value)| value.parse::<u8>().ok())
+        .filter(|theme| *theme <= 9);
+    let tint = attributes
+        .iter()
+        .find(|(key, _)| key == b"tint")
+        .map(|(_, value)| value.as_str());
+    if let Some(theme) = theme
+        && attributes.len() == usize::from(tint.is_some()) + 1
+        && attributes
+            .iter()
+            .all(|(key, _)| key == b"theme" || key == b"tint")
+        && let Some(shade) = parse_sparkline_theme_shade(theme, tint)
+    {
+        return Ok((None, format!("theme:{theme}:{shade}")));
+    }
     Err(Error::Reverse(format!(
-        "worksheet `{part}` sparkline color `{tag}` uses an unsupported encoding; use the pinned writer default or opaque RGB `FFRRGGBB`"
+        "worksheet `{part}` sparkline color `{tag}` uses unsupported metadata; use a pinned built-in palette or opaque RGB `FFRRGGBB`"
     )))
+}
+
+fn parse_sparkline_theme_shade(theme: u8, tint: Option<&str>) -> Option<u8> {
+    let Some(tint) = tint else {
+        return Some(0);
+    };
+    let tints = match theme {
+        0 => [
+            "-4.9989318521683403E-2",
+            "-0.14999847407452621",
+            "-0.249977111117893",
+            "-0.34998626667073579",
+            "-0.499984740745262",
+        ],
+        1 => [
+            "0.499984740745262",
+            "0.34998626667073579",
+            "0.249977111117893",
+            "0.14999847407452621",
+            "4.9989318521683403E-2",
+        ],
+        2 => [
+            "-9.9978637043366805E-2",
+            "-0.249977111117893",
+            "-0.499984740745262",
+            "-0.749992370372631",
+            "-0.89999084444715716",
+        ],
+        _ => [
+            "0.79998168889431442",
+            "0.59999389629810485",
+            "0.39997558519241921",
+            "-0.249977111117893",
+            "-0.499984740745262",
+        ],
+    };
+    tints
+        .iter()
+        .position(|expected| *expected == tint)
+        .and_then(|index| u8::try_from(index + 1).ok())
+}
+
+fn identify_sparkline_style(colors: &HashMap<String, String>) -> Option<u8> {
+    if colors.get("x14:colorAxis")?.as_str() != "rgb:FF000000" {
+        return None;
+    }
+    (1..=36).find(|style| {
+        let Some(palette) = sparkline_style_palette(*style) else {
+            return false;
+        };
+        [
+            "x14:colorSeries",
+            "x14:colorNegative",
+            "x14:colorMarkers",
+            "x14:colorFirst",
+            "x14:colorLast",
+            "x14:colorHigh",
+            "x14:colorLow",
+        ]
+        .iter()
+        .zip(palette)
+        .all(|(role, color)| colors.get(*role) == Some(&color))
+    })
+}
+
+fn sparkline_style_palette(style: u8) -> Option<[String; 7]> {
+    let theme = |color, shade| format!("theme:{color}:{shade}");
+    let rgb = |color: &str| format!("rgb:FF{color}");
+    match style {
+        1..=26 => sparkline_theme_style_palette(style, &theme),
+        27..=34 => sparkline_rgb_style_palette(style, &rgb),
+        35 | 36 => Some([
+            theme(if style == 35 { 3 } else { 1 }, 0),
+            theme(9, 0),
+            theme(8, 0),
+            theme(4, 0),
+            theme(5, 0),
+            theme(6, 0),
+            theme(7, 0),
+        ]),
+        _ => None,
+    }
+}
+
+fn sparkline_theme_style_palette(
+    style: u8,
+    theme: &impl Fn(u8, u8) -> String,
+) -> Option<[String; 7]> {
+    let palette = match style {
+        1..=6 => {
+            let color = style + 3;
+            let next = if color == 9 { 4 } else { color + 1 };
+            [
+                theme(color, 5),
+                theme(next, 0),
+                theme(color, 5),
+                theme(color, 3),
+                theme(color, 3),
+                theme(color, 0),
+                theme(color, 0),
+            ]
+        }
+        7..=12 => {
+            let color = if style == 12 { 4 } else { style - 2 };
+            let previous = if color == 4 { 9 } else { color - 1 };
+            [
+                theme(previous, 4),
+                theme(color, 0),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+            ]
+        }
+        13..=18 => {
+            let color = style - 9;
+            let next = if color == 9 { 4 } else { color + 1 };
+            [
+                theme(color, 0),
+                theme(next, 0),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 4),
+            ]
+        }
+        19..=24 => {
+            let color = style - 15;
+            [
+                theme(color, 3),
+                theme(0, 5),
+                theme(color, 1),
+                theme(color, 4),
+                theme(color, 4),
+                theme(color, 5),
+                theme(color, 5),
+            ]
+        }
+        25 => [
+            theme(1, 1),
+            theme(1, 3),
+            theme(1, 3),
+            theme(1, 3),
+            theme(1, 3),
+            theme(1, 3),
+            theme(1, 3),
+        ],
+        26 => [
+            theme(1, 2),
+            theme(0, 3),
+            theme(0, 3),
+            theme(0, 3),
+            theme(0, 3),
+            theme(0, 3),
+            theme(0, 3),
+        ],
+        _ => return None,
+    };
+    Some(palette)
+}
+
+fn sparkline_rgb_style_palette(style: u8, rgb: &impl Fn(&str) -> String) -> Option<[String; 7]> {
+    let colors: [&str; 7] = match style {
+        27 => [
+            "323232", "D00000", "D00000", "D00000", "D00000", "D00000", "D00000",
+        ],
+        28 => [
+            "000000", "0070C0", "0070C0", "0070C0", "0070C0", "0070C0", "0070C0",
+        ],
+        29 => [
+            "376092", "D00000", "D00000", "D00000", "D00000", "D00000", "D00000",
+        ],
+        30 => [
+            "0070C0", "000000", "000000", "000000", "000000", "000000", "000000",
+        ],
+        31 => [
+            "5F5F5F", "FFB620", "D70077", "5687C2", "359CEB", "56BE79", "FF5055",
+        ],
+        32 => [
+            "5687C2", "FFB620", "D70077", "777777", "359CEB", "56BE79", "FF5055",
+        ],
+        33 => [
+            "C6EFCE", "FFC7CE", "8CADD6", "FFDC47", "FFEB9C", "60D276", "FF5367",
+        ],
+        34 => [
+            "00B050", "FF0000", "0070C0", "FFC000", "FFC000", "00B050", "FF0000",
+        ],
+        _ => return None,
+    };
+    Some(colors.map(rgb))
 }
 
 fn parse_sparkline_bool_attribute(

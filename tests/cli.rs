@@ -171,6 +171,8 @@ fn agent_json_spec_is_valid_json_and_describes_sparkline_options() {
     assert_eq!(group["sparklineColor"]["pattern"], "^#[0-9A-Fa-f]{6}$");
     assert_eq!(group["dateRange"]["type"], "string");
     assert_eq!(group["lineWeight"]["exclusiveMinimum"], 0);
+    assert_eq!(group["style"]["minimum"], 1);
+    assert_eq!(group["style"]["maximum"], 36);
 }
 
 #[test]
@@ -21590,7 +21592,7 @@ fn builds_and_reverses_sparkline_group_without_a_manifest() {
     let rebuilt_path = directory.path().join("sparkline-group-rebuilt.xlsx");
     std::fs::write(
         &input,
-        r#"import { Workbook, Worksheet, SparklineGroup } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><SparklineGroup cells="F2:F4" range="Data!A2:D4" dateRange="Data!A1:D1" sparklineType="column" showMarkers={true} showAxis={true} rightToLeft={true} showEmptyCellsAs="span" lineWeight={1.25} minAxisType="group" maxAxisType="group" /></Worksheet></Workbook>;"#,
+        r#"import { Workbook, Worksheet, SparklineGroup } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><SparklineGroup cells="F2:F4" range="Data!A2:D4" dateRange="Data!A1:D1" sparklineType="column" style={20} showMarkers={true} showAxis={true} rightToLeft={true} showEmptyCellsAs="span" lineWeight={1.25} minAxisType="group" maxAxisType="group" /></Worksheet></Workbook>;"#,
     )
     .unwrap();
 
@@ -21645,6 +21647,7 @@ fn builds_and_reverses_sparkline_group_without_a_manifest() {
     assert!(reversed.contains("minAxisType=\"group\""), "{reversed}");
     assert!(reversed.contains("maxAxisType=\"group\""), "{reversed}");
     assert!(reversed.contains("dateRange=\"Data!A1:D1\""), "{reversed}");
+    assert!(reversed.contains("style={20}"), "{reversed}");
 
     Command::cargo_bin("xlsx-jsx")
         .unwrap()
@@ -21663,6 +21666,74 @@ fn builds_and_reverses_sparkline_group_without_a_manifest() {
         assert!(
             rebuilt.contains(&format!("<xm:f>Data!{source_row}</xm:f>")),
             "{rebuilt}"
+        );
+    }
+}
+
+#[test]
+fn reverses_all_preset_sparkline_styles_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("sparkline-styles.xlsx");
+    let source_path = directory.path().join("sparkline-styles.tsx");
+    let rebuilt_path = directory.path().join("sparkline-styles-rebuilt.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    for (column, value) in [1.0, 3.0, 2.0].into_iter().enumerate() {
+        worksheet
+            .write_number(0, u16::try_from(column).unwrap(), value)
+            .unwrap();
+    }
+    for style in 1..=36 {
+        let sparkline = XlsxSparkline::new()
+            .set_range(("Data", 0, 0, 0, 2))
+            .set_style(style);
+        worksheet
+            .add_sparkline(0, u16::from(style) + 3, &sparkline)
+            .unwrap();
+    }
+    workbook.save(&workbook_path).unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(
+        source.contains("<Sparkline cell=\"E1\" range=\"Data!A1:C1\" />"),
+        "{source}"
+    );
+    for style in 2..=36 {
+        assert!(
+            source.contains(&format!("style={{{style}}}")),
+            "missing style {style}: {source}"
+        );
+    }
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&rebuilt_path)
+        .args(["-o"])
+        .arg(directory.path().join("sparkline-styles-roundtrip.tsx"))
+        .assert()
+        .success();
+    let roundtrip =
+        std::fs::read_to_string(directory.path().join("sparkline-styles-roundtrip.tsx")).unwrap();
+    for style in 2..=36 {
+        assert!(
+            roundtrip.contains(&format!("style={{{style}}}")),
+            "missing style {style}: {roundtrip}"
         );
     }
 }
@@ -21765,6 +21836,36 @@ fn rejects_sparkline_date_range_with_a_different_point_count() {
 }
 
 #[test]
+fn rejects_invalid_sparkline_style_and_color_overrides() {
+    let directory = tempdir().expect("temporary directory is available");
+    for (name, options, expected) in [
+        ("out-of-range", "style={37}", "integer from 1 to 36"),
+        (
+            "color-override",
+            "style={20} sparklineColor=\"#112233\"",
+            "cannot be combined with explicit sparkline color-role properties",
+        ),
+    ] {
+        let input = directory.path().join(format!("{name}.tsx"));
+        std::fs::write(
+            &input,
+            format!(
+                r#"import {{ Workbook, Worksheet, Sparkline }} from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Sparkline cell="F2" range="Data!A2:D2" {options} /></Worksheet></Workbook>;"#
+            ),
+        )
+        .unwrap();
+        Command::cargo_bin("xlsx-jsx")
+            .unwrap()
+            .args(["validate"])
+            .arg(input)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(expected))
+            .stderr(predicate::str::contains("suggestion:"));
+    }
+}
+
+#[test]
 fn rejects_external_custom_sparkline_axis_colors_without_a_writer_setter() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("custom-sparkline-color.xlsx");
@@ -21792,7 +21893,7 @@ fn rejects_external_custom_sparkline_axis_colors_without_a_writer_setter() {
         .arg(output_path)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("custom sparkline axis color"))
+        .stderr(predicate::str::contains("non-default sparkline axis color"))
         .stderr(predicate::str::contains("no public axis-color setter"));
 }
 
