@@ -73,6 +73,27 @@ relationships and drawing anchors without relying on a private manifest.
   `Image`, which is a floating worksheet picture. Unsupported image types or
   malformed/ambiguous relationships fail with repair guidance.
 
+### HeaderImage and FooterImage
+
+`HeaderImage` and `FooterImage` embed raster pictures in the odd-page worksheet
+header or footer using the writer's VML image support. They are separate from
+ordinary floating `Image` pictures and do not use worksheet drawing anchors.
+
+- `position` is required and one of `left`, `center`, or `right`; `data` is a
+  required self-contained base64 data URI for PNG, JPEG, GIF, or BMP bytes.
+- Components must be direct worksheet children before rows. At most one image
+  may occupy each position in each header/footer. The matching `header` or
+  `footer` string must contain the corresponding `&G` (or `&[Picture]`)
+  section marker. Markers without an image and images without a marker are
+  errors; the compiler does not insert or remove marker text implicitly.
+- Reverse follows `legacyDrawingHF`, its VML relationship, VML image
+  relationships, and media bytes independently of the private manifest.
+  Unsupported VML shape metadata, image types, duplicate positions, and
+  ambiguous relationships fail with repair guidance. Even/first-page images
+  are not represented. Images scaled independently from their source pixels are
+  rejected rather than silently rebuilt at a different size; use an unscaled
+  source image until explicit header-image scale properties are modeled.
+
 ### Chart
 
 `Chart` models area, column, bar, line, and pie charts with series source formulas
@@ -1255,8 +1276,9 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   placeholder expansion. `headerFooterScaleWithDoc?: boolean` and
   `headerFooterAlignWithPage?: boolean` preserve the corresponding
   `headerFooter` attributes; their default is `true`, so reverse omits them.
-  Images (`&G`/`&[Picture]`) and even/first-page header/footer variants are not
-  representable and are rejected with repair guidance.
+  Picture markers (`&G`/`&[Picture]`) are representable only with matching
+  `HeaderImage`/`FooterImage` components; unpaired markers and even/first-page
+  variants are rejected with repair guidance.
 - `freezeRows?: integer` and `freezeColumns?: integer` are counts of leading
   rows/columns to freeze (default 0; maximum 1,048,575 rows and 16,383 columns).
   If either property is specified, at least one count must be positive.

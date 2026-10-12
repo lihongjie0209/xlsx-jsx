@@ -266,6 +266,7 @@
               { "$ref": "#/$defs/sparklineGroup" },
               { "$ref": "#/$defs/image" },
               { "$ref": "#/$defs/backgroundImage" },
+              { "$ref": "#/$defs/headerFooterImage" },
               { "$ref": "#/$defs/chart" },
               { "$ref": "#/$defs/row" }
             ]
@@ -1574,6 +1575,24 @@
           "type": "object",
           "required": ["data"],
           "properties": {
+            "data": { "type": "string", "pattern": "^data:image/(png|jpeg|gif|bmp);base64,[A-Za-z0-9+/]+={0,2}$" }
+          },
+          "additionalProperties": false
+        },
+        "children": { "type": "array", "maxItems": 0 }
+      },
+      "additionalProperties": false
+    },
+    "headerFooterImage": {
+      "type": "object",
+      "required": ["type", "props", "children"],
+      "properties": {
+        "type": { "enum": ["HeaderImage", "FooterImage"] },
+        "props": {
+          "type": "object",
+          "required": ["position", "data"],
+          "properties": {
+            "position": { "enum": ["left", "center", "right"] },
             "data": { "type": "string", "pattern": "^data:image/(png|jpeg|gif|bmp);base64,[A-Za-z0-9+/]+={0,2}$" }
           },
           "additionalProperties": false

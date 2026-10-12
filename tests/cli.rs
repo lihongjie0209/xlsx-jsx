@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use calamine::Reader;
 use predicates::prelude::*;
 use rust_xlsxwriter::{
@@ -8,12 +9,103 @@ use rust_xlsxwriter::{
     ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
     ChartLineDashType, ChartMarker, ChartMarkerType, ChartPatternFill, ChartPatternFillType,
     ChartPoint, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType, Color,
-    DocProperties as XlsxDocProperties, ExcelDateTime, Image as XlsxImage, ObjectMovement,
-    Sparkline as XlsxSparkline, SparklineType, Workbook as XlsxWorkbook,
+    DocProperties as XlsxDocProperties, ExcelDateTime, HeaderImagePosition, Image as XlsxImage,
+    ObjectMovement, Sparkline as XlsxSparkline, SparklineType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
 use tempfile::tempdir;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
+
+#[test]
+fn reverse_external_header_and_footer_images_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("header-footer-images.xlsx");
+    let image_bytes = BASE64_STANDARD
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==")
+        .expect("fixture is valid base64");
+    let image = XlsxImage::new_from_buffer(&image_bytes).expect("fixture is a PNG");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook
+        .add_worksheet()
+        .set_name("Data")
+        .expect("sheet name is valid");
+    worksheet.set_header("&L&G");
+    worksheet
+        .set_header_image(&image, HeaderImagePosition::Left)
+        .expect("header image is valid");
+    worksheet.set_footer("&R&G");
+    worksheet
+        .set_footer_image(&image, HeaderImagePosition::Right)
+        .expect("footer image is valid");
+    worksheet
+        .insert_note(0, 0, &rust_xlsxwriter::Note::new("External comment"))
+        .expect("legacy note is valid");
+    workbook.save(&external).expect("external workbook saves");
+
+    let reversed = directory.path().join("header-footer-images.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed source exists");
+    assert!(source.contains("header=\"&L&G\""), "{source}");
+    assert!(source.contains("footer=\"&R&G\""), "{source}");
+    assert!(
+        source.contains("<HeaderImage position=\"left\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("<FooterImage position=\"right\""),
+        "{source}"
+    );
+    assert!(source.contains("<Note"), "{source}");
+    assert!(source.contains("data:image/png;base64,"), "{source}");
+
+    let rebuilt = directory.path().join("rebuilt-header-footer-images.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let mut archive = ZipArchive::new(std::fs::File::open(&rebuilt).expect("rebuilt XLSX exists"))
+        .expect("rebuilt XLSX is a ZIP package");
+    let vml_names = archive
+        .file_names()
+        .filter(|name| {
+            name.starts_with("xl/drawings/vmlDrawing")
+                && std::path::Path::new(name)
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("vml"))
+        })
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        vml_names.len(),
+        2,
+        "note and header/footer use distinct VML drawings"
+    );
+    let mut vml = String::new();
+    for vml_name in vml_names {
+        let mut candidate = String::new();
+        archive
+            .by_name(&vml_name)
+            .expect("VML drawing exists")
+            .read_to_string(&mut candidate)
+            .expect("VML drawing is UTF-8");
+        if candidate.contains("id=\"LH\"") {
+            vml = candidate;
+        }
+    }
+    assert!(vml.contains("id=\"LH\""), "{vml}");
+    assert!(vml.contains("id=\"RF\""), "{vml}");
+}
 
 #[test]
 #[expect(

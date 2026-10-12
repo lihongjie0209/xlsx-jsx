@@ -28,8 +28,8 @@ use rust_xlsxwriter::{
     ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
     DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
     FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
-    IgnoreError, Image as XlsxImage, Note, ObjectMovement, Sparkline as XlsxSparkline,
-    SparklineType, Table, TableColumn, TableStyle, Url, Workbook,
+    HeaderImagePosition, IgnoreError, Image as XlsxImage, Note, ObjectMovement,
+    Sparkline as XlsxSparkline, SparklineType, Table, TableColumn, TableStyle, Url, Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -395,6 +395,10 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             }
             if child.r#type == "BackgroundImage" {
                 compile_background_image(worksheet, &child)?;
+                continue;
+            }
+            if child.r#type == "HeaderImage" || child.r#type == "FooterImage" {
+                compile_header_footer_image(worksheet, &child)?;
                 continue;
             }
             if child.r#type == "Column" {
@@ -3808,6 +3812,40 @@ fn compile_background_image(
     Ok(())
 }
 
+fn compile_header_footer_image(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    component: &Node,
+) -> xlsx_jsx::Result<()> {
+    let data_uri = component.props["data"]
+        .as_str()
+        .expect("validated data URI");
+    let (_, encoded) = data_uri
+        .strip_prefix("data:image/")
+        .and_then(|value| value.split_once(";base64,"))
+        .expect("validated data URI");
+    let bytes = BASE64
+        .decode(encoded)
+        .expect("validated base64 image bytes");
+    let image = XlsxImage::new_from_buffer(&bytes).map_err(|error| {
+        Error::Compile(format!("cannot decode {}.data: {error}", component.r#type))
+    })?;
+    let position = match component.props["position"]
+        .as_str()
+        .expect("validated position")
+    {
+        "left" => HeaderImagePosition::Left,
+        "center" => HeaderImagePosition::Center,
+        "right" => HeaderImagePosition::Right,
+        _ => unreachable!("validated header/footer image position"),
+    };
+    let result = if component.r#type == "HeaderImage" {
+        worksheet.set_header_image(&image, position)
+    } else {
+        worksheet.set_footer_image(&image, position)
+    };
+    result.map(|_| ()).map_err(|error| Error::Compile(format!("cannot set {} at {:?}: {error}; ensure Worksheet.{} contains the matching `&G` section marker", component.r#type, component.props["position"], if component.r#type == "HeaderImage" { "header" } else { "footer" })))
+}
+
 fn build_table_column_format(value: &Value) -> xlsx_jsx::Result<Format> {
     let props = value.as_object().cloned().ok_or_else(|| {
         Error::Compile(
@@ -6032,7 +6070,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         }
     }
     let mut output = String::from(
-        "import { Workbook, Worksheet, DefinedName, CustomProperty, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, SparklineGroup, Image, BackgroundImage, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
+        "import { Workbook, Worksheet, DefinedName, CustomProperty, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, SparklineGroup, Image, BackgroundImage, HeaderImage, FooterImage, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
     for (name, value) in [
         ("title", workbook_properties.title.as_deref()),
@@ -6178,6 +6216,20 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
             sheet_metadata.and_then(|metadata| metadata.background_image.as_deref())
         {
             let _ = writeln!(output, "    <BackgroundImage data={{{data_uri:?}}} />");
+        }
+        if let Some(images) = sheet_metadata.map(|metadata| &metadata.header_footer_images) {
+            for image in images {
+                let kind = if image.is_footer {
+                    "FooterImage"
+                } else {
+                    "HeaderImage"
+                };
+                let _ = writeln!(
+                    output,
+                    "    <{kind} position=\"{}\" data={{{:?}}} />",
+                    image.position, image.data_uri
+                );
+            }
         }
         if let Some(defined_names) = sheet_metadata.map(|metadata| &metadata.defined_names) {
             for defined_name in defined_names {
@@ -9395,6 +9447,8 @@ fn audit_reverse_subset(
     let mut background_image_relationships_by_sheet = HashMap::new();
     let mut drawing_relationships_by_sheet = HashMap::new();
     let mut note_relationships_by_sheet = HashMap::new();
+    let mut header_footer_images_by_sheet: HashMap<String, Vec<WorksheetHeaderFooterImage>> =
+        HashMap::new();
     let mut referenced_note_parts = std::collections::HashSet::new();
     for relationship_part in relationship_parts {
         let worksheet_part = worksheet_part_from_relationship_part(&relationship_part)
@@ -9412,8 +9466,10 @@ fn audit_reverse_subset(
             )));
         }
         drawing_relationships_by_sheet.insert(worksheet_part.clone(), relationships.drawings);
-        if relationships.comments.len() != relationships.vml_drawings.len()
-            || relationships.comments.len() > 1
+        if relationships.comments.len() > 1
+            || relationships.vml_drawings.len() > 2
+            || (!relationships.comments.is_empty()
+                && relationships.vml_drawings.len() < relationships.comments.len())
         {
             return Err(Error::Reverse(format!(
                 "worksheet `{worksheet_part}` must have exactly one comments and one VML relationship for legacy notes; repair its relationship part"
@@ -9426,12 +9482,20 @@ fn audit_reverse_subset(
                 "legacy note relationships belong to unlinked worksheet `{worksheet_part}`; repair workbook.xml relationships"
             )));
         }
+        let worksheet_xml_for_vml = read_zip_part(&mut archive, &worksheet_part)?;
+        let note_vml_id =
+            worksheet_legacy_relationship_id(&worksheet_xml_for_vml, "legacyDrawing")?;
+        let hf_vml_id =
+            worksheet_legacy_relationship_id(&worksheet_xml_for_vml, "legacyDrawingHF")?;
         if let (
             Some((_comments_relationship_id, comments_target)),
             Some((vml_relationship_id, vml_target)),
         ) = (
             relationships.comments.iter().next(),
-            relationships.vml_drawings.iter().next(),
+            relationships
+                .vml_drawings
+                .iter()
+                .find(|(id, _)| Some(id.as_str()) == note_vml_id.as_deref()),
         ) {
             let comments_path = resolve_note_target(comments_target, &worksheet_part, true)?;
             let vml_path = resolve_note_target(vml_target, &worksheet_part, false)?;
@@ -9454,6 +9518,30 @@ fn audit_reverse_subset(
                     notes,
                 },
             );
+        }
+        if let Some(hf_relationship_id) = hf_vml_id
+            && let Some((_relationship_id, target)) = relationships
+                .vml_drawings
+                .get_key_value(&hf_relationship_id)
+        {
+            let vml_path = resolve_note_target(target, &worksheet_part, false)?;
+            if !referenced_note_parts.insert(vml_path.clone()) {
+                return Err(Error::Reverse(format!(
+                    "header/footer VML part `{vml_path}` is shared by multiple worksheets; use one VML part per sheet"
+                )));
+            }
+            let vml_xml = read_zip_part(&mut archive, &vml_path)?;
+            let rel_path = vml_relationship_part(&vml_path)?;
+            let rel_xml = read_zip_part(&mut archive, &rel_path)?;
+            let images =
+                parse_header_footer_vml(&vml_xml, &vml_path, &rel_xml, &rel_path, &mut archive)?;
+            if images.is_empty() {
+                return Err(Error::Reverse(format!(
+                    "header/footer VML part `{vml_path}` contains no image shapes; remove the orphan `legacyDrawingHF` reference or add matching header/footer pictures"
+                )));
+            }
+            header_footer_images_by_sheet.insert(worksheet_part.clone(), images);
+            referenced_note_parts.insert(rel_path);
         }
         table_relationships_by_sheet.insert(worksheet_part, relationships.tables);
     }
@@ -9506,6 +9594,40 @@ fn audit_reverse_subset(
                 has_dynamic_metadata,
             )?;
             let mut metadata = metadata;
+            if metadata.legacy_drawing_hf_relationship_id.is_some()
+                && !header_footer_images_by_sheet.contains_key(&name)
+            {
+                return Err(Error::Reverse(format!(
+                    "worksheet `{name}` references legacyDrawingHF without a matching VML image relationship; repair the worksheet relationships"
+                )));
+            }
+            if let Some(images) = header_footer_images_by_sheet.get(&name) {
+                metadata.header_footer_images.clone_from(images);
+            }
+            for (property, is_footer) in [("header", false), ("footer", true)] {
+                let text = if property == "header" {
+                    &metadata.header_footer.header
+                } else {
+                    &metadata.header_footer.footer
+                };
+                let mut marker_positions = text
+                    .as_deref()
+                    .map(header_footer_picture_positions)
+                    .unwrap_or_default();
+                let mut image_positions = metadata
+                    .header_footer_images
+                    .iter()
+                    .filter(|image| image.is_footer == is_footer)
+                    .map(|image| image.position)
+                    .collect::<Vec<_>>();
+                marker_positions.sort_unstable();
+                image_positions.sort_unstable();
+                if marker_positions != image_positions {
+                    return Err(Error::Reverse(format!(
+                        "worksheet `{name}` {property} picture marker positions {marker_positions:?} do not match VML image positions {image_positions:?}; repair the `&G` marker or its legacyDrawingHF image relationship"
+                    )));
+                }
+            }
             if let Some(note_parts) = note_relationships_by_sheet.get(&name) {
                 if metadata.legacy_drawing_relationship_id.as_deref()
                     != Some(note_parts.vml_relationship_id.as_str())
@@ -9563,6 +9685,11 @@ fn audit_reverse_subset(
     let mut referenced_drawing_parts = std::collections::HashSet::new();
     let mut referenced_chart_parts = std::collections::HashSet::new();
     let mut referenced_media_parts = std::collections::HashSet::new();
+    for images in header_footer_images_by_sheet.values() {
+        for image in images {
+            referenced_media_parts.insert(image.media_path.clone());
+        }
+    }
     for (worksheet_part, relationships) in background_image_relationships_by_sheet {
         let sheet_name = names_by_target.get(worksheet_part.as_str()).ok_or_else(|| {
             Error::Reverse(format!(
@@ -23282,6 +23409,376 @@ fn resolve_note_target(
     })
 }
 
+fn worksheet_legacy_relationship_id(
+    xml: &str,
+    element_name: &str,
+) -> xlsx_jsx::Result<Option<String>> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut result = None;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event) | Event::Empty(event))
+                if event.local_name().as_ref() == element_name.as_bytes() =>
+            {
+                for attribute in event.attributes().with_checks(false) {
+                    let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                    if attribute.key.as_ref() == b"r:id" {
+                        let value = attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                            .map_err(|error| Error::Reverse(error.to_string()))?
+                            .into_owned();
+                        if result.replace(value).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "worksheet contains duplicate {element_name} elements; retain one VML relationship"
+                            )));
+                        }
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => {
+                return Err(Error::Reverse(format!(
+                    "invalid worksheet XML while reading {element_name}: {error}"
+                )));
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn vml_relationship_part(vml_part: &str) -> xlsx_jsx::Result<String> {
+    let filename = vml_part
+        .strip_prefix("xl/drawings/")
+        .ok_or_else(|| Error::Reverse(format!("unexpected VML part `{vml_part}`")))?;
+    Ok(format!("xl/drawings/_rels/{filename}.rels"))
+}
+
+fn validate_header_vml_style(
+    style: &str,
+    image: &XlsxImage,
+    part: &str,
+    shape_id: &str,
+) -> xlsx_jsx::Result<()> {
+    let mut values = HashMap::new();
+    for item in style.split(';') {
+        let Some((name, value)) = item.split_once(':') else {
+            return Err(Error::Reverse(format!(
+                "VML shape `{shape_id}` in `{part}` has malformed style `{style}`; use standard image geometry"
+            )));
+        };
+        if values.insert(name, value).is_some() {
+            return Err(Error::Reverse(format!(
+                "VML shape `{shape_id}` in `{part}` repeats style `{name}`; use standard image geometry"
+            )));
+        }
+    }
+    let expected = [
+        "position",
+        "margin-left",
+        "margin-top",
+        "width",
+        "height",
+        "z-index",
+    ];
+    if values.len() != expected.len()
+        || expected.iter().any(|name| !values.contains_key(name))
+        || values.get("position") != Some(&"absolute")
+        || values.get("margin-left") != Some(&"0")
+        || values.get("margin-top") != Some(&"0")
+        || values
+            .get("z-index")
+            .is_none_or(|value| value.parse::<u32>().is_err())
+    {
+        return Err(Error::Reverse(format!(
+            "VML shape `{shape_id}` in `{part}` has custom positioning; use the standard header/footer image placement"
+        )));
+    }
+    let expected_points =
+        |dimension: f64, dpi: f64| ((dimension * 96.0 / dpi + 0.25).floor()) * 0.75;
+    for (name, dimension, dpi) in [
+        ("width", image.width(), image.width_dpi()),
+        ("height", image.height(), image.height_dpi()),
+    ] {
+        let actual = values
+            .get(name)
+            .and_then(|value| value.strip_suffix("pt"))
+            .and_then(|value| value.parse::<f64>().ok());
+        let expected = expected_points(dimension, dpi);
+        if actual.is_none_or(|actual| !actual.is_finite() || (actual - expected).abs() > 0.001) {
+            return Err(Error::Reverse(format!(
+                "VML image `{shape_id}` in `{part}` has scaled {name}; only the original image size is supported, so reset its scale to 100% or add explicit scale properties"
+            )));
+        }
+    }
+    Ok(())
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "VML relationships, supported shape metadata, and referenced media are audited together to enforce lossless pairing."
+)]
+fn parse_header_footer_vml(
+    xml: &str,
+    part: &str,
+    relationships_xml: &str,
+    relationships_part: &str,
+    archive: &mut ZipArchive<std::fs::File>,
+) -> xlsx_jsx::Result<Vec<WorksheetHeaderFooterImage>> {
+    let mut relationships = HashMap::new();
+    let mut reader = XmlReader::from_str(relationships_xml);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event) | Event::Empty(event))
+                if event.local_name().as_ref() == b"Relationship" =>
+            {
+                let mut id = None;
+                let mut target = None;
+                let mut kind = None;
+                for attribute in event.attributes().with_checks(false) {
+                    let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                    let value = attribute
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                        .map_err(|error| Error::Reverse(error.to_string()))?
+                        .into_owned();
+                    match attribute.key.local_name().as_ref() {
+                        b"Id" => id = Some(value),
+                        b"Target" => target = Some(value),
+                        b"Type" => kind = Some(value),
+                        _ => {
+                            return Err(Error::Reverse(format!(
+                                "VML relationship part `{relationships_part}` has unsupported metadata"
+                            )));
+                        }
+                    }
+                }
+                let id = id.ok_or_else(|| {
+                    Error::Reverse(format!(
+                        "VML relationship in `{relationships_part}` has no Id"
+                    ))
+                })?;
+                let target = target.ok_or_else(|| {
+                    Error::Reverse(format!("VML relationship `{id}` has no Target"))
+                })?;
+                if !kind.as_deref().unwrap_or_default().ends_with("/image")
+                    || relationships.insert(id.clone(), target).is_some()
+                {
+                    return Err(Error::Reverse(format!(
+                        "VML relationship `{id}` in `{relationships_part}` is not a unique image relationship; repair the VML relationship part"
+                    )));
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => {
+                return Err(Error::Reverse(format!(
+                    "invalid VML relationships in `{relationships_part}`: {error}"
+                )));
+            }
+        }
+    }
+    let mut images = Vec::new();
+    let mut shape: Option<(String, String, Option<String>, Option<String>)> = None;
+    let mut reader = XmlReader::from_str(xml);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event) | Event::Empty(event))
+                if event.local_name().as_ref() == b"shape" =>
+            {
+                let mut id = None;
+                let mut style = None;
+                let mut shape_type = None;
+                for attribute in event.attributes().with_checks(false) {
+                    let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                    let value = attribute
+                        .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                        .map_err(|error| Error::Reverse(error.to_string()))?
+                        .into_owned();
+                    match attribute.key.local_name().as_ref() {
+                        b"id" => id = Some(value),
+                        b"style" => style = Some(value),
+                        b"type" => shape_type = Some(value),
+                        b"spid" => {
+                            if !value.starts_with("_x0000_s") || value[8..].parse::<u32>().is_err()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "VML image shape in `{part}` has unsupported shape id `{value}`; use a standard image shape"
+                                )));
+                            }
+                        }
+                        _ => {
+                            return Err(Error::Reverse(format!(
+                                "VML image shape in `{part}` has unsupported attribute `{}`; remove custom shape metadata",
+                                String::from_utf8_lossy(attribute.key.local_name().as_ref())
+                            )));
+                        }
+                    }
+                }
+                let id = id.ok_or_else(|| {
+                    Error::Reverse(format!(
+                        "VML shape in `{part}` has no id; remove custom VML shapes"
+                    ))
+                })?;
+                if !["LH", "CH", "RH", "LF", "CF", "RF"].contains(&id.as_str()) {
+                    return Err(Error::Reverse(format!(
+                        "VML part `{part}` contains unsupported shape `{id}`; only header/footer image shapes are supported"
+                    )));
+                }
+                if shape_type.as_deref() != Some("#_x0000_t75") {
+                    return Err(Error::Reverse(format!(
+                        "VML image shape `{id}` in `{part}` has unsupported type; retain the standard #_x0000_t75 picture shape"
+                    )));
+                }
+                let style = style.ok_or_else(|| {
+                    Error::Reverse(format!("VML image shape in `{part}` has no style"))
+                })?;
+                shape = Some((id, style, None, None));
+            }
+            Ok(Event::Empty(event) | Event::Start(event))
+                if event.local_name().as_ref() == b"imagedata" =>
+            {
+                if let Some((_, _, relation, title)) = &mut shape {
+                    for attribute in event.attributes().with_checks(false) {
+                        let attribute =
+                            attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                        let value = attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                            .map_err(|error| Error::Reverse(error.to_string()))?
+                            .into_owned();
+                        match attribute.key.local_name().as_ref() {
+                            b"relid" => *relation = Some(value),
+                            b"title" => *title = Some(value),
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "VML image data in `{part}` has unsupported attribute `{}`; remove custom image metadata",
+                                    String::from_utf8_lossy(attribute.key.local_name().as_ref())
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::Empty(event) | Event::Start(event))
+                if event.local_name().as_ref() == b"lock" =>
+            {
+                if let Some((id, _, _, _)) = &shape {
+                    let mut extension = false;
+                    let mut rotation = false;
+                    for attribute in event.attributes().with_checks(false) {
+                        let attribute =
+                            attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                        let value = attribute
+                            .decoded_and_normalized_value(XmlVersion::Implicit1_0, reader.decoder())
+                            .map_err(|error| Error::Reverse(error.to_string()))?;
+                        match attribute.key.local_name().as_ref() {
+                            b"ext" if value == "edit" => extension = true,
+                            b"rotation" if value == "t" => rotation = true,
+                            b"aspectratio" if value == "f" => {
+                                return Err(Error::Reverse(format!(
+                                    "VML image `{id}` in `{part}` is scaled independently; this DSL preserves original image size only, so reset its scale to 100% or add explicit scale support"
+                                )));
+                            }
+                            _ => {
+                                return Err(Error::Reverse(format!(
+                                    "VML image lock in `{part}` has unsupported metadata; retain the standard rotation lock"
+                                )));
+                            }
+                        }
+                    }
+                    if !extension || !rotation {
+                        return Err(Error::Reverse(format!(
+                            "VML image `{id}` in `{part}` is missing its standard rotation lock; repair the shape"
+                        )));
+                    }
+                }
+            }
+            Ok(Event::End(event)) if event.local_name().as_ref() == b"shape" => {
+                let (id, style, rel_id, title) = shape.take().ok_or_else(|| {
+                    Error::Reverse(format!("unexpected VML shape end in `{part}`"))
+                })?;
+                let rel_id = rel_id.ok_or_else(|| Error::Reverse(format!("VML image shape `{id}` in `{part}` has no image relationship; repair its imagedata")))?;
+                let target = relationships.get(&rel_id).ok_or_else(|| Error::Reverse(format!("VML image shape `{id}` references missing relationship `{rel_id}` in `{relationships_part}`; repair the VML relationships")))?;
+                let path = resolve_opc_target(part, target)?;
+                let bytes = read_zip_bytes(archive, &path)?;
+                if title.as_deref() != Some("image") {
+                    return Err(Error::Reverse(format!(
+                        "VML image `{id}` in `{part}` has custom title; rename it to the writer default `image` or add a title property"
+                    )));
+                }
+                let image = XlsxImage::new_from_buffer(&bytes).map_err(|error| {
+                    Error::Reverse(format!("cannot read VML image `{path}`: {error}"))
+                })?;
+                validate_header_vml_style(&style, &image, part, &id)?;
+                let ext = path
+                    .rsplit('.')
+                    .next()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase();
+                let mime = match ext.as_str() {
+                    "png" => "png",
+                    "jpg" | "jpeg" => "jpeg",
+                    "gif" => "gif",
+                    "bmp" => "bmp",
+                    _ => {
+                        return Err(Error::Reverse(format!(
+                            "header/footer image `{path}` has unsupported type; convert it to PNG, JPEG, GIF, or BMP"
+                        )));
+                    }
+                };
+                let position = match &id[..1] {
+                    "L" => "left",
+                    "C" => "center",
+                    _ => "right",
+                };
+                images.push(WorksheetHeaderFooterImage {
+                    is_footer: id.ends_with('F'),
+                    position,
+                    data_uri: format!("data:image/{mime};base64,{}", BASE64.encode(bytes)),
+                    media_path: path,
+                });
+            }
+            Ok(Event::Start(event) | Event::Empty(event)) => {
+                let tag = event.local_name();
+                if ![
+                    b"xml".as_slice(),
+                    b"shapelayout",
+                    b"idmap",
+                    b"shapetype",
+                    b"stroke",
+                    b"formulas",
+                    b"f",
+                    b"path",
+                ]
+                .contains(&tag.as_ref())
+                {
+                    return Err(Error::Reverse(format!(
+                        "VML drawing `{part}` contains unsupported element `<{}>`; only standard header/footer picture VML can be reversed",
+                        String::from_utf8_lossy(event.local_name().as_ref())
+                    )));
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => {
+                return Err(Error::Reverse(format!(
+                    "invalid VML image drawing `{part}`: {error}"
+                )));
+            }
+        }
+    }
+    let mut positions = std::collections::HashSet::new();
+    for image in &images {
+        if !positions.insert((image.is_footer, image.position)) {
+            return Err(Error::Reverse(format!(
+                "VML drawing `{part}` repeats the {} position `{}`; keep one image per header/footer position",
+                if image.is_footer { "footer" } else { "header" },
+                image.position
+            )));
+        }
+    }
+    Ok(images)
+}
+
 struct ParsedCommentRun {
     text: String,
     bold: bool,
@@ -24652,6 +25149,10 @@ fn is_supported_part(name: &str) -> bool {
             .and_then(|name| name.strip_suffix(".vml"))
             .is_some_and(|number| number.parse::<u32>().is_ok())
         || name
+            .strip_prefix("xl/drawings/_rels/vmlDrawing")
+            .and_then(|suffix| suffix.strip_suffix(".vml.rels"))
+            .is_some_and(|number| number.parse::<u32>().is_ok())
+        || name
             .strip_prefix("xl/charts/chart")
             .and_then(|name| name.strip_suffix(".xml"))
             .is_some_and(|number| number.parse::<u32>().is_ok())
@@ -25287,6 +25788,8 @@ struct WorksheetMetadata {
     notes: Vec<WorksheetNote>,
     sparklines: Vec<WorksheetSparkline>,
     legacy_drawing_relationship_id: Option<String>,
+    legacy_drawing_hf_relationship_id: Option<String>,
+    header_footer_images: Vec<WorksheetHeaderFooterImage>,
     data_validation_count: Option<usize>,
     auto_filter: Option<String>,
     auto_filter_columns: Vec<WorksheetFilterColumn>,
@@ -25837,6 +26340,14 @@ struct WorksheetHeaderFooter {
     footer: Option<String>,
     scale_with_doc: Option<bool>,
     align_with_page: Option<bool>,
+}
+
+#[derive(Clone)]
+struct WorksheetHeaderFooterImage {
+    is_footer: bool,
+    position: &'static str,
+    data_uri: String,
+    media_path: String,
 }
 
 #[derive(Default)]
@@ -26672,6 +27183,7 @@ const SUPPORTED_WORKSHEET_TAGS: &[&str] = &[
     "pageSetup",
     "sheetProtection",
     "headerFooter",
+    "legacyDrawingHF",
     "oddHeader",
     "oddFooter",
     "printOptions",
@@ -26717,7 +27229,6 @@ const UNSUPPORTED_WORKSHEET_TAGS: &[&str] = &[
     "evenFooter",
     "firstHeader",
     "firstFooter",
-    "legacyDrawingHF",
     "extLst",
     "rPh",
     "phoneticPr",
@@ -26839,7 +27350,7 @@ fn audit_worksheet_xml(
                     hyperlink_relationships,
                     &mut metadata,
                 )?;
-                if tag == "legacyDrawing" {
+                if tag == "legacyDrawing" || tag == "legacyDrawingHF" {
                     let mut relationship_id = None;
                     for attribute in event.attributes().with_checks(false) {
                         let attribute =
@@ -26856,23 +27367,24 @@ fn audit_worksheet_xml(
                             );
                         } else {
                             return Err(Error::Reverse(format!(
-                                "worksheet `{part}` legacyDrawing has unsupported attribute `{}`; only r:id is losslessly supported",
+                                "worksheet `{part}` {tag} has unsupported attribute `{}`; only r:id is losslessly supported",
                                 String::from_utf8_lossy(attribute.key.as_ref())
                             )));
                         }
                     }
                     let Some(relationship_id) = relationship_id else {
                         return Err(Error::Reverse(format!(
-                            "worksheet `{part}` legacyDrawing is missing r:id; repair the VML relationship"
+                            "worksheet `{part}` {tag} is missing r:id; repair the VML relationship"
                         )));
                     };
-                    if metadata
-                        .legacy_drawing_relationship_id
-                        .replace(relationship_id)
-                        .is_some()
-                    {
+                    let target = if tag == "legacyDrawing" {
+                        &mut metadata.legacy_drawing_relationship_id
+                    } else {
+                        &mut metadata.legacy_drawing_hf_relationship_id
+                    };
+                    if target.replace(relationship_id).is_some() {
                         return Err(Error::Reverse(format!(
-                            "worksheet `{part}` contains multiple legacyDrawing elements; retain one VML note drawing relationship"
+                            "worksheet `{part}` contains multiple {tag} elements; retain one VML relationship"
                         )));
                     }
                 }
@@ -31576,17 +32088,12 @@ fn parse_worksheet_header_footer(xml: &str, part: &str) -> xlsx_jsx::Result<Work
         }
     }
     for (property, value) in [("header", &result.header), ("footer", &result.footer)] {
-        if let Some(value) = value {
-            if value.chars().count() > 255 {
-                return Err(Error::Reverse(format!(
-                    "worksheet `{part}` {property} exceeds Excel's 255-character limit; shorten the source header/footer before reversing"
-                )));
-            }
-            if contains_header_footer_picture(value) {
-                return Err(Error::Reverse(format!(
-                    "worksheet `{part}` {property} contains a picture placeholder but header/footer images are not supported; remove the image or add image relationship support"
-                )));
-            }
+        if let Some(value) = value
+            && value.chars().count() > 255
+        {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` {property} exceeds Excel's 255-character limit; shorten the source header/footer before reversing"
+            )));
         }
     }
     Ok(result)
@@ -31642,19 +32149,34 @@ fn ensure_header_footer_child_has_no_attributes(
     Ok(())
 }
 
-fn contains_header_footer_picture(text: &str) -> bool {
+fn header_footer_picture_positions(text: &str) -> Vec<&'static str> {
     let mut remaining = text;
+    let mut current = "center";
+    let mut positions = Vec::new();
     while let Some(index) = remaining.find('&') {
         remaining = &remaining[index..];
         if remaining.starts_with("&&") {
             remaining = &remaining[2..];
+        } else if remaining.starts_with("&L") {
+            current = "left";
+            remaining = &remaining[2..];
+        } else if remaining.starts_with("&C") {
+            current = "center";
+            remaining = &remaining[2..];
+        } else if remaining.starts_with("&R") {
+            current = "right";
+            remaining = &remaining[2..];
+        } else if remaining.starts_with("&[Picture]") {
+            positions.push(current);
+            remaining = &remaining[10..];
         } else if remaining.starts_with("&G") {
-            return true;
+            positions.push(current);
+            remaining = &remaining[2..];
         } else {
             remaining = &remaining[1..];
         }
     }
-    false
+    positions
 }
 
 fn parse_worksheet_page_breaks(xml: &str, part: &str) -> xlsx_jsx::Result<WorksheetPageBreaks> {

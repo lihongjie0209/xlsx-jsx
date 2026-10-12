@@ -1241,11 +1241,6 @@ fn validate_worksheet_header_footer(sheet: &Node, name: &str) -> Result<()> {
                 "Worksheet.{property} on `{name}` exceeds Excel's 255-character limit after placeholder expansion; shorten the text or use a shorter placeholder"
             )));
         }
-        if contains_header_footer_picture(text) {
-            return Err(Error::Compile(format!(
-                "Worksheet.{property} on `{name}` uses a picture placeholder, but header/footer images are not supported; remove `&G`/`&[Picture]` or provide text only"
-            )));
-        }
     }
     for property in ["headerFooterScaleWithDoc", "headerFooterAlignWithPage"] {
         if sheet
@@ -1772,6 +1767,7 @@ fn validate_worksheet_children(
     let mut chart_nodes = Vec::new();
     let mut image_nodes = Vec::new();
     let mut background_image_seen = false;
+    let mut header_footer_images = Vec::new();
     let mut chart_custom_width_ranges = Vec::new();
     let mut chart_custom_height_rows = std::collections::HashSet::new();
     let mut saw_row = false;
@@ -1874,6 +1870,18 @@ fn validate_worksheet_children(
             }
             validate_background_image(&child, child_index)?;
             background_image_seen = true;
+            continue;
+        }
+        if child.r#type == "HeaderImage" || child.r#type == "FooterImage" {
+            if saw_row {
+                return Err(Error::Compile(format!(
+                    "Worksheet `{sheet_name}` {} at child {} appears after a Row; move header/footer images before rows",
+                    child.r#type,
+                    child_index + 1
+                )));
+            }
+            validate_header_footer_image(&child)?;
+            header_footer_images.push(child);
             continue;
         }
         if child.r#type == "Column" {
@@ -2053,6 +2061,33 @@ fn validate_worksheet_children(
         validate_empty_row_placement(sheet, &child, current_row_index, sheet_name, &merged_ranges)?;
         validate_row_cells(&child, current_row_index, &mut merged_ranges)?;
     }
+    for (kind, property) in [("HeaderImage", "header"), ("FooterImage", "footer")] {
+        let images = header_footer_images
+            .iter()
+            .filter(|image| image.r#type == kind)
+            .collect::<Vec<_>>();
+        let marker = sheet
+            .props
+            .get(property)
+            .and_then(Value::as_str)
+            .is_some_and(contains_header_footer_picture);
+        if images.is_empty() == marker {
+            return Err(Error::Compile(format!(
+                "Worksheet `{sheet_name}` {property} picture marker and {kind} components must match; add one component for each `&G` section or remove the marker"
+            )));
+        }
+        let mut positions = std::collections::HashSet::new();
+        for image in images {
+            let position = image.props["position"]
+                .as_str()
+                .expect("validated image position");
+            if !positions.insert(position) {
+                return Err(Error::Compile(format!(
+                    "Worksheet `{sheet_name}` has more than one {kind} at `{position}`; keep one image per header/footer position"
+                )));
+            }
+        }
+    }
     collapsed_outline_ranges(&row_outline, "row").map_err(Error::Compile)?;
     collapsed_outline_ranges(&column_outline, "column").map_err(Error::Compile)?;
     validate_chart_layouts(
@@ -2108,6 +2143,42 @@ fn validate_worksheet_children(
         }
     }
     Ok(())
+}
+
+fn validate_header_footer_image(image: &Node) -> Result<()> {
+    if !image.children.is_empty() {
+        return Err(Error::Compile(format!(
+            "{} cannot have children; provide image bytes through data",
+            image.r#type
+        )));
+    }
+    reject_unknown_props(image, &["position", "data"], &image.r#type)?;
+    if !image
+        .props
+        .get("position")
+        .and_then(Value::as_str)
+        .is_some_and(|value| ["left", "center", "right"].contains(&value))
+    {
+        return Err(Error::Compile(format!(
+            "{}.position is required; use left, center, or right",
+            image.r#type
+        )));
+    }
+    let mut image_data = Node {
+        r#type: "Image".into(),
+        props: serde_json::Map::new(),
+        children: Vec::new(),
+    };
+    if let Some(data) = image.props.get("data") {
+        image_data.props.insert("data".into(), data.clone());
+    }
+    validate_image_data(&image_data).map_err(|error| {
+        Error::Compile(
+            error
+                .to_string()
+                .replace("Image.data", &format!("{}.data", image.r#type)),
+        )
+    })
 }
 
 fn is_supported_chart_type(chart_type: &str) -> bool {
@@ -12597,6 +12668,33 @@ mod tests {
             "type":"Worksheet","props":{"name":"Print","header":"&CPage &[Page] of &[Pages]","footer":"&R&D","headerFooterScaleWithDoc":false,"headerFooterAlignWithPage":false},"children":[]
         })]);
         assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn accepts_matched_header_footer_image_markers_and_components() {
+        let data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==";
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet",
+            "props":{"name":"Print","header":"&L&G","footer":"&R&G"},
+            "children":[
+                {"type":"HeaderImage","props":{"position":"left","data":data},"children":[]},
+                {"type":"FooterImage","props":{"position":"right","data":data},"children":[]}
+            ]
+        })]);
+        assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn rejects_unmatched_header_footer_image_components_with_repair_advice() {
+        let data = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==";
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Print"},
+            "children":[{"type":"HeaderImage","props":{"position":"left","data":data},"children":[]}]
+        })]);
+        let error = input.validate().expect_err("an image needs a marker");
+        assert!(error.to_string().contains("header"), "{error}");
+        assert!(error.to_string().contains("marker"), "{error}");
+        assert!(error.to_string().contains("add"), "{error}");
     }
 
     #[test]
