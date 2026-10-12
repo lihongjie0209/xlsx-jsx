@@ -40,6 +40,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("fontSize"))
         .stdout(predicate::str::contains("fontFamily"))
         .stdout(predicate::str::contains("altText"))
+        .stdout(predicate::str::contains("BackgroundImage"))
         .stdout(predicate::str::contains("sparklineType"))
         .stdout(predicate::str::contains("sparklineGroup"))
         .stdout(predicate::str::contains("showEmptyCellsAs"))
@@ -173,6 +174,8 @@ fn agent_json_spec_is_valid_json_and_describes_sparkline_options() {
     assert_eq!(group["lineWeight"]["exclusiveMinimum"], 0);
     assert_eq!(group["style"]["minimum"], 1);
     assert_eq!(group["style"]["maximum"], 36);
+    let background_image = &schema["$defs"]["backgroundImage"]["properties"]["props"];
+    assert_eq!(background_image["required"][0], "data");
 }
 
 #[test]
@@ -277,6 +280,132 @@ fn reverses_external_image_hyperlink_without_a_manifest() {
         .failure()
         .stderr(predicate::str::contains("unsupported hyperlink target"))
         .stderr(predicate::str::contains("internal:Sheet!Cell"));
+}
+
+#[test]
+fn background_images_compile_and_reverse_external_workbooks_without_a_manifest() {
+    const IMAGE_BYTES: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x00\x00\x00\x00\x3a\x7e\x9a\xf5\x00\x00\x00\x0aIDAT\x78\x9c\x63\x60\x00\x02\x00\x01H\x2a\xa4\x00\x00\x00\x00IEND\xaeB`\x82";
+    const IMAGE_DATA_URI: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==";
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("background.tsx");
+    std::fs::write(
+        &input,
+        format!(
+            "import {{ Workbook, Worksheet, BackgroundImage }} from \"xlsx-jsx\";\nexport default <Workbook><Worksheet name=\"Background\"><BackgroundImage data=\"{IMAGE_DATA_URI}\" /></Worksheet></Workbook>;"
+        ),
+    )
+    .expect("source fixture is written");
+    let generated = directory.path().join("background.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&generated)
+        .assert()
+        .success();
+    let mut archive = ZipArchive::new(std::fs::File::open(&generated).expect("XLSX exists"))
+        .expect("XLSX is a ZIP package");
+    let mut worksheet_xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .expect("worksheet XML exists")
+        .read_to_string(&mut worksheet_xml)
+        .expect("worksheet XML is UTF-8");
+    assert!(worksheet_xml.contains("<picture r:id="), "{worksheet_xml}");
+
+    let external_path = directory.path().join("external-background.xlsx");
+    let image = XlsxImage::new_from_buffer(IMAGE_BYTES).expect("PNG bytes are valid");
+    let mut workbook = XlsxWorkbook::new();
+    workbook
+        .add_worksheet()
+        .set_name("External")
+        .expect("worksheet name is valid")
+        .insert_background_image(&image);
+    workbook
+        .add_worksheet()
+        .set_name("Shared")
+        .expect("second worksheet name is valid")
+        .insert_background_image(&image);
+    workbook
+        .save(&external_path)
+        .expect("external workbook saves");
+    let reversed = directory.path().join("external-background.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external_path)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(source.contains("<BackgroundImage"), "{source}");
+    let external_data_uri = source
+        .lines()
+        .find(|line| line.contains("<BackgroundImage"))
+        .and_then(|line| line.split("data={\"").nth(1))
+        .and_then(|value| value.split_once("\"}").map(|(data, _)| data))
+        .expect("reverse output has a self-contained image data URI");
+    assert!(
+        external_data_uri.starts_with("data:image/png;base64,"),
+        "{source}"
+    );
+    let rebuilt = directory.path().join("external-background-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let twice_reversed = directory.path().join("external-background-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&twice_reversed)
+        .assert()
+        .success();
+    let twice_source = std::fs::read_to_string(&twice_reversed).expect("second reverse exists");
+    assert!(twice_source.contains(external_data_uri), "{twice_source}");
+}
+
+#[test]
+fn invalid_background_images_report_cause_and_repair_action() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-background.tsx");
+    for (children, expected_error) in [
+        (
+            r#"<BackgroundImage data="data:image/png;base64,not_base64!" />"#,
+            "BackgroundImage.data is not valid base64",
+        ),
+        (
+            r#"<BackgroundImage data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" /><BackgroundImage data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" />"#,
+            "keep exactly one background image",
+        ),
+        (
+            r#"<Row><Cell>data</Cell></Row><BackgroundImage data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" />"#,
+            "move background images before rows",
+        ),
+    ] {
+        std::fs::write(
+            &input,
+            format!(
+                "import {{ BackgroundImage, Cell, Row, Workbook, Worksheet }} from \"xlsx-jsx\";\nexport default <Workbook><Worksheet name=\"Invalid\">{children}</Worksheet></Workbook>;"
+            ),
+        )
+        .expect("invalid source fixture is written");
+        Command::cargo_bin("xlsx-jsx")
+            .expect("binary is built")
+            .args(["validate"])
+            .arg(&input)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(expected_error));
+    }
 }
 
 #[test]

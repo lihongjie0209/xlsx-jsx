@@ -1601,6 +1601,7 @@ fn validate_worksheet_children(
     let mut sparkline_cells = std::collections::HashSet::new();
     let mut chart_nodes = Vec::new();
     let mut image_nodes = Vec::new();
+    let mut background_image_seen = false;
     let mut chart_custom_width_ranges = Vec::new();
     let mut chart_custom_height_rows = std::collections::HashSet::new();
     let mut saw_row = false;
@@ -1687,6 +1688,22 @@ fn validate_worksheet_children(
             }
             validate_image(&child, child_index)?;
             image_nodes.push(child);
+            continue;
+        }
+        if child.r#type == "BackgroundImage" {
+            if saw_row {
+                return Err(Error::Compile(format!(
+                    "Worksheet `{sheet_name}` BackgroundImage at child {} appears after a Row; move background images before rows",
+                    child_index + 1
+                )));
+            }
+            if background_image_seen {
+                return Err(Error::Compile(format!(
+                    "Worksheet `{sheet_name}` has more than one BackgroundImage; keep exactly one background image per worksheet"
+                )));
+            }
+            validate_background_image(&child, child_index)?;
+            background_image_seen = true;
             continue;
         }
         if child.r#type == "Column" {
@@ -7328,6 +7345,31 @@ fn validate_image_data(image: &Node) -> Result<()> {
         ))
     })?;
     Ok(())
+}
+
+fn validate_background_image(image: &Node, index: usize) -> Result<()> {
+    if !image.children.is_empty() {
+        return Err(Error::Compile(format!(
+            "BackgroundImage at declaration {} cannot have children; provide image bytes through data",
+            index + 1
+        )));
+    }
+    reject_unknown_props(image, &["data"], "BackgroundImage")?;
+    let mut image_data = Node {
+        r#type: "Image".into(),
+        props: serde_json::Map::new(),
+        children: Vec::new(),
+    };
+    if let Some(data) = image.props.get("data") {
+        image_data.props.insert("data".into(), data.clone());
+    }
+    validate_image_data(&image_data).map_err(|error| {
+        Error::Compile(
+            error
+                .to_string()
+                .replace("Image.data", "BackgroundImage.data"),
+        )
+    })
 }
 
 fn validate_image_layouts(

@@ -56,6 +56,23 @@ relationships and drawing anchors without relying on a private manifest.
 - Data URIs make reverse output self-contained and recompilable; authored file
   paths and remote fetches are not part of this interface.
 
+### BackgroundImage
+
+`BackgroundImage` tiles a raster image behind a worksheet's cells using
+`Worksheet::insert_background_image()`.
+
+- `data` is required and must be a base64 data URI with one of `image/png`,
+  `image/jpeg`, `image/gif`, or `image/bmp`. Reverse embeds the stored media
+  bytes directly in the data URI so output is self-contained and recompilable.
+- At most one `BackgroundImage` may appear in a worksheet, and it must precede
+  rows. Reverse resolves the worksheet's picture
+  relationship and media part directly; it does not rely on an embedded IR
+  manifest.
+- Background images tile from the worksheet origin and have no size, cell
+  anchor, alt-text, or movement properties. Those properties belong to
+  `Image`, which is a floating worksheet picture. Unsupported image types or
+  malformed/ambiguous relationships fail with repair guidance.
+
 ### Chart
 
 `Chart` models area, column, bar, line, and pie charts with series source formulas

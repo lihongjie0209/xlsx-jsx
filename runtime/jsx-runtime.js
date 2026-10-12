@@ -21,6 +21,7 @@ export const ErrorBars = host("ErrorBars");
 export const Trendline = host("Trendline");
 export const ChartDataTable = host("ChartDataTable");
 export const Image = host("Image");
+export const BackgroundImage = host("BackgroundImage");
 export const Row = host("Row");
 export const Cell = host("Cell");
 export const TextRun = host("TextRun");

@@ -359,6 +359,10 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
                 compile_image(worksheet, &child)?;
                 continue;
             }
+            if child.r#type == "BackgroundImage" {
+                compile_background_image(worksheet, &child)?;
+                continue;
+            }
             if child.r#type == "Column" {
                 let min = u16::try_from(child.props["min"].as_u64().unwrap_or(1))
                     .map_err(|error| Error::Compile(format!("invalid Column.min: {error}")))?;
@@ -3672,6 +3676,26 @@ fn compile_image(
         .map_err(|error| Error::Compile(format!("cannot add Image at {cell}: {error}")))
 }
 
+fn compile_background_image(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    component: &Node,
+) -> xlsx_jsx::Result<()> {
+    let data_uri = component.props["data"]
+        .as_str()
+        .expect("validated BackgroundImage.data");
+    let (_, encoded) = data_uri
+        .strip_prefix("data:image/")
+        .and_then(|value| value.split_once(";base64,"))
+        .expect("validated BackgroundImage.data URI");
+    let bytes = BASE64
+        .decode(encoded)
+        .expect("validated BackgroundImage.data base64");
+    let image = XlsxImage::new_from_buffer(&bytes)
+        .map_err(|error| Error::Compile(format!("cannot decode BackgroundImage.data: {error}")))?;
+    worksheet.insert_background_image(&image);
+    Ok(())
+}
+
 fn build_table_column_format(value: &Value) -> xlsx_jsx::Result<Format> {
     let props = value.as_object().cloned().ok_or_else(|| {
         Error::Compile(
@@ -5896,7 +5920,7 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         }
     }
     let mut output = String::from(
-        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, SparklineGroup, Image, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
+        "import { Workbook, Worksheet, DefinedName, Column, DataValidation, ConditionalFormat, IgnoreError, Table, TableColumn, Note, Sparkline, SparklineGroup, Image, BackgroundImage, Chart, Series, ErrorBars, Trendline, ChartDataTable, Row, Cell, TextRun } from \"xlsx-jsx\";\n\nexport default <Workbook",
     );
     for (name, value) in [
         ("title", workbook_properties.title.as_deref()),
@@ -6012,6 +6036,11 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
             }
         }
         output.push_str(">\n");
+        if let Some(data_uri) =
+            sheet_metadata.and_then(|metadata| metadata.background_image.as_deref())
+        {
+            let _ = writeln!(output, "    <BackgroundImage data={{{data_uri:?}}} />");
+        }
         if let Some(defined_names) = sheet_metadata.map(|metadata| &metadata.defined_names) {
             for defined_name in defined_names {
                 let _ = writeln!(
@@ -9224,6 +9253,7 @@ fn audit_reverse_subset(
         .collect::<Vec<_>>();
     let mut hyperlink_relationships_by_sheet = HashMap::new();
     let mut table_relationships_by_sheet = HashMap::new();
+    let mut background_image_relationships_by_sheet = HashMap::new();
     let mut drawing_relationships_by_sheet = HashMap::new();
     let mut note_relationships_by_sheet = HashMap::new();
     let mut referenced_note_parts = std::collections::HashSet::new();
@@ -9235,6 +9265,8 @@ fn audit_reverse_subset(
             &relationship_part,
         )?;
         hyperlink_relationships_by_sheet.insert(worksheet_part.clone(), relationships.hyperlinks);
+        background_image_relationships_by_sheet
+            .insert(worksheet_part.clone(), relationships.background_images);
         if relationships.drawings.len() > 1 {
             return Err(Error::Reverse(format!(
                 "worksheet `{worksheet_part}` has multiple drawing relationships; combine the charts into the single worksheet drawing used by xlsx-jsx"
@@ -9370,6 +9402,58 @@ fn audit_reverse_subset(
     let mut referenced_drawing_parts = std::collections::HashSet::new();
     let mut referenced_chart_parts = std::collections::HashSet::new();
     let mut referenced_media_parts = std::collections::HashSet::new();
+    for (worksheet_part, relationships) in background_image_relationships_by_sheet {
+        let sheet_name = names_by_target.get(worksheet_part.as_str()).ok_or_else(|| {
+            Error::Reverse(format!(
+                "background image relationship belongs to unlinked worksheet `{worksheet_part}`; repair workbook.xml relationships"
+            ))
+        })?;
+        let metadata = styles_by_sheet.get_mut(*sheet_name).ok_or_else(|| {
+            Error::Reverse(format!("missing metadata for worksheet `{sheet_name}`"))
+        })?;
+        if relationships.len() > 1 {
+            return Err(Error::Reverse(format!(
+                "worksheet `{worksheet_part}` has multiple background image relationships; keep one picture and matching image relationship"
+            )));
+        }
+        match (
+            metadata.background_image_relationship_id.as_deref(),
+            relationships.iter().next(),
+        ) {
+            (None, None) => {}
+            (None, Some(_)) => {
+                return Err(Error::Reverse(format!(
+                    "worksheet `{worksheet_part}` has an unused background image relationship; add its `<picture r:id>` or remove the relationship"
+                )));
+            }
+            (Some(_), None) => {
+                return Err(Error::Reverse(format!(
+                    "worksheet `{worksheet_part}` references a background image without an image relationship; restore its worksheet .rels entry"
+                )));
+            }
+            (Some(relationship_id), Some((actual_id, target))) => {
+                if relationship_id != actual_id {
+                    return Err(Error::Reverse(format!(
+                        "worksheet `{worksheet_part}` picture references `{relationship_id}` but its image relationship is `{actual_id}`; repair the r:id"
+                    )));
+                }
+                let image_path = resolve_opc_target(&worksheet_part, target)?;
+                // OPC media may be deduplicated across worksheets by the writer.
+                referenced_media_parts.insert(image_path.clone());
+                let bytes = read_zip_bytes(&mut archive, &image_path)?;
+                metadata.background_image = Some(parse_background_image(&bytes, &image_path)?);
+            }
+        }
+    }
+    for (sheet_name, metadata) in &styles_by_sheet {
+        if metadata.background_image_relationship_id.is_some()
+            && metadata.background_image.is_none()
+        {
+            return Err(Error::Reverse(format!(
+                "worksheet `{sheet_name}` background picture has no resolved image relationship; restore its worksheet .rels part"
+            )));
+        }
+    }
     let mut processed_drawing_sheets = std::collections::HashSet::new();
     for (worksheet_part, relationships) in drawing_relationships_by_sheet {
         processed_drawing_sheets.insert(worksheet_part.clone());
@@ -21083,6 +21167,45 @@ fn parse_drawing_image(
     })
 }
 
+fn parse_background_image(bytes: &[u8], part: &str) -> xlsx_jsx::Result<String> {
+    let extension = part
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .ok_or_else(|| Error::Reverse(format!("image part `{part}` has no file extension")))?;
+    let media_type = match extension.as_str() {
+        "png" => "png",
+        "jpeg" | "jpg" => "jpeg",
+        "gif" => "gif",
+        "bmp" => "bmp",
+        _ => {
+            return Err(Error::Reverse(format!(
+                "background image part `{part}` uses unsupported media type; use PNG, JPEG, GIF, or BMP"
+            )));
+        }
+    };
+    let valid_signature = match media_type {
+        "png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "bmp" => bytes.starts_with(b"BM"),
+        _ => false,
+    };
+    if !valid_signature {
+        return Err(Error::Reverse(format!(
+            "background image part `{part}` extension does not match its raster bytes; repair the package content type or embedded media"
+        )));
+    }
+    XlsxImage::new_from_buffer(bytes).map_err(|error| {
+        Error::Reverse(format!(
+            "background image part `{part}` is not a valid supported raster image ({error}); repair the embedded media bytes"
+        ))
+    })?;
+    Ok(format!(
+        "data:image/{media_type};base64,{}",
+        BASE64.encode(bytes)
+    ))
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "Image anchor geometry must be checked as a single lossless OOXML invariant."
@@ -22867,6 +22990,7 @@ fn audit_chart_drawing_element(
 struct WorksheetRelationships {
     hyperlinks: HashMap<String, String>,
     tables: HashMap<String, String>,
+    background_images: HashMap<String, String>,
     comments: HashMap<String, String>,
     vml_drawings: HashMap<String, String>,
     drawings: HashMap<String, String>,
@@ -22930,9 +23054,11 @@ fn parse_worksheet_relationships(
                     &mut relationships.vml_drawings
                 } else if relationship_type.ends_with("/drawing") && target_mode.is_none() {
                     &mut relationships.drawings
+                } else if relationship_type.ends_with("/image") && target_mode.is_none() {
+                    &mut relationships.background_images
                 } else {
                     return Err(Error::Reverse(format!(
-                        "worksheet relationship `{id}` in `{part}` has unsupported type `{relationship_type}`; supported types are external hyperlinks, tables, legacy comments, VML note drawings, and chart drawings"
+                        "worksheet relationship `{id}` in `{part}` has unsupported type `{relationship_type}`; supported types are external hyperlinks, images, tables, legacy comments, VML note drawings, and chart drawings"
                     )));
                 };
                 if relationship_map.insert(id.clone(), target).is_some() {
@@ -24995,6 +25121,8 @@ struct WorksheetMetadata {
     freeze_panes: Option<FreezePanes>,
     table_relationship_ids: Vec<String>,
     tables: Vec<WorksheetTable>,
+    background_image_relationship_id: Option<String>,
+    background_image: Option<String>,
     drawing_relationship_id: Option<String>,
     charts: Vec<WorksheetChart>,
     images: Vec<WorksheetImage>,
@@ -26394,6 +26522,7 @@ const SUPPORTED_WORKSHEET_TAGS: &[&str] = &[
     "hyperlinks",
     "hyperlink",
     "drawing",
+    "picture",
     "legacyDrawing",
     "tableParts",
     "tablePart",
@@ -26608,6 +26737,43 @@ fn audit_worksheet_xml(
                     {
                         return Err(Error::Reverse(format!(
                             "worksheet `{part}` contains multiple drawing elements; use one worksheet drawing part"
+                        )));
+                    }
+                }
+                if tag == "picture" {
+                    let mut relationship_id = None;
+                    for attribute in event.attributes().with_checks(false) {
+                        let attribute =
+                            attribute.map_err(|error| Error::Reverse(error.to_string()))?;
+                        if attribute.key.as_ref() == b"r:id" {
+                            relationship_id = Some(
+                                attribute
+                                    .decoded_and_normalized_value(
+                                        XmlVersion::Implicit1_0,
+                                        reader.decoder(),
+                                    )
+                                    .map_err(|error| Error::Reverse(error.to_string()))?
+                                    .into_owned(),
+                            );
+                        } else {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` picture has unsupported attribute `{}`; only r:id is losslessly supported",
+                                String::from_utf8_lossy(attribute.key.as_ref())
+                            )));
+                        }
+                    }
+                    let Some(relationship_id) = relationship_id else {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` picture is missing r:id; repair its image relationship"
+                        )));
+                    };
+                    if metadata
+                        .background_image_relationship_id
+                        .replace(relationship_id)
+                        .is_some()
+                    {
+                        return Err(Error::Reverse(format!(
+                            "worksheet `{part}` contains multiple picture elements; keep one tiled background image"
                         )));
                     }
                 }
