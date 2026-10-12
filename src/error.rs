@@ -100,6 +100,14 @@ impl Error {
                 "Legacy array-formula cached values cannot be represented independently from their formula range.",
                 "Keep only writer-default zero caches for legacy array formulas; scalar `formulaResult` applies to ordinary formulas, not legacy array caches.",
             ),
+            Self::Reverse(message) if message.contains("shared formula") => (
+                "The external workbook's shared-formula group is malformed or incomplete; shared formulas can only be expanded when their group metadata is consistent.",
+                "Restore one anchor with a valid `ref`, give every member the same numeric `si`, and include a formula cell for every cell in the declared range.",
+            ),
+            Self::Reverse(message) if message.contains("data-table") => (
+                "The source workbook contains an Excel data-table formula, which the current DSL cannot represent.",
+                "Replace the data-table formula with ordinary formulas before reversing, or keep and use the original workbook unchanged.",
+            ),
             Self::Reverse(_) => (
                 "The XLSX file uses content outside the lossless v1 reverse subset.",
                 "Remove unsupported workbook features or convert values to supported scalar cells.",
@@ -130,5 +138,29 @@ mod tests {
         assert!(diagnostic.contains("#N/A"));
         assert!(diagnostic.contains("repair the source cell"));
         assert!(!diagnostic.contains("add an explicit error-cell type"));
+    }
+
+    #[test]
+    fn malformed_shared_formula_diagnostic_explains_group_repair() {
+        let diagnostic = Error::Reverse(
+            "worksheet `xl/worksheets/sheet1.xml` shared formula group `si=0` covers 1 formula cells but its range requires 2; restore every formula cell in the group".into(),
+        )
+        .render_diagnostic();
+
+        assert!(diagnostic.contains("shared-formula group is malformed or incomplete"));
+        assert!(diagnostic.contains("Restore one anchor with a valid `ref`"));
+        assert!(!diagnostic.contains("Remove unsupported workbook features"));
+    }
+
+    #[test]
+    fn data_table_formula_diagnostic_names_the_unsupported_feature() {
+        let diagnostic = Error::Reverse(
+            "worksheet `xl/worksheets/sheet1.xml` contains a data-table or unsupported formula type; convert it to an ordinary formula or a legacy array formula".into(),
+        )
+        .render_diagnostic();
+
+        assert!(diagnostic.contains("Excel data-table formula"));
+        assert!(diagnostic.contains("Replace the data-table formula with ordinary formulas"));
+        assert!(!diagnostic.contains("Remove unsupported workbook features"));
     }
 }

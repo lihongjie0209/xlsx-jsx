@@ -25264,6 +25264,10 @@ fn reverse_rejects_external_data_table_formula_groups() {
         .stderr(predicate::str::contains(
             "data-table or unsupported formula type",
         ))
+        .stderr(predicate::str::contains("Excel data-table formula"))
+        .stderr(predicate::str::contains(
+            "Replace the data-table formula with ordinary formulas",
+        ))
         .stderr(predicate::str::contains("suggestion:"));
 }
 
@@ -25290,6 +25294,12 @@ fn reverse_explains_malformed_shared_formula_groups() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("shared formula is missing `si`"))
+        .stderr(predicate::str::contains(
+            "shared-formula group is malformed or incomplete",
+        ))
+        .stderr(predicate::str::contains(
+            "Restore one anchor with a valid `ref`",
+        ))
         .stderr(predicate::str::contains("suggestion:"));
 }
 

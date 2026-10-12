@@ -1978,6 +1978,11 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   misclassify a supported value as missing functionality. Prefer naming the
   unsupported OOXML metadata and a direct normalization/removal step over a
   generic suggestion to add support.
+  Malformed external shared-formula diagnostics identify the broken group and
+  explain the anchor `ref`, shared numeric `si`, and complete member-cell
+  requirements; data-table formula diagnostics name the unsupported Excel
+  feature and recommend replacing it with ordinary formulas or retaining the
+  source workbook unchanged.
   legacy array-formula cached values, diagnostics state that only the writer's
   default zero caches are supported and that scalar `formulaResult` applies to
   ordinary formulas, not legacy array caches.

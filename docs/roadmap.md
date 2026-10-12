@@ -64,6 +64,10 @@ reported as complete.
 - Reverse diagnostics for unsupported Excel error tokens now direct users to the
   seven supported literal error values instead of suggesting that the already
   implemented `Cell.error` type be added.
+- Reverse diagnostics for malformed shared-formula groups now name the required
+  anchor/range/index/member consistency; unsupported data-table formulas now
+  receive a feature-specific explanation and repair path instead of the generic
+  unsupported-workbook suggestion.
 - Image fit modes: `stretch`, `contain`, and `containCenter` use the effective
   dimensions of the target cell. Reverse emits canonical explicit pixel
   dimensions/offsets because OOXML records picture geometry, not the author's
