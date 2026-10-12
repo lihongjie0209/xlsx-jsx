@@ -66,7 +66,7 @@ and intentionally deferred lower-frequency features.
 | Outline summary direction | yes | yes | `summaryBelow={false}` / `summaryRight={false}` place row/column summary markers above/left; defaults are true |
 | Excel tables | yes | yes | Rectangular named tables with built-in styles, filter/banding flags, totals rows, totals functions/labels, calculated-column formulas, supported differential formats, and `altText` / `altTextTitle` accessibility metadata |
 | String, number, boolean, blank values | yes | yes | v1 |
-| Formula text, cached result and dynamic arrays | yes | yes | Ordinary formulas, scalar caches, legacy array groups and Excel 365 dynamic arrays round-trip; dynamic arrays use `dynamicArray={true}` with optional `arrayFormulaRange`; formulas are not calculated, non-default array caches and shared/data-table formulas are rejected |
+| Formula text, cached result and dynamic arrays | yes | yes | Ordinary formulas, scalar caches, legacy array groups and Excel 365 dynamic arrays round-trip; external shared formulas expand to ordinary per-cell formulas; dynamic arrays use `dynamicArray={true}` with optional `arrayFormulaRange`; formulas are not calculated, non-default array caches and data-table formulas are rejected |
 | Bold and italic cell font | yes | yes | applied as boolean `Cell` props |
 | Cell, row and column fills | yes | yes | `fillColor` is the solid-fill shorthand; `fillPattern` plus optional RGB/theme foreground/background colors preserves OOXML patterns; arbitrary tint, indexed/automatic colors and gradients are rejected |
 | Font color | yes | yes | `fontColor` accepts RGB `#RRGGBB` or `{theme: 0..9, shade: 0..5}` and reverses the writer's exact theme tint variants |
@@ -144,7 +144,7 @@ and intentionally deferred lower-frequency features.
 | Custom workbook document properties | yes | yes | `<CustomProperty name="Department" type="string" value="Finance" />`; supports string, integer, real, boolean and dateTime values |
 | Workbook and worksheet-scoped defined names | yes | yes | `<DefinedName name="TaxRate" formula="0.05" />` at workbook scope or inside a worksheet; names and formula text round-trip, while hidden/comment metadata is rejected |
 | Phonetics, custom package parts | no | rejected | unsupported semantics are not silently flattened or discarded |
-| Shared/data-table formulas, other custom view state, unsupported authored metadata | no | rejected with diagnostics | ordinary/legacy array formulas, screen gridline visibility, and default workbook view remain supported |
+| Data-table formulas, other custom view state, unsupported authored metadata | no | rejected with diagnostics | ordinary/shared-expanded/legacy array formulas, screen gridline visibility, and default workbook view remain supported |
 | Other font/border metadata, images | no | rejected when present | font family/charset and diagonal borders are supported; start/end/outline border metadata and unrepresented package features are rejected |
 
 See [DSL specification](docs/spec.md) and [writer coverage audit](docs/xlsxwriter-coverage.md).

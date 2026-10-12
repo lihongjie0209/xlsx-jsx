@@ -30992,6 +30992,8 @@ struct ArrayFormulaRange {
     has_explicit_range: bool,
 }
 
+type SharedFormulaGroup = ((u32, u16, u32, u16), usize);
+
 #[derive(Clone, Default)]
 struct RichTextRun {
     text: String,
@@ -35308,6 +35310,7 @@ fn parse_array_formula_ranges(
     let mut current_cell_metadata = None;
     let mut current_cell_has_dynamic_formula = false;
     let mut formulas = HashMap::new();
+    let mut shared_formula_groups: HashMap<String, SharedFormulaGroup> = HashMap::new();
     loop {
         match reader.read_event() {
             Ok(event @ (Event::Start(_) | Event::Empty(_))) => {
@@ -35356,51 +35359,103 @@ fn parse_array_formula_ranges(
                         }
                     }
                     let is_dynamic = current_cell_metadata.as_deref() == Some("1");
-                    if attributes.get("t").map(String::as_str) != Some("array") {
+                    if attributes.get("t").map(String::as_str) == Some("shared") {
+                        let index = attributes.get("si").ok_or_else(|| Error::Reverse(format!(
+                            "worksheet `{part}` shared formula is missing `si`; repair the shared-formula group metadata"
+                        )))?;
+                        if attributes
+                            .keys()
+                            .any(|name| !matches!(name.as_str(), "t" | "si" | "ref"))
+                        {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` shared formula has unsupported attributes; retain only `t`, `si`, and optional `ref`"
+                            )));
+                        }
+                        let cell = current_cell.as_deref().ok_or_else(|| Error::Reverse(format!(
+                            "worksheet `{part}` shared formula has no containing cell; repair the cell XML"
+                        )))?;
+                        let coordinates = xlsx_jsx::parse_a1_cell_reference(cell).ok_or_else(|| Error::Reverse(format!(
+                            "worksheet `{part}` shared formula cell `{cell}` is not a valid reference; repair the cell XML"
+                        )))?;
+                        if let Some(reference) = attributes.get("ref") {
+                            let range = parse_array_formula_reference(reference).ok_or_else(|| Error::Reverse(format!(
+                                "worksheet `{part}` shared formula has invalid range `{reference}`; repair it to an ordered A1 range"
+                            )))?;
+                            if coordinates != (range.0, range.1) {
+                                return Err(Error::Reverse(format!(
+                                    "worksheet `{part}` shared formula anchor `{cell}` is not the top-left of `{reference}`; repair the anchor or range"
+                                )));
+                            }
+                            if shared_formula_groups
+                                .insert(index.clone(), (range, 1))
+                                .is_some()
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "worksheet `{part}` contains duplicate shared-formula anchors for `si={index}`; repair the group metadata"
+                                )));
+                            }
+                        } else {
+                            let group = shared_formula_groups.get_mut(index).ok_or_else(|| Error::Reverse(format!(
+                                "worksheet `{part}` shared formula cell `{cell}` has no preceding anchor for `si={index}`; repair the shared-formula group"
+                            )))?;
+                            if coordinates.0 < group.0.0
+                                || coordinates.0 > group.0.2
+                                || coordinates.1 < group.0.1
+                                || coordinates.1 > group.0.3
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "worksheet `{part}` shared formula cell `{cell}` lies outside its anchor range; repair the group range"
+                                )));
+                            }
+                            group.1 += 1;
+                        }
+                    } else if attributes.get("t").map(String::as_str) != Some("array") {
                         return Err(Error::Reverse(format!(
-                            "worksheet `{part}` contains a shared, data-table, or unsupported formula type; convert it to an ordinary formula or a legacy array formula"
+                            "worksheet `{part}` contains a data-table or unsupported formula type; convert it to an ordinary formula or a legacy array formula"
                         )));
                     }
-                    if attributes.len() != 2 {
-                        return Err(Error::Reverse(format!(
-                            "worksheet `{part}` array formula has unsupported attributes; remove attributes outside `t=array` and `ref`"
-                        )));
-                    }
-                    let reference = attributes.get("ref").ok_or_else(|| Error::Reverse(format!(
+                    if attributes.get("t").map(String::as_str) == Some("array") {
+                        if attributes.len() != 2 {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` array formula has unsupported attributes; remove attributes outside `t=array` and `ref`"
+                            )));
+                        }
+                        let reference = attributes.get("ref").ok_or_else(|| Error::Reverse(format!(
                         "worksheet `{part}` array formula is missing `ref`; repair the array range metadata"
                     )))?;
-                    let range = parse_array_formula_reference(reference).ok_or_else(|| Error::Reverse(format!(
+                        let range = parse_array_formula_reference(reference).ok_or_else(|| Error::Reverse(format!(
                         "worksheet `{part}` array formula has invalid or unordered range `{reference}`; repair it to an ordered A1 range"
                     )))?;
-                    let anchor = current_cell.as_deref().ok_or_else(|| Error::Reverse(format!(
+                        let anchor = current_cell.as_deref().ok_or_else(|| Error::Reverse(format!(
                         "worksheet `{part}` array formula has no containing cell; repair the cell XML"
                     )))?;
-                    let anchor_coordinates = xlsx_jsx::parse_a1_cell_reference(anchor).ok_or_else(|| Error::Reverse(format!(
+                        let anchor_coordinates = xlsx_jsx::parse_a1_cell_reference(anchor).ok_or_else(|| Error::Reverse(format!(
                         "worksheet `{part}` array formula anchor `{anchor}` is not a valid cell reference; repair the cell XML"
                     )))?;
-                    if anchor_coordinates != (range.0, range.1) {
-                        return Err(Error::Reverse(format!(
-                            "worksheet `{part}` array formula anchor `{anchor}` is not the top-left of `{reference}`; repair the anchor or range"
-                        )));
-                    }
-                    let anchor = xlsx_jsx::format_a1_cell_reference(range.0, range.1);
-                    let canonical_range = xlsx_jsx::format_a1_range(range);
-                    current_cell_has_dynamic_formula = is_dynamic;
-                    if formulas
-                        .insert(
-                            anchor.clone(),
-                            ArrayFormulaRange {
-                                reference: canonical_range,
-                                coordinates: range,
-                                is_dynamic,
-                                has_explicit_range: reference.contains(':'),
-                            },
-                        )
-                        .is_some()
-                    {
-                        return Err(Error::Reverse(format!(
-                            "worksheet `{part}` contains duplicate array-formula anchors at `{anchor}`; repair the formula groups"
-                        )));
+                        if anchor_coordinates != (range.0, range.1) {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` array formula anchor `{anchor}` is not the top-left of `{reference}`; repair the anchor or range"
+                            )));
+                        }
+                        let anchor = xlsx_jsx::format_a1_cell_reference(range.0, range.1);
+                        let canonical_range = xlsx_jsx::format_a1_range(range);
+                        current_cell_has_dynamic_formula = is_dynamic;
+                        if formulas
+                            .insert(
+                                anchor.clone(),
+                                ArrayFormulaRange {
+                                    reference: canonical_range,
+                                    coordinates: range,
+                                    is_dynamic,
+                                    has_explicit_range: reference.contains(':'),
+                                },
+                            )
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` contains duplicate array-formula anchors at `{anchor}`; repair the formula groups"
+                            )));
+                        }
                     }
                 }
             }
@@ -35431,6 +35486,16 @@ fn parse_array_formula_ranges(
         {
             return Err(Error::Reverse(format!(
                 "worksheet `{part}` contains overlapping array-formula groups; repair the formula ranges so they are disjoint"
+            )));
+        }
+    }
+    for (index, (range, members)) in shared_formula_groups {
+        let expected = usize::try_from(range.2 - range.0 + 1)
+            .unwrap_or(0)
+            .saturating_mul(usize::from(range.3 - range.1 + 1));
+        if members != expected {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` shared formula group `si={index}` covers {members} formula cells but its range requires {expected}; restore every formula cell in the group"
             )));
         }
     }

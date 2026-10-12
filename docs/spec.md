@@ -1740,8 +1740,12 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `formulaResult`, or merged-cell spans. Known array ranges cannot overlap other
   array formulas or merged cells. Reverse distinguishes dynamic formulas using
   worksheet cell metadata and the workbook metadata part, preserving dynamic
-  status and formula text; legacy arrays remain distinct. Shared and data-table
-  formulas remain rejected.
+  status and formula text; legacy arrays remain distinct. External shared
+  formula groups are expanded to one ordinary formula per member cell, with
+  relative references translated and absolute references fixed, then rebuild as
+  equivalent ordinary formulas; the storage-sharing group itself is not part of
+  the JSX model. Malformed groups and shared formulas whose expansion is not
+  available are rejected. Data-table formulas remain rejected.
 
 - `rowSpan?: integer` and `columnSpan?: integer` define a merged rectangle
   beginning at the cell's positional coordinate. Both default to 1; each must
@@ -1922,7 +1926,8 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   formula values and formula results combined with `arrayFormulaRange` are not
   represented; reverse rejects external array formulas whose cached results are
   not the writer's default zero values rather than silently discarding them.
-  Shared, data-table, and otherwise attributed formula structures are rejected.
+  Shared formula groups are expanded to per-cell formulas as described above;
+  data-table and otherwise attributed formula structures are rejected.
 - `hyperlink?: string` writes an external URL/URI relationship or an internal
   workbook location on a text cell. External targets include HTTP(S), `mailto:`,
   `file://`, and other writer-supported URI schemes. Internal targets use the

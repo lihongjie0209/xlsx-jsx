@@ -25201,9 +25201,49 @@ fn reverse_preserves_rich_text_and_rejects_unknown_package_parts() {
 }
 
 #[test]
-fn reverse_rejects_shared_formula_structures() {
+fn reverse_expands_external_shared_formula_groups() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("shared-formula.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let sheet = workbook.add_worksheet();
+    for (row, formula) in (0_u32..).zip(["=B1+$C$1", "=B2+$C$1", "=B3+$C$1"]) {
+        sheet
+            .write_formula(row, 0, formula)
+            .expect("formula writes");
+    }
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<f>B1+$C$1</f>",
+            "<f t=\"shared\" si=\"0\" ref=\"A1:A3\">B1+$C$1</f>",
+        )
+        .replace("<f>B2+$C$1</f>", "<f t=\"shared\" si=\"0\"/>")
+        .replace("<f>B3+$C$1</f>", "<f t=\"shared\" si=\"0\"/>")
+    });
+
+    let jsx = directory.path().join("shared-formula.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["reverse"]).arg(&input).args(["-o"]).arg(&jsx);
+    command.assert().success();
+    let source = std::fs::read_to_string(&jsx).expect("reversed JSX exists");
+    assert!(source.contains("=B1+$C$1"), "{source}");
+    assert!(source.contains("=B2+$C$1"), "{source}");
+    assert!(source.contains("=B3+$C$1"), "{source}");
+
+    let output = directory.path().join("rebuilt.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["build"]).arg(&jsx).args(["-o"]).arg(&output);
+    command.assert().success();
+    let formulas = read_zip_part_for_test(&output, "xl/worksheets/sheet1.xml");
+    assert!(formulas.contains("<f>B1+$C$1</f>"), "{formulas}");
+    assert!(formulas.contains("<f>B2+$C$1</f>"), "{formulas}");
+    assert!(formulas.contains("<f>B3+$C$1</f>"), "{formulas}");
+}
+
+#[test]
+fn reverse_rejects_external_data_table_formula_groups() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("data-table-formula.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
     workbook
         .add_worksheet()
@@ -25213,7 +25253,34 @@ fn reverse_rejects_shared_formula_structures() {
     rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
         xml.replace(
             "<f>SUM(1,2)</f>",
-            "<f t=\"shared\" si=\"0\" ref=\"A1:A2\">SUM(1,2)</f>",
+            "<f t=\"dataTable\" ref=\"A1:A2\">SUM(1,2)</f>",
+        )
+    });
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["reverse"]).arg(input);
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "data-table or unsupported formula type",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn reverse_explains_malformed_shared_formula_groups() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("malformed-shared-formula.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .add_worksheet()
+        .write_formula(0, 0, "=SUM(1,2)")
+        .expect("formula writes");
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<f>SUM(1,2)</f>",
+            "<f t=\"shared\" ref=\"A1:A2\">SUM(1,2)</f>",
         )
     });
 
@@ -25222,9 +25289,7 @@ fn reverse_rejects_shared_formula_structures() {
     command
         .assert()
         .failure()
-        .stderr(predicate::str::contains(
-            "shared, data-table, or unsupported formula type",
-        ))
+        .stderr(predicate::str::contains("shared formula is missing `si`"))
         .stderr(predicate::str::contains("suggestion:"));
 }
 
