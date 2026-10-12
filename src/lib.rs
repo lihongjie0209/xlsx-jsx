@@ -2264,7 +2264,9 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "legendFontCharset",
             "legendFontRotation",
             "xAxisTitle",
+            "xAxisTitleFormula",
             "yAxisTitle",
+            "yAxisTitleFormula",
             "x2AxisTitle",
             "y2AxisTitle",
             "xAxisTitleLayout",
@@ -2789,7 +2791,8 @@ fn validate_chart_title_layouts(chart: &Node) -> Result<()> {
                 )));
             }
         }
-        if !chart.props.contains_key(axis_title) {
+        let formula_title = axis_title.replace("Title", "TitleFormula");
+        if !chart.props.contains_key(axis_title) && !chart.props.contains_key(&formula_title) {
             return Err(Error::Compile(format!(
                 "Chart.{property} requires Chart.{axis_title}; add the matching axis title or remove {property}"
             )));
@@ -2913,6 +2916,79 @@ fn validate_chart_text_properties(chart: &Node) -> Result<()> {
         return Err(Error::Compile(
             "Chart.title and Chart.titleFormula are mutually exclusive; keep the static title or use the cell reference, not both".into(),
         ));
+    }
+    for (axis, formula_key, title_key) in [
+        ("x", "xAxisTitleFormula", "xAxisTitle"),
+        ("y", "yAxisTitleFormula", "yAxisTitle"),
+    ] {
+        if chart.props.contains_key(formula_key) && chart.props.contains_key(title_key) {
+            return Err(Error::Compile(format!(
+                "Chart.{title_key} and Chart.{formula_key} are mutually exclusive; keep the static title or use the cell reference, not both"
+            )));
+        }
+        if let Some(value) = chart.props.get(formula_key) {
+            let Some(formula) = value.as_str() else {
+                return Err(Error::Compile(format!(
+                    "Chart.{formula_key} must be a sheet-qualified single-cell A1 reference without a leading `=`; for example `Data!$A$1`"
+                )));
+            };
+            if !valid_chart_source_reference(formula, false)
+                || formula
+                    .split_once('!')
+                    .is_none_or(|(_, reference)| reference.contains(':'))
+            {
+                return Err(Error::Compile(format!(
+                    "Chart.{formula_key} `{formula}` must be a sheet-qualified single-cell A1 reference without a leading `=`; for example `Data!$A$1`"
+                )));
+            }
+            let formatting = if axis == "x" {
+                [
+                    "xAxisTitleLayout",
+                    "xAxisTitleFillColor",
+                    "xAxisTitleFillTransparency",
+                    "xAxisTitleLineColor",
+                    "xAxisTitleLineWidth",
+                    "xAxisTitleLineDash",
+                    "xAxisTitleLineTransparency",
+                    "xAxisTitleFontSize",
+                    "xAxisTitleFontBold",
+                    "xAxisTitleFontItalic",
+                    "xAxisTitleFontUnderline",
+                    "xAxisTitleFontColor",
+                    "xAxisTitleFontName",
+                    "xAxisTitleFontPitchFamily",
+                    "xAxisTitleFontCharset",
+                    "xAxisTitleFontRotation",
+                ]
+            } else {
+                [
+                    "yAxisTitleLayout",
+                    "yAxisTitleFillColor",
+                    "yAxisTitleFillTransparency",
+                    "yAxisTitleLineColor",
+                    "yAxisTitleLineWidth",
+                    "yAxisTitleLineDash",
+                    "yAxisTitleLineTransparency",
+                    "yAxisTitleFontSize",
+                    "yAxisTitleFontBold",
+                    "yAxisTitleFontItalic",
+                    "yAxisTitleFontUnderline",
+                    "yAxisTitleFontColor",
+                    "yAxisTitleFontName",
+                    "yAxisTitleFontPitchFamily",
+                    "yAxisTitleFontCharset",
+                    "yAxisTitleFontRotation",
+                ]
+            };
+            if let Some(property) = formatting
+                .into_iter()
+                .find(|property| chart.props.contains_key(*property))
+            {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} is not supported with Chart.{formula_key}; remove the formatting/layout property or use a static axis title"
+                )));
+            }
+        }
     }
     if let Some(value) = chart.props.get("titleFormula") {
         let Some(formula) = value.as_str() else {
@@ -3259,7 +3335,11 @@ fn validate_chart_axis_font_properties(
             let Some(value) = chart.props.get(&property) else {
                 continue;
             };
-            if require_title && !chart.props.contains_key(&title) {
+            let formula_title = title.replace("Title", "TitleFormula");
+            if require_title
+                && !chart.props.contains_key(&title)
+                && !chart.props.contains_key(&formula_title)
+            {
                 return Err(Error::Compile(format!(
                     "Chart.{property} requires Chart.{title}; add the matching axis title or remove {property}"
                 )));
@@ -3383,7 +3463,9 @@ fn validate_chart_axis_titles(chart: &Node, chart_type: &str) -> Result<()> {
     if matches!(chart_type, "pie" | "doughnut") {
         let axis_titles = [
             "xAxisTitle",
+            "xAxisTitleFormula",
             "yAxisTitle",
+            "yAxisTitleFormula",
             "x2AxisTitle",
             "y2AxisTitle",
             "xAxisTitleLayout",
@@ -3487,7 +3569,9 @@ fn validate_chart_axis_title_fill_colors(chart: &Node) -> Result<()> {
         let Some(value) = chart.props.get(&property) else {
             continue;
         };
-        if !chart.props.contains_key(&format!("{axis}AxisTitle")) {
+        if !chart.props.contains_key(&format!("{axis}AxisTitle"))
+            && !chart.props.contains_key(&format!("{axis}AxisTitleFormula"))
+        {
             return Err(Error::Compile(format!(
                 "Chart.{property} requires Chart.{axis}AxisTitle; add the matching axis title or remove {property}"
             )));
@@ -3519,7 +3603,9 @@ fn validate_chart_axis_title_lines(chart: &Node) -> Result<()> {
         {
             continue;
         }
-        if !chart.props.contains_key(&format!("{axis}AxisTitle")) {
+        if !chart.props.contains_key(&format!("{axis}AxisTitle"))
+            && !chart.props.contains_key(&format!("{axis}AxisTitleFormula"))
+        {
             return Err(Error::Compile(format!(
                 "Chart.{prefix}* requires Chart.{axis}AxisTitle; add the matching axis title or remove the line properties"
             )));
@@ -7627,6 +7713,21 @@ fn validate_chart_sheet_references(
                         .and_then(Value::as_str)
                         .unwrap_or("?")
                 )));
+            }
+            for property in ["xAxisTitleFormula", "yAxisTitleFormula"] {
+                if let Some(formula) = chart.props.get(property).and_then(Value::as_str)
+                    && let Some(referenced_sheet) = chart_source_sheet_name(formula)
+                    && !worksheet_names.contains(&referenced_sheet.to_lowercase())
+                {
+                    return Err(Error::Compile(format!(
+                        "Chart.{property} `{formula}` on Worksheet `{}` refers to missing worksheet `{referenced_sheet}`; add that sheet or correct the reference",
+                        sheet
+                            .props
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("?")
+                    )));
+                }
             }
             for series_value in &chart.children {
                 let series: Node = serde_json::from_value(series_value.clone())

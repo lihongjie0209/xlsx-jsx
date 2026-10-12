@@ -665,7 +665,9 @@
             "title": { "type": "string", "minLength": 1, "maxLength": 255 },
             "titleFormula": { "type": "string", "minLength": 3, "maxLength": 255, "pattern": "^[^!=]+![\\$]?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
             "xAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "xAxisTitleFormula": { "type": "string", "minLength": 3, "maxLength": 255, "pattern": "^[^!=]+![\\$]?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
             "yAxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
+            "yAxisTitleFormula": { "type": "string", "minLength": 3, "maxLength": 255, "pattern": "^[^!=]+![\\$]?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
             "x2AxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "y2AxisTitle": { "type": "string", "minLength": 1, "maxLength": 255 },
             "xAxisTitleFillColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
@@ -930,6 +932,64 @@
           },
           "not": { "required": ["title", "titleFormula"] },
           "allOf": [
+            {
+              "not": {
+                "anyOf": [
+                  { "required": ["xAxisTitle", "xAxisTitleFormula"] },
+                  { "required": ["yAxisTitle", "yAxisTitleFormula"] }
+                ]
+              }
+            },
+            {
+              "if": { "required": ["xAxisTitleFormula"] },
+              "then": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["xAxisTitleLayout"] },
+                    { "required": ["xAxisTitleFillColor"] },
+                    { "required": ["xAxisTitleFillTransparency"] },
+                    { "required": ["xAxisTitleLineColor"] },
+                    { "required": ["xAxisTitleLineWidth"] },
+                    { "required": ["xAxisTitleLineDash"] },
+                    { "required": ["xAxisTitleLineTransparency"] },
+                    { "required": ["xAxisTitleFontSize"] },
+                    { "required": ["xAxisTitleFontBold"] },
+                    { "required": ["xAxisTitleFontItalic"] },
+                    { "required": ["xAxisTitleFontUnderline"] },
+                    { "required": ["xAxisTitleFontColor"] },
+                    { "required": ["xAxisTitleFontName"] },
+                    { "required": ["xAxisTitleFontPitchFamily"] },
+                    { "required": ["xAxisTitleFontCharset"] },
+                    { "required": ["xAxisTitleFontRotation"] }
+                  ]
+                }
+              }
+            },
+            {
+              "if": { "required": ["yAxisTitleFormula"] },
+              "then": {
+                "not": {
+                  "anyOf": [
+                    { "required": ["yAxisTitleLayout"] },
+                    { "required": ["yAxisTitleFillColor"] },
+                    { "required": ["yAxisTitleFillTransparency"] },
+                    { "required": ["yAxisTitleLineColor"] },
+                    { "required": ["yAxisTitleLineWidth"] },
+                    { "required": ["yAxisTitleLineDash"] },
+                    { "required": ["yAxisTitleLineTransparency"] },
+                    { "required": ["yAxisTitleFontSize"] },
+                    { "required": ["yAxisTitleFontBold"] },
+                    { "required": ["yAxisTitleFontItalic"] },
+                    { "required": ["yAxisTitleFontUnderline"] },
+                    { "required": ["yAxisTitleFontColor"] },
+                    { "required": ["yAxisTitleFontName"] },
+                    { "required": ["yAxisTitleFontPitchFamily"] },
+                    { "required": ["yAxisTitleFontCharset"] },
+                    { "required": ["yAxisTitleFontRotation"] }
+                  ]
+                }
+              }
+            },
             {
               "if": {
                 "properties": { "autoTitleDeleted": { "const": true } },

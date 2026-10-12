@@ -823,6 +823,17 @@ fn spec_exposes_scatter_data_label_aliases() {
 }
 
 #[test]
+fn spec_exposes_formula_backed_primary_axis_titles() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("xAxisTitleFormula"))
+        .stdout(predicate::str::contains("yAxisTitleFormula"));
+}
+
+#[test]
 fn spec_exposes_chart_axis_title_font_properties() {
     Command::cargo_bin("xlsx-jsx")
         .expect("binary is built")
@@ -4491,6 +4502,120 @@ fn reverse_external_formula_backed_chart_title_without_manifest() {
         .success();
     let source = std::fs::read_to_string(output_path).expect("reverse source exists");
     assert!(source.contains("titleFormula=\"Data!$A$1\""), "{source}");
+}
+
+#[test]
+fn reverse_external_formula_backed_axis_titles_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-axis-formulas.xlsx");
+    let output_path = directory.path().join("external-axis-formulas.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook
+        .add_worksheet()
+        .set_name("Data")
+        .expect("sheet name is valid");
+    worksheet.write_string(0, 0, "Quarter").unwrap();
+    worksheet.write_string(0, 1, "Revenue").unwrap();
+    worksheet.write_string(1, 0, "Q1").unwrap();
+    worksheet.write_number(1, 1, 10).unwrap();
+    worksheet.write_string(2, 0, "Q2").unwrap();
+    worksheet.write_number(2, 1, 20).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart.x_axis().set_name("Data!$A$1");
+    chart.y_axis().set_name("Data!$B$1");
+    chart
+        .add_series()
+        .set_name("Data!$B$1")
+        .set_categories("Data!$A$2:$A$3")
+        .set_values("Data!$B$2:$B$3");
+    worksheet.insert_chart(3, 3, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).unwrap();
+    assert!(
+        source.contains("xAxisTitleFormula=\"Data!$A$1\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("yAxisTitleFormula=\"Data!$B$1\""),
+        "{source}"
+    );
+
+    let rebuilt = directory.path().join("axis-formulas-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let chart_xml = read_zip_part_for_test(&rebuilt, "xl/charts/chart1.xml");
+    assert!(chart_xml.contains("<c:f>Data!$A$1</c:f>"), "{chart_xml}");
+    assert!(chart_xml.contains("<c:f>Data!$B$1</c:f>"), "{chart_xml}");
+}
+
+#[test]
+fn axis_title_formula_rejects_static_title_and_formatting() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-formula-conflict.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" xAxisTitle="Quarter" xAxisTitleFormula="Data!A1"><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitle and Chart.xAxisTitleFormula are mutually exclusive",
+        ));
+}
+
+#[test]
+fn axis_title_formula_requires_existing_sheet_and_excludes_formatting() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("axis-formula-invalid.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" xAxisTitleFormula="Missing!A1" xAxisTitleFontBold={true}><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.xAxisTitleFontBold is not supported with Chart.xAxisTitleFormula",
+        ));
+
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" xAxisTitleFormula="Missing!A1"><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "refers to missing worksheet `Missing`",
+        ));
 }
 
 #[test]

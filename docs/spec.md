@@ -504,7 +504,13 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   the OOXML category axis to X and value axis to Y on category/value charts.
   Scatter charts map horizontal top/bottom value axes to X and vertical
   left/right value axes to Y. Only a single rich-text run is supported.
-  Formula titles are rejected. `xAxisTitleFontSize`, `xAxisTitleFontBold`,
+  `Chart.xAxisTitleFormula?: string` and `Chart.yAxisTitleFormula?: string`
+  instead use a live, sheet-qualified single-cell A1 reference (without a
+  leading `=`); the referenced worksheet must exist. Each is mutually
+  exclusive with its corresponding static title and with that axis title's
+  font, shape, and layout properties. Formula-backed secondary axis titles,
+  formatted formula titles, and non-cell formula expressions remain rejected.
+  `xAxisTitleFontSize`, `xAxisTitleFontBold`,
   `xAxisTitleFontItalic`, `xAxisTitleFontUnderline`, `xAxisTitleFontColor`,
   `xAxisTitleFontName`, `xAxisTitleFontPitchFamily`,
   `xAxisTitleFontCharset`, and `xAxisTitleFontRotation` (with matching

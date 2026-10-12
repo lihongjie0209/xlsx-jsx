@@ -1620,10 +1620,20 @@ fn compile_chart(
     {
         chart.title().set_hidden();
     }
-    if let Some(title) = component.props.get("xAxisTitle").and_then(Value::as_str) {
+    if let Some(title) = component
+        .props
+        .get("xAxisTitleFormula")
+        .or_else(|| component.props.get("xAxisTitle"))
+        .and_then(Value::as_str)
+    {
         chart.x_axis().set_name(title);
     }
-    if let Some(title) = component.props.get("yAxisTitle").and_then(Value::as_str) {
+    if let Some(title) = component
+        .props
+        .get("yAxisTitleFormula")
+        .or_else(|| component.props.get("yAxisTitle"))
+        .and_then(Value::as_str)
+    {
         chart.y_axis().set_name(title);
     }
     if let Some(title) = component.props.get("x2AxisTitle").and_then(Value::as_str) {
@@ -7917,6 +7927,14 @@ fn append_chart_axis_value_properties(properties: &mut String, chart: &Worksheet
             let _ = write!(properties, " {name}={value}");
         }
     }
+    for (name, formula) in [
+        ("xAxisTitleFormula", chart.x_axis_title_formula.as_deref()),
+        ("yAxisTitleFormula", chart.y_axis_title_formula.as_deref()),
+    ] {
+        if let Some(formula) = formula {
+            let _ = write!(properties, " {name}={formula:?}");
+        }
+    }
     append_chart_gridline_properties(properties, chart);
 }
 
@@ -13759,6 +13777,8 @@ fn parse_chart_xml(
     let mut trendline_name_open = false;
     let mut chart_title: Option<String> = None;
     let mut chart_title_formula: Option<String> = None;
+    let mut x_axis_title_formula: Option<String> = None;
+    let mut y_axis_title_formula: Option<String> = None;
     let mut title_font_size: Option<f64> = None;
     let mut title_font_size_seen = false;
     let mut title_font_bold: Option<bool> = None;
@@ -16535,8 +16555,8 @@ fn parse_chart_xml(
                     };
                     let already_present = match target {
                         "title" => chart_title.is_some() || chart_title_formula.is_some(),
-                        "xAxisTitle" => x_axis_title.is_some(),
-                        "yAxisTitle" => y_axis_title.is_some(),
+                        "xAxisTitle" => x_axis_title.is_some() || x_axis_title_formula.is_some(),
+                        "yAxisTitle" => y_axis_title.is_some() || y_axis_title_formula.is_some(),
                         _ => unreachable!("chart title target was selected above"),
                     };
                     if chart_title_open || already_present {
@@ -20188,7 +20208,7 @@ fn parse_chart_xml(
                     "f" if chart_title_open
                         && stack.iter().any(|ancestor| ancestor == "strRef") =>
                     {
-                        formula_target = Some("chartTitle");
+                        formula_target = chart_title_target;
                     }
                     "f" if !series.is_empty() => {
                         formula_target =
@@ -20406,16 +20426,26 @@ fn parse_chart_xml(
                         .decode()
                         .map_err(|error| Error::Reverse(error.to_string()))?
                         .into_owned();
-                    if target == "chartTitle" {
+                    if matches!(target, "title" | "xAxisTitle" | "yAxisTitle") {
                         if formula.is_empty()
-                            || chart_title_formula.replace(formula.clone()).is_some()
                             || !chart_formula_has_valid_reference(&formula, false)
                             || formula
                                 .split_once('!')
                                 .is_none_or(|(_, reference)| reference.contains(':'))
                         {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has an empty, repeated, or unsupported chart title formula `{formula}`; use one sheet-qualified A1 cell reference"
+                                "chart part `{part}` has an empty or unsupported {target} formula `{formula}`; use one sheet-qualified A1 cell reference"
+                            )));
+                        }
+                        let destination = match target {
+                            "title" => &mut chart_title_formula,
+                            "xAxisTitle" => &mut x_axis_title_formula,
+                            "yAxisTitle" => &mut y_axis_title_formula,
+                            _ => unreachable!("formula destination was matched"),
+                        };
+                        if destination.replace(formula).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats the {target} formula; keep one sheet-qualified cell reference"
                             )));
                         }
                         continue;
@@ -20629,14 +20659,20 @@ fn parse_chart_xml(
                 }
                 if tag == "title" && chart_title_open {
                     chart_title_open = false;
-                    if let Some(formula) = chart_title_formula.take() {
-                        let target = chart_title_target.take().expect("title target is set");
-                        if target != "title" {
-                            return Err(Error::Reverse(format!(
-                                "chart part `{part}` has a formula-backed axis title; use a static axis title because axis title formulas are not yet represented"
-                            )));
+                    let target = chart_title_target.take().expect("title target is set");
+                    let formula = match target {
+                        "title" => chart_title_formula.take(),
+                        "xAxisTitle" => x_axis_title_formula.take(),
+                        "yAxisTitle" => y_axis_title_formula.take(),
+                        _ => unreachable!("title target was validated on start"),
+                    };
+                    if let Some(formula) = formula {
+                        match target {
+                            "title" => chart_title_formula = Some(formula),
+                            "xAxisTitle" => x_axis_title_formula = Some(formula),
+                            "yAxisTitle" => y_axis_title_formula = Some(formula),
+                            _ => unreachable!("title target was validated on start"),
                         }
-                        chart_title_formula = Some(formula);
                     } else if title_paragraphs != 1 || title_runs != 1 || title_text_nodes != 1 {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` has a multi-paragraph or multi-run title; use one unformatted title string"
@@ -20646,7 +20682,6 @@ fn parse_chart_xml(
                             "chart part `{part}` has an empty or non-literal title; use one static title string"
                         )));
                     } else {
-                        let target = chart_title_target.take().expect("title target is set");
                         let title = std::mem::take(&mut chart_title_text);
                         if title.chars().count() > 255 || !title.chars().all(is_valid_xml_character)
                         {
@@ -21723,6 +21758,58 @@ fn parse_chart_xml(
             )));
         }
     }
+    for (axis, formula, has_formatting) in [
+        (
+            "xAxisTitleFormula",
+            x_axis_title_formula.as_deref(),
+            x_axis_title_font_size.is_some()
+                || x_axis_title_font_bold.is_some()
+                || x_axis_title_font_italic.is_some()
+                || x_axis_title_font_underline.is_some()
+                || x_axis_title_font_color.is_some()
+                || x_axis_title_font_name.is_some()
+                || x_axis_title_font_pitch_family.is_some()
+                || x_axis_title_font_charset.is_some()
+                || x_axis_title_font_rotation.is_some()
+                || x_axis_title_fill_color.is_some()
+                || x_axis_title_fill_transparency.is_some()
+                || x_axis_title_line.is_some()
+                || x_axis_title_layout.is_some(),
+        ),
+        (
+            "yAxisTitleFormula",
+            y_axis_title_formula.as_deref(),
+            y_axis_title_font_size.is_some()
+                || y_axis_title_font_bold.is_some()
+                || y_axis_title_font_italic.is_some()
+                || y_axis_title_font_underline.is_some()
+                || y_axis_title_font_color.is_some()
+                || y_axis_title_font_name.is_some()
+                || y_axis_title_font_pitch_family.is_some()
+                || y_axis_title_font_charset.is_some()
+                || y_axis_title_font_rotation.is_some()
+                || y_axis_title_fill_color.is_some()
+                || y_axis_title_fill_transparency.is_some()
+                || y_axis_title_line.is_some()
+                || y_axis_title_layout.is_some(),
+        ),
+    ] {
+        if let Some(formula) = formula {
+            let sheet_name = chart_formula_sheet_name(formula).ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` {axis} `{formula}` is not a supported sheet-qualified A1 cell reference"
+            )))?;
+            if !worksheet_names.contains(&sheet_name.to_lowercase()) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` {axis} references missing worksheet `{sheet_name}`; add the worksheet or repair the reference"
+                )));
+            }
+            if has_formatting {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` combines {axis} with formatting or layout settings; use an unformatted formula title or a static title"
+                )));
+            }
+        }
+    }
     Ok(WorksheetChart {
         chart_type,
         cell: cell_reference(from_row, from_column),
@@ -21814,6 +21901,8 @@ fn parse_chart_xml(
         category_axis_max_date,
         x_axis_title,
         y_axis_title,
+        x_axis_title_formula,
+        y_axis_title_formula,
         x2_axis_title: secondary_chart_groups.x2_axis_title,
         y2_axis_title: secondary_chart_groups.y2_axis_title,
         x_axis_number_format,
@@ -26717,6 +26806,8 @@ struct WorksheetChart {
     category_axis_max_date: Option<String>,
     x_axis_title: Option<String>,
     y_axis_title: Option<String>,
+    x_axis_title_formula: Option<String>,
+    y_axis_title_formula: Option<String>,
     x2_axis_title: Option<String>,
     y2_axis_title: Option<String>,
     x_axis_number_format: Option<String>,
