@@ -2151,13 +2151,15 @@ fn configure_chart_series_point_colors(
 ) {
     let colors = series.props.get("pointColors").and_then(Value::as_object);
     let lines = series.props.get("pointLines").and_then(Value::as_object);
-    if colors.is_none() && lines.is_none() {
+    let patterns = series.props.get("pointPatterns").and_then(Value::as_object);
+    if colors.is_none() && lines.is_none() && patterns.is_none() {
         return;
     }
     let Some(max_index) = colors
         .into_iter()
         .flat_map(serde_json::Map::keys)
         .chain(lines.into_iter().flat_map(serde_json::Map::keys))
+        .chain(patterns.into_iter().flat_map(serde_json::Map::keys))
         .filter_map(|key| key.parse::<usize>().ok())
         .max()
     else {
@@ -2171,7 +2173,8 @@ fn configure_chart_series_point_colors(
     for (index, point) in points.iter_mut().enumerate() {
         let color = colors.and_then(|values| values.get(&index.to_string()));
         let line = lines.and_then(|values| values.get(&index.to_string()));
-        if color.is_none() && line.is_none() {
+        let pattern = patterns.and_then(|values| values.get(&index.to_string()));
+        if color.is_none() && line.is_none() && pattern.is_none() {
             continue;
         }
         let mut format = ChartFormat::new();
@@ -2187,6 +2190,21 @@ fn configure_chart_series_point_colors(
                 );
             }
             format.set_solid_fill(&fill);
+        }
+        if let Some(properties) = pattern.and_then(Value::as_object) {
+            let mut pattern_fill = ChartPatternFill::new();
+            let pattern_name = properties
+                .get("pattern")
+                .and_then(Value::as_str)
+                .expect("validated point pattern");
+            pattern_fill.set_pattern(chart_pattern_fill_type(pattern_name));
+            if let Some(color) = properties.get("foregroundColor").and_then(Value::as_str) {
+                pattern_fill.set_foreground_color(color);
+            }
+            if let Some(color) = properties.get("backgroundColor").and_then(Value::as_str) {
+                pattern_fill.set_background_color(color);
+            }
+            format.set_pattern_fill(&pattern_fill);
         }
         if let Some(properties) = line.and_then(Value::as_object) {
             let mut chart_line = ChartLine::new();
@@ -7083,6 +7101,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if !series.point_lines.is_empty() {
             output.push_str(" pointLines={{");
             for (entry_index, (point, properties)) in series.point_lines.iter().enumerate() {
+                if entry_index > 0 {
+                    output.push_str(", ");
+                }
+                let _ = write!(output, "{point}: {}", Value::Object(properties.clone()));
+            }
+            output.push_str("}}");
+        }
+        if !series.point_patterns.is_empty() {
+            output.push_str(" pointPatterns={{");
+            for (entry_index, (point, properties)) in series.point_patterns.iter().enumerate() {
                 if entry_index > 0 {
                     output.push_str(", ");
                 }
@@ -13805,6 +13833,9 @@ fn parse_chart_xml(
     let mut point_index: Option<usize> = None;
     let mut point_color: Option<String> = None;
     let mut point_transparency: Option<u32> = None;
+    let mut point_pattern: Option<String> = None;
+    let mut point_pattern_foreground_color: Option<String> = None;
+    let mut point_pattern_background_color: Option<String> = None;
     let mut point_line_style = WorksheetChartGridlineStyle::default();
     let mut point_line_seen = false;
     let mut point_line_hidden = false;
@@ -15128,6 +15159,9 @@ fn parse_chart_xml(
                             | "ln"
                             | "noFill"
                             | "prstDash"
+                            | "pattFill"
+                            | "fgClr"
+                            | "bgClr"
                     )
                 {
                     return Err(Error::Reverse(format!(
@@ -15203,7 +15237,16 @@ fn parse_chart_xml(
                     && stack.iter().any(|ancestor| ancestor == "dPt")
                     && !matches!(
                         tag.as_str(),
-                        "spPr" | "solidFill" | "srgbClr" | "alpha" | "ln" | "noFill" | "prstDash"
+                        "spPr"
+                            | "solidFill"
+                            | "srgbClr"
+                            | "alpha"
+                            | "ln"
+                            | "noFill"
+                            | "prstDash"
+                            | "pattFill"
+                            | "fgClr"
+                            | "bgClr"
                     )
                 {
                     return Err(Error::Reverse(format!(
@@ -15537,12 +15580,15 @@ fn parse_chart_xml(
                         }
                         if is_empty {
                             return Err(Error::Reverse(format!(
-                                "chart part `{part}` has an empty data-point override; retain an indexed point with one opaque RGB solid fill"
+                                "chart part `{part}` has an empty data-point override; retain an indexed point with one supported fill or outline"
                             )));
                         }
                         point_index = None;
                         point_color = None;
                         point_transparency = None;
+                        point_pattern = None;
+                        point_pattern_foreground_color = None;
+                        point_pattern_background_color = None;
                         point_line_style = WorksheetChartGridlineStyle::default();
                         point_line_seen = false;
                         point_line_hidden = false;
@@ -15554,6 +15600,25 @@ fn parse_chart_xml(
                         if point_index.replace(index).is_some() {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats a data-point index; retain one index per `<dPt>`"
+                            )));
+                        }
+                    }
+                    "pattFill"
+                        if stack.last().is_some_and(|parent| parent == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "dPt") =>
+                    {
+                        let pattern = chart_xml_attribute(&event, "prst", reader.decoder())?
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a point pattFill without prst; add one supported DrawingML pattern preset"
+                            )))?;
+                        if !chart_data_table_fill_pattern_is_supported(&pattern) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported point pattern `{pattern}`; use one of the 48 pinned ChartPatternFillType presets"
+                            )));
+                        }
+                        if point_pattern.replace(pattern).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a point pattern fill; keep one supported pattern per point"
                             )));
                         }
                     }
@@ -17482,6 +17547,7 @@ fn parse_chart_xml(
                         point_colors: BTreeMap::new(),
                         point_color_transparencies: BTreeMap::new(),
                         point_lines: BTreeMap::new(),
+                        point_patterns: BTreeMap::new(),
                         custom_labels: BTreeMap::new(),
                         point_labels: BTreeMap::new(),
                         pending_custom_label_index: None,
@@ -19246,6 +19312,37 @@ fn parse_chart_xml(
                     }
                     "srgbClr"
                         if matches!(stack.last().map(String::as_str), Some("fgClr" | "bgClr"))
+                            && stack.iter().any(|ancestor| ancestor == "dPt")
+                            && stack.iter().any(|ancestor| ancestor == "pattFill")
+                            && stack.iter().any(|ancestor| ancestor == "spPr") =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "point pattern color",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB point pattern color; use an opaque six-digit #RRGGBB color"
+                            )));
+                        }
+                        let target = if stack.last().is_some_and(|parent| parent == "fgClr") {
+                            &mut point_pattern_foreground_color
+                        } else {
+                            &mut point_pattern_background_color
+                        };
+                        if target
+                            .replace(format!("#{}", color.to_ascii_uppercase()))
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a point pattern color; keep one RGB foreground and background value"
+                            )));
+                        }
+                    }
+                    "srgbClr"
+                        if matches!(stack.last().map(String::as_str), Some("fgClr" | "bgClr"))
                             && stack.iter().any(|ancestor| ancestor == "dTable")
                             && stack.iter().any(|ancestor| ancestor == "pattFill")
                             && stack.iter().any(|ancestor| ancestor == "spPr") =>
@@ -19318,6 +19415,15 @@ fn parse_chart_xml(
                             .any(|item| matches!(item.as_str(), "upBars" | "downBars")) =>
                     {
                         // The targeted stock-bar parser handles fill/line alpha.
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|item| item == "pattFill")
+                            && stack.iter().any(|item| item == "dPt") =>
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has alpha on a point pattern color; ChartPatternFill only represents opaque RGB colors, so remove alpha or use a solid point fill"
+                        )));
                     }
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
@@ -20895,9 +21001,15 @@ fn parse_chart_xml(
                     let index = point_index.take().ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a data point without an index; add `<c:idx val=.../>`")))?;
                     let color = point_color.take();
                     let transparency = point_transparency.take();
-                    if color.is_none() && !point_line_seen {
+                    let pattern = point_pattern.take();
+                    if color.is_none() && pattern.is_none() && !point_line_seen {
                         return Err(Error::Reverse(format!(
-                            "chart part `{part}` has an empty data-point override; add an opaque RGB solid fill or a supported ChartLine outline"
+                            "chart part `{part}` has an empty data-point override; add a supported RGB or pattern fill, or a ChartLine outline"
+                        )));
+                    }
+                    if color.is_some() && pattern.is_some() {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has both solid and pattern fills on one data point; retain only one fill representation"
                         )));
                     }
                     if transparency.is_some() && color.is_none() {
@@ -20924,6 +21036,11 @@ fn parse_chart_xml(
                             "chart part `{part}` has a data point without a series"
                         ))
                     })?;
+                    if color.is_some() && current.point_patterns.contains_key(&index) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has both solid and pattern fills at point index {index}; retain only one fill representation"
+                        )));
+                    }
                     if let Some(color) = color
                         && current.point_colors.insert(index, color).is_some()
                     {
@@ -20940,6 +21057,26 @@ fn parse_chart_xml(
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` repeats transparency for data-point index {index}; retain one alpha value"
                         )));
+                    }
+                    if let Some(pattern) = pattern {
+                        if current.point_colors.contains_key(&index) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has both solid and pattern fills at point index {index}; retain only one fill representation"
+                            )));
+                        }
+                        let mut properties = serde_json::Map::new();
+                        properties.insert("pattern".into(), Value::String(pattern));
+                        if let Some(color) = point_pattern_foreground_color.take() {
+                            properties.insert("foregroundColor".into(), Value::String(color));
+                        }
+                        if let Some(color) = point_pattern_background_color.take() {
+                            properties.insert("backgroundColor".into(), Value::String(color));
+                        }
+                        if current.point_patterns.insert(index, properties).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats point pattern at index {index}; keep one pattern fill per point"
+                            )));
+                        }
                     }
                     if point_line_seen {
                         let mut properties = serde_json::Map::new();
@@ -21383,18 +21520,25 @@ fn parse_chart_xml(
                 )));
             }
         }
-        if let Some(max_index) = item.point_colors.keys().next_back().copied() {
+        if let Some(max_index) = item
+            .point_colors
+            .keys()
+            .chain(item.point_patterns.keys())
+            .chain(item.point_lines.keys())
+            .max()
+            .copied()
+        {
             let point_count = item
                 .values
                 .split_once('!')
                 .and_then(|(_, range)| parse_a1_range(range))
                 .and_then(one_dimensional_range_length)
                 .ok_or_else(|| Error::Reverse(format!(
-                    "chart part `{part}` has point colors on a non-one-dimensional value range; use a one-dimensional Series.values range"
+                    "chart part `{part}` has point formatting on a non-one-dimensional value range; use a one-dimensional Series.values range"
                 )))?;
             if u32::try_from(max_index).is_ok_and(|index| index >= point_count) {
                 return Err(Error::Reverse(format!(
-                    "chart part `{part}` colors point {max_index} beyond the series value range of {point_count} points; extend the source range or remove that point format"
+                    "chart part `{part}` formats point {max_index} beyond the series value range of {point_count} points; extend the source range or remove that point format"
                 )));
             }
         }
@@ -23353,6 +23497,11 @@ fn audit_chart_attributes(
             && stack.iter().any(|ancestor| ancestor == "dTable")
             && stack.iter().any(|ancestor| ancestor == "spPr")
             && chart_data_table_fill_pattern_is_supported(&value);
+        let is_supported_point_pattern_attribute = tag == "pattFill"
+            && key == "prst"
+            && stack.iter().any(|ancestor| ancestor == "dPt")
+            && stack.iter().any(|ancestor| ancestor == "spPr")
+            && chart_data_table_fill_pattern_is_supported(&value);
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
             && !is_supported_chart_title_body_attribute
@@ -23366,6 +23515,7 @@ fn audit_chart_attributes(
             && !is_supported_chart_axis_label_font_attribute
             && !is_supported_chart_legend_font_attribute
             && !is_supported_data_table_pattern_attribute
+            && !is_supported_point_pattern_attribute
         {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` has unsupported `{tag}@{key}={value}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
@@ -27212,6 +27362,7 @@ struct WorksheetChartSeries {
     point_colors: BTreeMap<usize, String>,
     point_color_transparencies: BTreeMap<usize, u32>,
     point_lines: BTreeMap<usize, serde_json::Map<String, Value>>,
+    point_patterns: BTreeMap<usize, serde_json::Map<String, Value>>,
     custom_labels: BTreeMap<usize, String>,
     point_labels: BTreeMap<usize, serde_json::Map<String, Value>>,
     pending_custom_label_index: Option<usize>,

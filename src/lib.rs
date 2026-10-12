@@ -5171,6 +5171,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "pointColors",
                 "pointColorTransparencies",
                 "pointLines",
+                "pointPatterns",
                 "gap",
                 "overlap",
                 "secondaryAxis",
@@ -5720,6 +5721,7 @@ fn validate_chart_series_properties(
     validate_chart_series_point_colors(series)?;
     validate_chart_series_point_color_transparencies(series)?;
     validate_chart_series_point_lines(series)?;
+    validate_chart_series_point_patterns(series)?;
     validate_chart_series_trendline(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
 }
@@ -6472,6 +6474,86 @@ fn validate_chart_point_line_properties(
         return Err(Error::Compile(format!(
             "Series.pointLines[{index}].hidden=false has no visible effect; omit it or provide line formatting"
         )));
+    }
+    Ok(())
+}
+
+fn validate_chart_series_point_patterns(series: &Node) -> Result<()> {
+    const MAX_POINT_INDEX: usize = 1_048_575;
+    const ALLOWED: [&str; 3] = ["pattern", "foregroundColor", "backgroundColor"];
+    let Some(value) = series.props.get("pointPatterns") else {
+        return Ok(());
+    };
+    let Some(patterns) = value.as_object() else {
+        return Err(Error::Compile(
+            "Series.pointPatterns must be an object keyed by zero-based point index; use `{1: {pattern: \"pct20\"}}`".into(),
+        ));
+    };
+    if patterns.is_empty() {
+        return Err(Error::Compile(
+            "Series.pointPatterns cannot be empty; add a point pattern or omit the property".into(),
+        ));
+    }
+    let point_count = series
+        .props
+        .get("values")
+        .and_then(Value::as_str)
+        .and_then(|formula| formula.split_once('!'))
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length);
+    let colors = series.props.get("pointColors").and_then(Value::as_object);
+    for (index_text, fill) in patterns {
+        let index = index_text
+            .parse::<usize>()
+            .ok()
+            .filter(|index| *index <= MAX_POINT_INDEX && index.to_string() == *index_text);
+        let Some(index) = index else {
+            return Err(Error::Compile(format!(
+                "Series.pointPatterns key `{index_text}` must be a canonical index from 0 through {MAX_POINT_INDEX}"
+            )));
+        };
+        if point_count.is_some_and(|count| index >= count as usize) {
+            return Err(Error::Compile(format!(
+                "Series.pointPatterns[{index}] is outside Series.values; choose an index within the source range"
+            )));
+        }
+        if colors.is_some_and(|colors| colors.contains_key(index_text)) {
+            return Err(Error::Compile(format!(
+                "Series.pointPatterns[{index}] conflicts with pointColors[{index}]; choose one fill type for this point"
+            )));
+        }
+        let Some(properties) = fill.as_object() else {
+            return Err(Error::Compile(format!(
+                "Series.pointPatterns[{index}] must be an object; provide a pattern and optional RGB colors"
+            )));
+        };
+        if let Some(property) = properties
+            .keys()
+            .find(|property| !ALLOWED.contains(&property.as_str()))
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointPatterns[{index}] has unsupported property `{property}`; use pattern, foregroundColor, or backgroundColor"
+            )));
+        }
+        let pattern = properties
+            .get("pattern")
+            .and_then(Value::as_str)
+            .filter(|pattern| chart_data_table_fill_pattern_is_supported(pattern));
+        if pattern.is_none() {
+            return Err(Error::Compile(format!(
+                "Series.pointPatterns[{index}].pattern must be one of the 48 supported DrawingML presets; use a value listed by `xlsx-jsx spec`"
+            )));
+        }
+        for property in ["foregroundColor", "backgroundColor"] {
+            if properties
+                .get(property)
+                .is_some_and(|color| !color.as_str().is_some_and(is_opaque_rgb_color))
+            {
+                return Err(Error::Compile(format!(
+                    "Series.pointPatterns[{index}].{property} must be an opaque RGB color like #336699"
+                )));
+            }
+        }
     }
     Ok(())
 }

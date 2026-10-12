@@ -288,7 +288,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   and `hidden?: boolean`. `hidden: true` is exclusive with visible line
   properties. Reverse preserves external point outlines without a manifest and
   rejects other line attributes, effects, theme/indexed colors, and malformed
-  or out-of-range point indices.
+  or out-of-range point indices. `Series.pointPatterns?: Record<pointIndex,
+  PointPattern>` assigns a sparse DrawingML pattern fill to each indexed point.
+  Each entry requires `pattern` (one of the 48 `ChartPatternFillType` presets)
+  and optionally accepts opaque RGB `foregroundColor` / `backgroundColor`.
+  A pattern and `pointColors` cannot target the same index because they encode
+  different fill representations; a pattern can be combined with `pointLines`.
+  Reverse preserves pattern and color values without a manifest; gradient fills,
+  alpha, theme/indexed colors, and malformed or out-of-range point indices are
+  rejected with repair guidance.
 - A `Trendline` child of `Series` supports `type="linear" | "exponential" |
   "logarithmic" | "polynomial" | "power" | "movingAverage"`, optional
   `order` (2–5, required for polynomial) and `period` (2–3, required for
