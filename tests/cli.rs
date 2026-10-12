@@ -823,7 +823,10 @@ fn spec_exposes_chart_point_formatting() {
         .stdout(predicate::str::contains("pointGradients"))
         .stdout(predicate::str::contains("markerFillGradient"))
         .stdout(predicate::str::contains("markerFillPattern"))
-        .stdout(predicate::str::contains("pointFillHidden"));
+        .stdout(predicate::str::contains("pointFillHidden"))
+        .stdout(predicate::str::contains("fillGradient"))
+        .stdout(predicate::str::contains("fillPattern"))
+        .stdout(predicate::str::contains("fillHidden"));
 }
 
 #[test]
@@ -8151,6 +8154,116 @@ fn reverses_external_chart_series_line_style_and_rebuilds_it() {
     assert!(xml.contains("<a:ln w=\"28575\">"));
     assert!(xml.contains("<a:srgbClr val=\"336699\"><a:alpha val=\"70000\"/></a:srgbClr>"));
     assert!(xml.contains("<a:prstDash val=\"dashDot\"/>"));
+}
+
+#[test]
+fn reverses_external_chart_series_fills_without_manifest_and_rebuilds_them() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-chart-series-fills.xlsx");
+    let source_path = directory.path().join("chart-series-fills.tsx");
+    let rebuilt_path = directory.path().join("rebuilt-chart-series-fills.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_number(0, 0, 10).unwrap();
+    worksheet.write_number(1, 0, 20).unwrap();
+    worksheet.write_number(0, 1, 15).unwrap();
+    worksheet.write_number(1, 1, 25).unwrap();
+    let mut chart = XlsxChart::new(ChartType::Column);
+
+    let mut solid = ChartSolidFill::new();
+    solid.set_color("#4472C4").set_transparency(25);
+    chart
+        .add_series()
+        .set_values("Data!A1:A2")
+        .set_format(&mut solid);
+
+    let mut pattern = ChartPatternFill::new();
+    pattern
+        .set_pattern(ChartPatternFillType::DiagonalBrick)
+        .set_foreground_color("#C00000")
+        .set_background_color("#FFF2CC");
+    chart
+        .add_series()
+        .set_values("Data!B1:B2")
+        .set_format(&mut pattern);
+
+    let mut gradient = ChartGradientFill::new();
+    gradient.set_angle(45).set_gradient_stops(&[
+        ChartGradientStop::new("#17365D", 0),
+        ChartGradientStop::new("#4472C4", 55),
+        ChartGradientStop::new("#DDEBF7", 100),
+    ]);
+    chart
+        .add_series()
+        .set_values("Data!A1:A2")
+        .set_format(&mut gradient);
+
+    let mut hidden_format = ChartFormat::new();
+    let mut outline = ChartLine::new();
+    outline.set_color("#17365D").set_width(1.25);
+    hidden_format.set_no_fill().set_line(&outline);
+    chart
+        .add_series()
+        .set_values("Data!B1:B2")
+        .set_format(&mut hidden_format);
+    worksheet.insert_chart(4, 2, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(source.contains("fillColor=\"#4472C4\""), "{source}");
+    assert!(source.contains("fillTransparency={25}"), "{source}");
+    assert!(source.contains("fillPattern={{"), "{source}");
+    assert!(source.contains("\"pattern\":\"diagBrick\""), "{source}");
+    assert!(source.contains("fillGradient={{"), "{source}");
+    assert!(source.contains("fillHidden={true}"), "{source}");
+    assert!(source.contains("lineColor=\"#17365D\""), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<a:solidFill><a:srgbClr val=\"4472C4\"><a:alpha val=\"75000\"/></a:srgbClr></a:solidFill>"), "{xml}");
+    assert!(xml.contains("<a:pattFill prst=\"diagBrick\">"), "{xml}");
+    assert!(
+        xml.contains("<a:lin ang=\"2700000\" scaled=\"0\"/>"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<c:ser><c:idx val=\"3\"/><c:order val=\"3\"/><c:spPr><a:noFill/>"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn series_fill_representations_conflict_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source_path = directory.path().join("series-fill-conflict.tsx");
+    std::fs::write(
+        &source_path,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!A1:A2" fillColor="#4472C4" fillPattern={{pattern: "pct20"}} /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(&source_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Series fill properties conflict"))
+        .stderr(predicate::str::contains("choose exactly one"));
 }
 
 #[test]

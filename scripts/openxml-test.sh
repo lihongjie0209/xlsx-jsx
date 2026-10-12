@@ -34,6 +34,8 @@ cargo build --locked
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/chart-custom-labels.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/chart-marker-fills.tsx" -o "${TEMP_DIR}/chart-marker-fills.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/chart-marker-fills.xlsx"
+"${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/chart-series-fills.tsx" -o "${TEMP_DIR}/chart-series-fills.xlsx"
+"${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/chart-series-fills.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/chart-point-fill-transparency.tsx" -o "${TEMP_DIR}/chart-point-fill-transparency.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/chart-point-fill-transparency.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/chart-area-fill-transparency.tsx" -o "${TEMP_DIR}/chart-area-fill-transparency.xlsx"

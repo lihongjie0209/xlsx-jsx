@@ -5155,6 +5155,11 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "labelLineDash",
                 "labelLineTransparency",
                 "labelLineHidden",
+                "fillColor",
+                "fillTransparency",
+                "fillPattern",
+                "fillGradient",
+                "fillHidden",
                 "markerType",
                 "markerSize",
                 "markerFillColor",
@@ -5722,6 +5727,7 @@ fn validate_chart_series_properties(
     validate_chart_series_smoothing(chart, series)?;
     validate_series_data_label_props(chart, series)?;
     validate_chart_series_marker(chart, series, series_index)?;
+    validate_chart_series_fill(series)?;
     validate_chart_series_line(chart, series, series_index)?;
     validate_chart_series_point_colors(series)?;
     validate_chart_series_point_color_transparencies(series)?;
@@ -6760,6 +6766,84 @@ fn validate_chart_gradient_stop(path: &str, stop_index: usize, stop: &Value) -> 
         return Err(Error::Compile(format!(
             "{path}.stops[{stop_index}].position must be an integer percentage from 0 through 100"
         )));
+    }
+    Ok(())
+}
+
+fn validate_chart_series_fill(series: &Node) -> Result<()> {
+    if let Some(value) = series.props.get("fillColor") {
+        validate_rgb_color(value, "Series.fillColor", 0, 0)?;
+    }
+    if let Some(value) = series.props.get("fillTransparency")
+        && value.as_u64().is_none_or(|transparency| transparency > 100)
+    {
+        return Err(Error::Compile(
+            "Series.fillTransparency must be an integer percentage from 0 through 100".into(),
+        ));
+    }
+    if series.props.contains_key("fillTransparency") && !series.props.contains_key("fillColor") {
+        return Err(Error::Compile(
+            "Series.fillTransparency requires fillColor; add an opaque RGB color or remove transparency".into(),
+        ));
+    }
+    if let Some(value) = series.props.get("fillPattern") {
+        let Some(properties) = value.as_object() else {
+            return Err(Error::Compile(
+                "Series.fillPattern must be an object; use {pattern: \"pct20\", foregroundColor: \"#336699\"}".into(),
+            ));
+        };
+        if properties
+            .keys()
+            .any(|key| !["pattern", "foregroundColor", "backgroundColor"].contains(&key.as_str()))
+        {
+            return Err(Error::Compile(
+                "Series.fillPattern has unsupported properties; use pattern, foregroundColor, or backgroundColor".into(),
+            ));
+        }
+        let pattern = properties
+            .get("pattern")
+            .and_then(Value::as_str)
+            .filter(|pattern| chart_data_table_fill_pattern_is_supported(pattern));
+        if pattern.is_none() {
+            return Err(Error::Compile(
+                "Series.fillPattern.pattern must be one of the 48 supported DrawingML presets; use a value listed by `xlsx-jsx spec`".into(),
+            ));
+        }
+        for property in ["foregroundColor", "backgroundColor"] {
+            if properties
+                .get(property)
+                .is_some_and(|color| !color.as_str().is_some_and(is_opaque_rgb_color))
+            {
+                return Err(Error::Compile(format!(
+                    "Series.fillPattern.{property} must be an opaque RGB color like #336699"
+                )));
+            }
+        }
+    }
+    if let Some(gradient) = series.props.get("fillGradient") {
+        validate_chart_gradient_properties("Series.fillGradient", gradient)?;
+    }
+    if let Some(value) = series.props.get("fillHidden")
+        && value.as_bool() != Some(true)
+    {
+        return Err(Error::Compile(
+            "Series.fillHidden is a presence flag and must be true; omit it to keep the writer's default fill".into(),
+        ));
+    }
+
+    let selected_fill_count = [
+        series.props.contains_key("fillColor") || series.props.contains_key("fillTransparency"),
+        series.props.contains_key("fillPattern"),
+        series.props.contains_key("fillGradient"),
+        series.props.contains_key("fillHidden"),
+    ]
+    .into_iter()
+    .filter(|selected| *selected)
+    .count();
+    if selected_fill_count > 1 {
+        return Err(Error::Compile(
+            "Series fill properties conflict; choose exactly one of fillColor/fillTransparency, fillPattern, fillGradient, or fillHidden".into(),
+        ));
     }
     Ok(())
 }
@@ -12846,6 +12930,41 @@ mod tests {
 
         let validation = input.validate();
         assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_chart_series_solid_pattern_gradient_and_no_fill() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[
+                    {"type":"Series","props":{"values":"Charts!A1:A3","fillColor":"#4472C4","fillTransparency":20},"children":[]},
+                    {"type":"Series","props":{"values":"Charts!A1:A3","fillPattern":{"pattern":"diagBrick","foregroundColor":"#C00000"}},"children":[]},
+                    {"type":"Series","props":{"values":"Charts!A1:A3","fillGradient":{"type":"linear","angle":45,"stops":[{"color":"#4472C4","position":0},{"color":"#DDEBF7","position":100}]}},"children":[]},
+                    {"type":"Series","props":{"values":"Charts!A1:A3","fillHidden":true},"children":[]}
+                ]
+            })],
+        )]);
+
+        let validation = input.validate();
+        assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn rejects_chart_series_fill_conflicts_with_repair_guidance() {
+        let input = workbook(vec![worksheet(
+            "Charts",
+            vec![serde_json::json!({
+                "type":"Chart", "props":{"type":"column","cell":"D2"},
+                "children":[{"type":"Series","props":{
+                    "values":"Charts!A1:A3","fillColor":"#4472C4","fillHidden":true
+                },"children":[]}]
+            })],
+        )]);
+
+        let error = input.validate().expect_err("fill choices are exclusive");
+        assert!(error.to_string().contains("choose exactly one"));
     }
 
     #[test]

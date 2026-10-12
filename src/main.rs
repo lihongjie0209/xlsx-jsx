@@ -1986,7 +1986,8 @@ fn compile_chart(
         }
         configure_chart_series_data_labels(chart_series, &series);
         configure_chart_series_marker(chart_series, &series);
-        configure_chart_series_line(chart_series, &series);
+        let is_stock = component.props.get("type").and_then(Value::as_str) == Some("stock");
+        configure_chart_series_format(chart_series, &series, is_stock);
         configure_chart_series_point_colors(chart_series, &series);
         configure_chart_series_spacing(chart_series, &series);
         if let Some(smooth) = series.props.get("smooth").and_then(Value::as_bool) {
@@ -2002,10 +2003,25 @@ fn compile_chart(
         }
         configure_chart_series_trendline(chart_series, &series);
         configure_chart_series_error_bars(chart_series, &series)?;
-        if component.props.get("type").and_then(Value::as_str) == Some("stock") {
-            chart_series
-                .set_format(ChartLine::new().set_hidden(true))
-                .set_marker(ChartMarker::new().set_none());
+        if is_stock {
+            let has_series_format = [
+                "fillColor",
+                "fillTransparency",
+                "fillPattern",
+                "fillGradient",
+                "fillHidden",
+                "lineColor",
+                "lineWidth",
+                "lineDash",
+                "lineTransparency",
+                "lineHidden",
+            ]
+            .iter()
+            .any(|key| series.props.contains_key(*key));
+            if !has_series_format {
+                chart_series.set_format(ChartLine::new().set_hidden(true));
+            }
+            chart_series.set_marker(ChartMarker::new().set_none());
         }
     }
     if has_explicit_legend_entries {
@@ -2346,8 +2362,17 @@ fn configure_chart_point_line(format: &mut ChartFormat, line: Option<&Value>) {
     }
 }
 
-fn configure_chart_series_line(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
-    if ![
+fn configure_chart_series_format(
+    chart_series: &mut rust_xlsxwriter::ChartSeries,
+    series: &Node,
+    is_stock: bool,
+) {
+    let has_fill_or_line_format = [
+        "fillColor",
+        "fillTransparency",
+        "fillPattern",
+        "fillGradient",
+        "fillHidden",
         "lineColor",
         "lineWidth",
         "lineDash",
@@ -2355,37 +2380,86 @@ fn configure_chart_series_line(chart_series: &mut rust_xlsxwriter::ChartSeries, 
         "lineHidden",
     ]
     .iter()
-    .any(|key| series.props.contains_key(*key))
-    {
+    .any(|key| series.props.contains_key(*key));
+    if !has_fill_or_line_format && !is_stock {
         return;
     }
-    let mut line = ChartLine::new();
-    if let Some(color) = series.props.get("lineColor").and_then(Value::as_str) {
-        line.set_color(color);
+    let mut format = ChartFormat::new();
+    if let Some(color) = series.props.get("fillColor").and_then(Value::as_str) {
+        let mut fill = ChartSolidFill::new();
+        fill.set_color(color);
+        if let Some(transparency) = series.props.get("fillTransparency").and_then(Value::as_u64) {
+            fill.set_transparency(u8::try_from(transparency).expect("validated fillTransparency"));
+        }
+        format.set_solid_fill(&fill);
     }
-    if let Some(width) = series.props.get("lineWidth").and_then(Value::as_f64) {
-        line.set_width(width);
+    if let Some(value) = series.props.get("fillPattern") {
+        let properties = value.as_object().expect("validated fillPattern object");
+        let pattern_name = properties
+            .get("pattern")
+            .and_then(Value::as_str)
+            .expect("validated fillPattern name");
+        let mut fill = ChartPatternFill::new();
+        fill.set_pattern(chart_pattern_fill_type(pattern_name));
+        if let Some(color) = properties.get("foregroundColor").and_then(Value::as_str) {
+            fill.set_foreground_color(color);
+        }
+        if let Some(color) = properties.get("backgroundColor").and_then(Value::as_str) {
+            fill.set_background_color(color);
+        }
+        format.set_pattern_fill(&fill);
     }
-    if let Some(dash) = series.props.get("lineDash").and_then(Value::as_str) {
-        line.set_dash_type(match dash {
-            "solid" => rust_xlsxwriter::ChartLineDashType::Solid,
-            "roundDot" => rust_xlsxwriter::ChartLineDashType::RoundDot,
-            "squareDot" => rust_xlsxwriter::ChartLineDashType::SquareDot,
-            "dash" => rust_xlsxwriter::ChartLineDashType::Dash,
-            "dashDot" => rust_xlsxwriter::ChartLineDashType::DashDot,
-            "longDash" => rust_xlsxwriter::ChartLineDashType::LongDash,
-            "longDashDot" => rust_xlsxwriter::ChartLineDashType::LongDashDot,
-            "longDashDotDot" => rust_xlsxwriter::ChartLineDashType::LongDashDotDot,
-            _ => unreachable!("validated Series.lineDash"),
-        });
+    if let Some(value) = series.props.get("fillGradient") {
+        let fill = chart_gradient_fill_from_value(value);
+        format.set_gradient_fill(&fill);
     }
-    if let Some(transparency) = series.props.get("lineTransparency").and_then(Value::as_u64) {
-        line.set_transparency(u8::try_from(transparency).expect("validated transparency"));
+    if series.props.get("fillHidden").and_then(Value::as_bool) == Some(true) {
+        format.set_no_fill();
     }
-    if let Some(hidden) = series.props.get("lineHidden").and_then(Value::as_bool) {
-        line.set_hidden(hidden);
+    let has_line = [
+        "lineColor",
+        "lineWidth",
+        "lineDash",
+        "lineTransparency",
+        "lineHidden",
+    ]
+    .iter()
+    .any(|key| series.props.contains_key(*key));
+    if has_line || is_stock {
+        let mut line = ChartLine::new();
+        if is_stock && !has_line {
+            line.set_hidden(true);
+        }
+        if let Some(color) = series.props.get("lineColor").and_then(Value::as_str) {
+            line.set_color(color);
+        }
+        if let Some(width) = series.props.get("lineWidth").and_then(Value::as_f64) {
+            line.set_width(width);
+        }
+        if let Some(dash) = series.props.get("lineDash").and_then(Value::as_str) {
+            line.set_dash_type(match dash {
+                "solid" => rust_xlsxwriter::ChartLineDashType::Solid,
+                "roundDot" => rust_xlsxwriter::ChartLineDashType::RoundDot,
+                "squareDot" => rust_xlsxwriter::ChartLineDashType::SquareDot,
+                "dash" => rust_xlsxwriter::ChartLineDashType::Dash,
+                "dashDot" => rust_xlsxwriter::ChartLineDashType::DashDot,
+                "longDash" => rust_xlsxwriter::ChartLineDashType::LongDash,
+                "longDashDot" => rust_xlsxwriter::ChartLineDashType::LongDashDot,
+                "longDashDotDot" => rust_xlsxwriter::ChartLineDashType::LongDashDotDot,
+                _ => unreachable!("validated Series.lineDash"),
+            });
+        }
+        if let Some(transparency) = series.props.get("lineTransparency").and_then(Value::as_u64) {
+            line.set_transparency(u8::try_from(transparency).expect("validated transparency"));
+        }
+        if let Some(hidden) = series.props.get("lineHidden").and_then(Value::as_bool) {
+            line.set_hidden(hidden);
+        }
+        format.set_line(&line);
     }
-    chart_series.set_format(&mut line);
+    if has_fill_or_line_format {
+        chart_series.set_format(&mut format);
+    }
 }
 
 fn configure_chart_series_marker(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
@@ -7196,6 +7270,29 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                 " markerFillPattern={{{}}}",
                 Value::Object(properties.clone())
             );
+        }
+        if let Some(color) = &series.fill_color {
+            let _ = write!(output, " fillColor={color:?}");
+        }
+        if let Some(transparency) = series.fill_transparency {
+            let _ = write!(output, " fillTransparency={{{transparency}}}");
+        }
+        if let Some(properties) = &series.fill_pattern {
+            let _ = write!(
+                output,
+                " fillPattern={{{}}}",
+                Value::Object(properties.clone())
+            );
+        }
+        if let Some(properties) = &series.fill_gradient {
+            let _ = write!(
+                output,
+                " fillGradient={{{}}}",
+                Value::Object(properties.clone())
+            );
+        }
+        if series.fill_hidden {
+            output.push_str(" fillHidden={true}");
         }
         if let Some(color) = &series.marker_line_color {
             let _ = write!(output, " markerLineColor={color:?}");
@@ -14017,6 +14114,9 @@ fn parse_chart_xml(
     let mut marker_pattern: Option<String> = None;
     let mut marker_pattern_foreground_color: Option<String> = None;
     let mut marker_pattern_background_color: Option<String> = None;
+    let mut series_pattern: Option<String> = None;
+    let mut series_pattern_foreground_color: Option<String> = None;
+    let mut series_pattern_background_color: Option<String> = None;
     let mut point_gradient_type: Option<&'static str> = None;
     let mut point_gradient_angle: Option<u16> = None;
     let mut point_gradient_stops = Vec::<Value>::new();
@@ -15104,7 +15204,20 @@ fn parse_chart_xml(
                 if tag == "gradFill"
                     && !(stack.last().is_some_and(|parent| parent == "spPr")
                         && (stack.iter().any(|ancestor| ancestor == "dPt")
-                            || stack.iter().any(|ancestor| ancestor == "marker")))
+                            || stack.iter().any(|ancestor| ancestor == "marker")
+                            || (stack.iter().any(|ancestor| ancestor == "ser")
+                                && !stack.iter().any(|ancestor| {
+                                    matches!(
+                                        ancestor.as_str(),
+                                        "marker"
+                                            | "dPt"
+                                            | "dLbls"
+                                            | "title"
+                                            | "trendline"
+                                            | "errBars"
+                                            | "ln"
+                                    )
+                                }))))
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` uses a gradient outside a supported data-point or marker fill; remove it or add matching DSL support"
@@ -15887,11 +16000,69 @@ fn parse_chart_xml(
                             )));
                         }
                     }
+                    "pattFill"
+                        if stack.last().is_some_and(|parent| parent == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "ser")
+                            && !stack.iter().any(|ancestor| {
+                                matches!(
+                                    ancestor.as_str(),
+                                    "marker"
+                                        | "dPt"
+                                        | "dLbls"
+                                        | "title"
+                                        | "trendline"
+                                        | "errBars"
+                                        | "ln"
+                                )
+                            }) =>
+                    {
+                        let pattern = chart_xml_attribute(&event, "prst", reader.decoder())?
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a series pattFill without prst; add one supported DrawingML pattern preset"
+                            )))?;
+                        if !chart_data_table_fill_pattern_is_supported(&pattern) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported series pattern `{pattern}`; use one of the 48 pinned ChartPatternFillType presets"
+                            )));
+                        }
+                        let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has series pattern formatting outside a data series"
+                        )))?;
+                        if current.fill_seen
+                            || current.fill_color.is_some()
+                            || current.fill_pattern.is_some()
+                            || current.fill_gradient.is_some()
+                            || current.fill_hidden
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` combines series fill representations; retain one solid, pattern, gradient, or no-fill representation"
+                            )));
+                        }
+                        current.fill_seen = true;
+                        if series_pattern.replace(pattern).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats series pattern fills; retain one pattern per data series"
+                            )));
+                        }
+                    }
                     "gradFill"
                         if stack.last().is_some_and(|parent| parent == "spPr")
                             && (stack.iter().any(|ancestor| ancestor == "dPt")
                                 || (stack.iter().any(|ancestor| ancestor == "marker")
-                                    && !stack.iter().any(|ancestor| ancestor == "dPt"))) =>
+                                    && !stack.iter().any(|ancestor| ancestor == "dPt"))
+                                || (stack.iter().any(|ancestor| ancestor == "ser")
+                                    && !stack.iter().any(|ancestor| {
+                                        matches!(
+                                            ancestor.as_str(),
+                                            "marker"
+                                                | "dPt"
+                                                | "dLbls"
+                                                | "title"
+                                                | "trendline"
+                                                | "errBars"
+                                                | "ln"
+                                        )
+                                    }))) =>
                     {
                         if point_gradient_seen {
                             return Err(Error::Reverse(format!(
@@ -15906,6 +16077,24 @@ fn parse_chart_xml(
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` combines marker fill representations; retain one fill"
                             )));
+                        }
+                        if stack.iter().any(|ancestor| ancestor == "ser")
+                            && !stack.iter().any(|ancestor| ancestor == "dPt")
+                        {
+                            let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has a series gradient outside a data series"
+                            )))?;
+                            if current.fill_seen
+                                || current.fill_color.is_some()
+                                || current.fill_pattern.is_some()
+                                || current.fill_gradient.is_some()
+                                || current.fill_hidden
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` combines series fill representations; retain one solid, pattern, gradient, or no-fill representation"
+                                )));
+                            }
+                            current.fill_seen = true;
                         }
                         for (name, expected) in [("flip", "none"), ("rotWithShape", "1")] {
                             if let Some(value) =
@@ -17879,6 +18068,12 @@ fn parse_chart_xml(
                         marker_fill_gradient: None,
                         marker_fill_pattern: None,
                         marker_fill_seen: false,
+                        fill_color: None,
+                        fill_transparency: None,
+                        fill_pattern: None,
+                        fill_gradient: None,
+                        fill_hidden: false,
+                        fill_seen: false,
                         marker_line_color: None,
                         marker_line_width: None,
                         marker_line_dash: None,
@@ -19661,10 +19856,75 @@ fn parse_chart_xml(
                         }
                     }
                     "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|ancestor| ancestor == "ser")
+                            && stack.iter().any(|ancestor| ancestor == "spPr")
+                            && !stack.iter().any(|ancestor| {
+                                matches!(
+                                    ancestor.as_str(),
+                                    "marker"
+                                        | "dPt"
+                                        | "dLbls"
+                                        | "title"
+                                        | "trendline"
+                                        | "errBars"
+                                        | "ln"
+                                )
+                            }) =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "series fill",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB series fill; use one opaque six-digit #RRGGBB color"
+                            )));
+                        }
+                        let current = series.last_mut().ok_or_else(|| {
+                            Error::Reverse(format!(
+                                "chart part `{part}` has a series fill outside a data series"
+                            ))
+                        })?;
+                        if current.fill_pattern.is_some()
+                            || current.fill_gradient.is_some()
+                            || current.fill_hidden
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` combines series fill representations; retain one solid, pattern, gradient, or no-fill representation"
+                            )));
+                        }
+                        current.fill_seen = true;
+                        if current
+                            .fill_color
+                            .replace(format!("#{color}").to_ascii_uppercase())
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats series solid fills; retain one opaque RGB color"
+                            )));
+                        }
+                    }
+                    "srgbClr"
                         if matches!(stack.last().map(String::as_str), Some("fgClr" | "bgClr"))
                             && (stack.iter().any(|ancestor| ancestor == "dPt")
                                 || (stack.iter().any(|ancestor| ancestor == "marker")
-                                    && !stack.iter().any(|ancestor| ancestor == "dPt")))
+                                    && !stack.iter().any(|ancestor| ancestor == "dPt"))
+                                || (stack.iter().any(|ancestor| ancestor == "ser")
+                                    && !stack.iter().any(|ancestor| {
+                                        matches!(
+                                            ancestor.as_str(),
+                                            "marker"
+                                                | "dPt"
+                                                | "dLbls"
+                                                | "title"
+                                                | "trendline"
+                                                | "errBars"
+                                                | "ln"
+                                        )
+                                    })))
                             && stack.iter().any(|ancestor| ancestor == "pattFill")
                             && stack.iter().any(|ancestor| ancestor == "spPr") =>
                     {
@@ -19680,7 +19940,25 @@ fn parse_chart_xml(
                             )));
                         }
                         let is_foreground = stack.last().is_some_and(|parent| parent == "fgClr");
-                        let target = if stack.iter().any(|ancestor| ancestor == "marker")
+                        let target = if stack.iter().any(|ancestor| ancestor == "ser")
+                            && !stack.iter().any(|ancestor| {
+                                matches!(
+                                    ancestor.as_str(),
+                                    "marker"
+                                        | "dPt"
+                                        | "dLbls"
+                                        | "title"
+                                        | "trendline"
+                                        | "errBars"
+                                        | "ln"
+                                )
+                            }) {
+                            if is_foreground {
+                                &mut series_pattern_foreground_color
+                            } else {
+                                &mut series_pattern_background_color
+                            }
+                        } else if stack.iter().any(|ancestor| ancestor == "marker")
                             && !stack.iter().any(|ancestor| ancestor == "dPt")
                         {
                             if is_foreground {
@@ -19808,11 +20086,66 @@ fn parse_chart_xml(
                     }
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|ancestor| ancestor == "ser")
+                            && stack.iter().any(|ancestor| ancestor == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "solidFill")
+                            && !stack.iter().any(|ancestor| {
+                                matches!(
+                                    ancestor.as_str(),
+                                    "marker"
+                                        | "dPt"
+                                        | "dLbls"
+                                        | "title"
+                                        | "trendline"
+                                        | "errBars"
+                                        | "ln"
+                                )
+                            }) =>
+                    {
+                        let alpha = chart_element_val_attribute(
+                            &event, part, reader.decoder(), "series fill alpha",
+                        )?.parse::<u32>().ok().filter(|alpha| *alpha <= 100_000 && alpha % 1000 == 0)
+                            .ok_or_else(|| Error::Reverse(format!(
+                                "chart part `{part}` has series fill alpha not exactly representable by whole-percent transparency; use increments of 1%"
+                            )))?;
+                        let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has series fill transparency outside a data series"
+                        )))?;
+                        let transparency = 100 - alpha / 1000;
+                        if current.fill_transparency.replace(transparency).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats series fill transparency; keep one alpha value"
+                            )));
+                        }
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|item| item == "pattFill")
                             && stack.iter().any(|item| item == "dPt") =>
                     {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` has alpha on a point pattern color; ChartPatternFill only represents opaque RGB colors, so remove alpha or use a solid point fill"
+                        )));
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|item| item == "pattFill")
+                            && stack.iter().any(|item| item == "ser")
+                            && !stack.iter().any(|item| {
+                                matches!(
+                                    item.as_str(),
+                                    "marker"
+                                        | "dPt"
+                                        | "dLbls"
+                                        | "title"
+                                        | "trendline"
+                                        | "errBars"
+                                        | "ln"
+                                )
+                            }) =>
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has alpha on a series pattern color; Series.fillPattern supports opaque RGB colors only, so remove alpha or use a solid fill"
                         )));
                     }
                     "alpha"
@@ -20807,6 +21140,40 @@ fn parse_chart_xml(
                                 "chart part `{part}` uses a no-fill gridline; the DSL models visible gridline line styles, so replace noFill with an RGB line or remove the line formatting"
                             )));
                         }
+                        if stack.last().is_some_and(|parent| parent == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "ser")
+                            && !stack.iter().any(|ancestor| {
+                                matches!(
+                                    ancestor.as_str(),
+                                    "marker"
+                                        | "dPt"
+                                        | "dLbls"
+                                        | "title"
+                                        | "trendline"
+                                        | "errBars"
+                                        | "ln"
+                                )
+                            })
+                        {
+                            let current = series.last_mut().ok_or_else(|| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has a series noFill outside a data series"
+                                ))
+                            })?;
+                            if current.fill_seen
+                                || current.fill_color.is_some()
+                                || current.fill_pattern.is_some()
+                                || current.fill_gradient.is_some()
+                                || current.fill_hidden
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` combines series fill representations; retain one solid, pattern, gradient, or no-fill representation"
+                                )));
+                            }
+                            current.fill_seen = true;
+                            current.fill_hidden = true;
+                            continue;
+                        }
                         let supported_line_context = stack.iter().any(|ancestor| ancestor == "ser")
                             || (stack.iter().any(|ancestor| ancestor == "trendline")
                                 && stack.iter().any(|ancestor| ancestor == "spPr")
@@ -21583,6 +21950,33 @@ fn parse_chart_xml(
                         )));
                     }
                 }
+                if tag == "gradFill"
+                    && stack.iter().any(|ancestor| ancestor == "ser")
+                    && !stack.iter().any(|ancestor| {
+                        matches!(
+                            ancestor.as_str(),
+                            "marker" | "dPt" | "dLbls" | "title" | "trendline" | "errBars" | "ln"
+                        )
+                    })
+                {
+                    let stops = std::mem::take(&mut point_gradient_stops);
+                    if !(2..=10).contains(&stops.len()) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has {} series-gradient stops; retain 2 through 10 stops",
+                            stops.len()
+                        )));
+                    }
+                    let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                        "chart part `{part}` has series-gradient formatting outside a data series"
+                    )))?;
+                    let properties =
+                        chart_gradient_properties(point_gradient_type, point_gradient_angle, stops);
+                    if current.fill_gradient.replace(properties).is_some() {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats series gradients; keep one series fill"
+                        )));
+                    }
+                }
                 if tag == "pattFill"
                     && stack.iter().any(|ancestor| ancestor == "marker")
                     && !stack.iter().any(|ancestor| ancestor == "dPt")
@@ -21606,6 +22000,35 @@ fn parse_chart_xml(
                     if current.marker_fill_pattern.replace(properties).is_some() {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` repeats marker pattern fills; keep one marker fill"
+                        )));
+                    }
+                }
+                if tag == "pattFill"
+                    && stack.iter().any(|ancestor| ancestor == "ser")
+                    && !stack.iter().any(|ancestor| {
+                        matches!(
+                            ancestor.as_str(),
+                            "marker" | "dPt" | "dLbls" | "title" | "trendline" | "errBars" | "ln"
+                        )
+                    })
+                {
+                    let pattern = series_pattern.take().ok_or_else(|| Error::Reverse(format!(
+                        "chart part `{part}` closes a series pattFill without a supported preset"
+                    )))?;
+                    let mut properties = serde_json::Map::new();
+                    properties.insert("pattern".into(), Value::String(pattern));
+                    if let Some(color) = series_pattern_foreground_color.take() {
+                        properties.insert("foregroundColor".into(), Value::String(color));
+                    }
+                    if let Some(color) = series_pattern_background_color.take() {
+                        properties.insert("backgroundColor".into(), Value::String(color));
+                    }
+                    let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
+                        "chart part `{part}` closes series pattern formatting outside a data series"
+                    )))?;
+                    if current.fill_pattern.replace(properties).is_some() {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` repeats series pattern fills; retain one per series"
                         )));
                     }
                 }
@@ -24041,6 +24464,17 @@ fn audit_chart_attributes(
             && !stack.iter().any(|ancestor| ancestor == "dPt")
             && stack.iter().any(|ancestor| ancestor == "spPr")
             && chart_data_table_fill_pattern_is_supported(&value);
+        let is_supported_series_pattern_attribute = tag == "pattFill"
+            && key == "prst"
+            && stack.iter().any(|ancestor| ancestor == "ser")
+            && !stack.iter().any(|ancestor| {
+                matches!(
+                    ancestor.as_str(),
+                    "marker" | "dPt" | "dLbls" | "title" | "trendline" | "errBars" | "ln"
+                )
+            })
+            && stack.iter().any(|ancestor| ancestor == "spPr")
+            && chart_data_table_fill_pattern_is_supported(&value);
         if !is_supported_chart_attribute(tag, &key, &value, chart_type)
             && !is_default_scatter_y_axis_title_body
             && !is_supported_chart_title_body_attribute
@@ -24056,6 +24490,7 @@ fn audit_chart_attributes(
             && !is_supported_data_table_pattern_attribute
             && !is_supported_point_pattern_attribute
             && !is_supported_marker_pattern_attribute
+            && !is_supported_series_pattern_attribute
         {
             return Err(Error::Reverse(format!(
                 "chart part `{part}` has unsupported `{tag}@{key}={value}`; remove custom chart/axis/print formatting or add matching DSL and reverse support"
@@ -27899,6 +28334,12 @@ struct WorksheetChartSeries {
     marker_fill_gradient: Option<serde_json::Map<String, Value>>,
     marker_fill_pattern: Option<serde_json::Map<String, Value>>,
     marker_fill_seen: bool,
+    fill_color: Option<String>,
+    fill_transparency: Option<u32>,
+    fill_pattern: Option<serde_json::Map<String, Value>>,
+    fill_gradient: Option<serde_json::Map<String, Value>>,
+    fill_hidden: bool,
+    fill_seen: bool,
     marker_line_color: Option<String>,
     marker_line_width: Option<f64>,
     marker_line_dash: Option<&'static str>,

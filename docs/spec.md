@@ -267,6 +267,17 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   with a marker outline. Pattern and gradient fills round-trip without a
   manifest. Gradient alpha/theme colors and line effects remain unsupported
   and are rejected during reverse rather than discarded.
+- `Series.fillColor?: "#RRGGBB"` with optional whole-percent
+  `fillTransparency?: integer` (0–100) applies an opaque-RGB solid fill to the
+  data series. `fillPattern?: PointPattern` accepts the 48 DrawingML presets
+  and optional opaque RGB foreground/background colors; `fillGradient?:
+  PointGradient` accepts linear, radial, rectangular, and path gradients with
+  2–10 opaque RGB stops at whole-percent positions. `fillHidden?: true`
+  selects `ChartFormat::set_no_fill()`. Exactly one series-fill
+  representation may be specified; it can coexist with the independent series
+  outline properties below. Reverse preserves series fills from external
+  workbooks without a manifest and rejects theme/indexed colors, gradient
+  alpha, and unsupported fill metadata with repair guidance.
 - `Series.lineColor?: "#RRGGBB"`, `lineWidth?: number`, `lineDash?: "solid" |
   "roundDot" | "squareDot" | "dash" | "dashDot" | "longDash" |
   "longDashDot" | "longDashDotDot"`, `lineTransparency?: number`, and
