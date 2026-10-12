@@ -10,6 +10,9 @@ export default <Workbook>
   </Worksheet>
   <Worksheet name="Illustration">
     <Image cell="A1" width={96} height={48} offsetX={7} offsetY={3} data={logo} altText="Tiny sample logo" decorative={true} />
+    <Image cell="A8" fit="stretch" data={logo} />
+    <Image cell="B8" fit="contain" data={logo} />
+    <Image cell="C8" fit="containCenter" data={logo} />
     <Chart type="column" cell="D2" width={240} height={120}>
       <Series values="Data!$B$2:$B$3" categories="Data!$A$2:$A$3" />
     </Chart>

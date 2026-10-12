@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.83
+Version: 1.84
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -26,9 +26,9 @@ result into a JSON-compatible workbook IR, writes `.xlsx` files with
 `Image` embeds raster image bytes in a worksheet and reverses external image
 relationships and drawing anchors without relying on a private manifest.
 
-- `cell`, `width`, `height`, and `data` are required. `cell` is an A1 anchor;
-  width and height are positive integer pixels from 1 through 1790. `data` is a
-  base64 data URI with one of `image/png`, `image/jpeg`, `image/gif`, or
+- `cell` and `data` are required. `cell` is an A1 anchor. With no `fit`,
+  `width` and `height` are required positive integer pixels from 1 through 1790.
+  `data` is a base64 data URI with one of `image/png`, `image/jpeg`, `image/gif`, or
   `image/bmp`; the encoded bytes are preserved exactly.
 - `altText?: string` is limited to 255 valid XML characters.
   `decorative?: boolean` marks an image as decorative. Both are preserved in
@@ -44,6 +44,14 @@ relationships and drawing anchors without relying on a private manifest.
   top-left of `cell`, in pixels. They default to zero and must be less than
   the default cell dimensions (64×20 pixels) so the anchor remains
   unambiguous.
+- `fit?: "stretch" | "contain" | "containCenter"` scales the image to one
+  default-size cell (64×20 pixels). `stretch` fills the cell and may change the
+  aspect ratio; `contain` preserves the ratio and anchors at the cell's top
+  left; `containCenter` preserves the ratio and centers within the cell. When
+  `fit` is present, omit `width`, `height`, `offsetX`, and `offsetY`. Reverse
+  emits the resulting explicit pixel geometry because OOXML does not preserve
+  the authoring fit mode. Fitting is currently limited to default-size cells;
+  custom row/column dimensions in the target cell are rejected with guidance.
 - `movement?: "moveAndSize" | "moveOnly" | "fixed"` controls how the picture
   responds to cell edits. The default is `moveOnly`, matching
   `Image::new_from_buffer()`. These map to the OOXML two-cell anchor's default,

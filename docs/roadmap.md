@@ -8,13 +8,22 @@ completed batch; they do not block work on the next batch.
 
 ## Next priorities
 
-1. Review remaining commonly used cell/table formatting gaps against the pinned
-   `rust_xlsxwriter` serializer and reverse reader. Only add properties when
-   their serialized semantics can be reproduced without an IR manifest.
-2. Improve diagnostics and integration fixtures where current feature coverage
+1. Audit remaining commonly used cell/table formatting gaps against the pinned
+   `rust_xlsxwriter` serializer and reverse reader, then implement the next
+   common lossless subset.
+2. Extend image fit-to-cell geometry to custom row heights/column widths only
+   after reverse can preserve those actual dimensions exactly.
+3. Improve diagnostics and integration fixtures where current feature coverage
    exposes ambiguous or lossy external workbook structures.
-3. Re-audit public writer APIs and update the coverage table as each batch is
-   completed; the project is not yet claiming full upstream API coverage.
+4. Re-audit public writer APIs as batches land; full upstream API coverage is
+   not claimed.
+
+## Recently delivered
+
+- Image fit modes: `stretch`, `contain`, and `containCenter` for default-size
+  cells. Reverse emits canonical explicit pixel dimensions/offsets because
+  OOXML records picture geometry, not the author's fit method. Custom-sized
+  target cells remain rejected until exact external reverse support lands.
 
 ## Deferred lower-frequency table differential formats
 

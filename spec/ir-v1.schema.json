@@ -1653,11 +1653,12 @@
         "type": { "const": "Image" },
         "props": {
           "type": "object",
-          "required": ["cell", "width", "height", "data"],
+          "required": ["cell", "data"],
           "properties": {
             "cell": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
             "width": { "type": "integer", "minimum": 1, "maximum": 1790 },
             "height": { "type": "integer", "minimum": 1, "maximum": 1790 },
+            "fit": { "enum": ["stretch", "contain", "containCenter"] },
             "data": { "type": "string", "pattern": "^data:image/(png|jpeg|gif|bmp);base64,[A-Za-z0-9+/]+={0,2}$" },
             "altText": { "type": "string", "maxLength": 255 },
             "decorative": { "type": "boolean" },
@@ -1665,6 +1666,20 @@
             "offsetY": { "type": "integer", "minimum": 0, "maximum": 19 },
             "movement": { "enum": ["moveAndSize", "moveOnly", "fixed"] }
           },
+          "allOf": [
+            {
+              "if": { "required": ["fit"] },
+              "then": {
+                "not": { "anyOf": [
+                  { "required": ["width"] },
+                  { "required": ["height"] },
+                  { "required": ["offsetX"] },
+                  { "required": ["offsetY"] }
+                ] }
+              },
+              "else": { "required": ["width", "height"] }
+            }
+          ],
           "additionalProperties": false
         },
         "children": { "type": "array", "maxItems": 0 }

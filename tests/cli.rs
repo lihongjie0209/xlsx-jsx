@@ -710,6 +710,64 @@ export default <Workbook><Worksheet name="Images"><Image cell="A1" width={1} hei
 }
 
 #[test]
+fn validates_image_fit_mode_without_explicit_geometry() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("image-fit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Image cell="A1" fit="containCenter" data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .success();
+}
+
+#[test]
+fn rejects_image_fit_combined_with_explicit_geometry() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-image-fit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Image cell="A1" fit="contain" width={20} height={20} data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Image.fit"))
+        .stderr(predicate::str::contains("omit"));
+}
+
+#[test]
+fn rejects_fit_to_custom_cell_dimensions_with_actionable_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("custom-cell-image-fit.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Column, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Images"><Column min={1} max={1} widthPixels={120} /><Image cell="A1" fit="contain" data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" /></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("custom row/column dimensions"))
+        .stderr(predicate::str::contains("remove the intersecting"));
+}
+
+#[test]
 fn rejects_image_hyperlinks_without_an_excel_compatible_scheme() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("invalid-image-hyperlink.tsx");
@@ -1333,7 +1391,8 @@ fn spec_exposes_embedded_image_component_properties() {
         .stdout(predicate::str::contains("decorative"))
         .stdout(predicate::str::contains("offsetX"))
         .stdout(predicate::str::contains("hyperlink"))
-        .stdout(predicate::str::contains("moveAndSize"));
+        .stdout(predicate::str::contains("moveAndSize"))
+        .stdout(predicate::str::contains("containCenter"));
 }
 
 #[test]
@@ -1513,6 +1572,80 @@ fn builds_reverses_and_rebuilds_embedded_image_without_manifest() {
         "{second_source}"
     );
     assert!(second_source.contains(IMAGE_DATA_URI), "{second_source}");
+}
+
+#[test]
+fn reverses_external_fit_to_cell_images_as_explicit_geometry() {
+    let image_bytes = BASE64_STANDARD
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==")
+        .expect("PNG fixture decodes");
+    let directory = tempdir().expect("temporary directory is available");
+    let external = directory.path().join("external-fitted-images.xlsx");
+    let image = XlsxImage::new_from_buffer(&image_bytes).expect("PNG bytes are valid");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook
+        .add_worksheet()
+        .set_name("Images")
+        .expect("sheet name is valid");
+    worksheet
+        .insert_image_fit_to_cell(0, 0, &image, false)
+        .expect("stretched image inserts");
+    worksheet
+        .insert_image_fit_to_cell(1, 0, &image, true)
+        .expect("contained image inserts");
+    worksheet
+        .insert_image_fit_to_cell_centered(2, 0, &image)
+        .expect("centered image inserts");
+    workbook.save(&external).expect("external workbook saves");
+
+    let reversed = directory.path().join("fitted-images.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(
+        source.contains("cell={\"A1\"} width={64} height={20} data="),
+        "{source}"
+    );
+    assert!(
+        source.contains("cell={\"A2\"} width={20} height={20} data="),
+        "{source}"
+    );
+    assert!(
+        source.contains("cell={\"A3\"} width={20} height={20} data=")
+            && source.contains("offsetX={22}"),
+        "{source}"
+    );
+
+    let rebuilt = directory.path().join("fitted-images-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let roundtrip = directory.path().join("fitted-images-roundtrip.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&roundtrip)
+        .assert()
+        .success();
+    let roundtrip_source = std::fs::read_to_string(roundtrip).expect("roundtrip JSX exists");
+    assert!(
+        roundtrip_source.contains("cell={\"A3\"} width={20} height={20} data=")
+            && roundtrip_source.contains("offsetX={22}"),
+        "{roundtrip_source}"
+    );
 }
 
 #[test]

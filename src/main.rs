@@ -4730,23 +4730,26 @@ fn compile_image(
         .expect("validated Image.data URI");
     let bytes = BASE64.decode(encoded).expect("validated Image.data base64");
     let mut image = XlsxImage::new_from_buffer(&bytes)
-        .map_err(|error| Error::Compile(format!("cannot decode Image at {cell}: {error}")))?
-        .set_width(
-            u32::try_from(
-                component.props["width"]
-                    .as_u64()
-                    .expect("validated Image.width"),
+        .map_err(|error| Error::Compile(format!("cannot decode Image at {cell}: {error}")))?;
+    if component.props.get("fit").is_none() {
+        image = image
+            .set_width(
+                u32::try_from(
+                    component.props["width"]
+                        .as_u64()
+                        .expect("validated Image.width"),
+                )
+                .expect("validated Image.width"),
             )
-            .expect("validated Image.width"),
-        )
-        .set_height(
-            u32::try_from(
-                component.props["height"]
-                    .as_u64()
-                    .expect("validated Image.height"),
-            )
-            .expect("validated Image.height"),
-        );
+            .set_height(
+                u32::try_from(
+                    component.props["height"]
+                        .as_u64()
+                        .expect("validated Image.height"),
+                )
+                .expect("validated Image.height"),
+            );
+    }
     let offset_x = u32::try_from(
         component
             .props
@@ -4785,8 +4788,14 @@ fn compile_image(
     if component.props.get("decorative").and_then(Value::as_bool) == Some(true) {
         image = image.set_decorative(true);
     }
-    worksheet
-        .insert_image_with_offset(row, column, &image, offset_x, offset_y)
+    let result = match component.props.get("fit").and_then(Value::as_str) {
+        Some("stretch") => worksheet.insert_image_fit_to_cell(row, column, &image, false),
+        Some("contain") => worksheet.insert_image_fit_to_cell(row, column, &image, true),
+        Some("containCenter") => worksheet.insert_image_fit_to_cell_centered(row, column, &image),
+        None => worksheet.insert_image_with_offset(row, column, &image, offset_x, offset_y),
+        Some(_) => unreachable!("validated Image.fit"),
+    };
+    result
         .map(|_| ())
         .map_err(|error| Error::Compile(format!("cannot add Image at {cell}: {error}")))
 }

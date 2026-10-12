@@ -8548,6 +8548,7 @@ fn validate_image(image: &Node, index: usize) -> Result<()> {
             "offsetX",
             "offsetY",
             "movement",
+            "fit",
         ],
         "Image",
     )?;
@@ -8563,27 +8564,7 @@ fn validate_image(image: &Node, index: usize) -> Result<()> {
             "Image.cell `{cell}` is not a valid A1 anchor; use a cell such as B2"
         )));
     }
-    for property in ["width", "height"] {
-        if !image
-            .props
-            .get(property)
-            .and_then(Value::as_u64)
-            .is_some_and(|value| (1..=1790).contains(&value))
-        {
-            return Err(Error::Compile(format!(
-                "Image.{property} is required and must be an integer from 1 to 1790 pixels"
-            )));
-        }
-    }
-    for (property, maximum) in [("offsetX", 63), ("offsetY", 19)] {
-        if let Some(value) = image.props.get(property)
-            && value.as_u64().is_none_or(|value| value > maximum)
-        {
-            return Err(Error::Compile(format!(
-                "Image.{property} must be an integer from 0 through {maximum} pixels within the anchored cell"
-            )));
-        }
-    }
+    validate_image_geometry(image)?;
     if let Some(value) = image.props.get("movement") {
         let Some(value) = value.as_str() else {
             return Err(Error::Compile(
@@ -8619,6 +8600,53 @@ fn validate_image(image: &Node, index: usize) -> Result<()> {
         return Err(Error::Compile(
             "Image.decorative must be a boolean; use true or false".into(),
         ));
+    }
+    Ok(())
+}
+
+fn validate_image_geometry(image: &Node) -> Result<()> {
+    let fit = image.props.get("fit");
+    if let Some(value) = fit {
+        let Some(value) = value.as_str() else {
+            return Err(Error::Compile(
+                "Image.fit must be a string; use stretch, contain, or containCenter".into(),
+            ));
+        };
+        if !["stretch", "contain", "containCenter"].contains(&value) {
+            return Err(Error::Compile(format!(
+                "Image.fit `{value}` is unsupported; use stretch, contain, or containCenter"
+            )));
+        }
+        if ["width", "height", "offsetX", "offsetY"]
+            .iter()
+            .any(|property| image.props.contains_key(*property))
+        {
+            return Err(Error::Compile(
+                "Image.fit cannot be combined with width, height, offsetX, or offsetY; omit explicit geometry when using fit".into(),
+            ));
+        }
+    } else {
+        for property in ["width", "height"] {
+            if !image
+                .props
+                .get(property)
+                .and_then(Value::as_u64)
+                .is_some_and(|value| (1..=1790).contains(&value))
+            {
+                return Err(Error::Compile(format!(
+                    "Image.{property} is required and must be an integer from 1 to 1790 pixels unless Image.fit is set"
+                )));
+            }
+        }
+    }
+    for (property, maximum) in [("offsetX", 63), ("offsetY", 19)] {
+        if let Some(value) = image.props.get(property)
+            && value.as_u64().is_none_or(|value| value > maximum)
+        {
+            return Err(Error::Compile(format!(
+                "Image.{property} must be an integer from 0 through {maximum} pixels within the anchored cell"
+            )));
+        }
     }
     Ok(())
 }
@@ -8748,12 +8776,16 @@ fn validate_image_layouts(
         let cell = image.props["cell"].as_str().expect("validated Image.cell");
         let (first_row, first_column) =
             parse_a1_cell_reference(cell).expect("validated Image.cell");
-        let width = image.props["width"]
-            .as_u64()
-            .expect("validated Image.width");
-        let height = image.props["height"]
-            .as_u64()
-            .expect("validated Image.height");
+        let width = image
+            .props
+            .get("width")
+            .and_then(Value::as_u64)
+            .unwrap_or(64);
+        let height = image
+            .props
+            .get("height")
+            .and_then(Value::as_u64)
+            .unwrap_or(20);
         let width_with_offset = image
             .props
             .get("offsetX")
