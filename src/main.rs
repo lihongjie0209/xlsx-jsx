@@ -14,22 +14,23 @@ use rust_xlsxwriter::{
     Chart, ChartAxisCrossing, ChartAxisDateUnitType, ChartAxisDisplayUnitType,
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLayout,
-    ChartLegendPosition, ChartLine, ChartLineDashType, ChartMarker, ChartMarkerType,
-    ChartPatternFill, ChartPatternFillType, ChartPoint, ChartSolidFill, ChartTrendline,
-    ChartTrendlineType, ChartType, Color, ConditionalFormat2ColorScale,
-    ConditionalFormat3ColorScale, ConditionalFormatAverage, ConditionalFormatAverageRule,
-    ConditionalFormatBlank, ConditionalFormatCell, ConditionalFormatCellRule,
-    ConditionalFormatCustomIcon, ConditionalFormatDataBar, ConditionalFormatDataBarAxisPosition,
-    ConditionalFormatDataBarDirection, ConditionalFormatDate, ConditionalFormatDateRule,
-    ConditionalFormatDuplicate, ConditionalFormatError, ConditionalFormatFormula,
-    ConditionalFormatIconSet, ConditionalFormatIconType, ConditionalFormatText,
-    ConditionalFormatTextRule, ConditionalFormatTop, ConditionalFormatTopRule,
-    ConditionalFormatType, ConditionalFormatValue, DataValidation, DataValidationErrorStyle,
-    DataValidationRule, DocProperties, FilterCondition, FilterCriteria, Format, FormatAlign,
-    FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript, FormatUnderline, Formula,
-    HeaderImagePosition, IgnoreError, Image as XlsxImage, Note, ObjectMovement,
-    Sparkline as XlsxSparkline, SparklineType, Table, TableColumn, TableStyle, Url, Workbook,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartGradientFill,
+    ChartGradientFillType, ChartGradientStop, ChartLayout, ChartLegendPosition, ChartLine,
+    ChartLineDashType, ChartMarker, ChartMarkerType, ChartPatternFill, ChartPatternFillType,
+    ChartPoint, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType, Color,
+    ConditionalFormat2ColorScale, ConditionalFormat3ColorScale, ConditionalFormatAverage,
+    ConditionalFormatAverageRule, ConditionalFormatBlank, ConditionalFormatCell,
+    ConditionalFormatCellRule, ConditionalFormatCustomIcon, ConditionalFormatDataBar,
+    ConditionalFormatDataBarAxisPosition, ConditionalFormatDataBarDirection, ConditionalFormatDate,
+    ConditionalFormatDateRule, ConditionalFormatDuplicate, ConditionalFormatError,
+    ConditionalFormatFormula, ConditionalFormatIconSet, ConditionalFormatIconType,
+    ConditionalFormatText, ConditionalFormatTextRule, ConditionalFormatTop,
+    ConditionalFormatTopRule, ConditionalFormatType, ConditionalFormatValue, DataValidation,
+    DataValidationErrorStyle, DataValidationRule, DocProperties, FilterCondition, FilterCriteria,
+    Format, FormatAlign, FormatBorder, FormatDiagonalBorder, FormatPattern, FormatScript,
+    FormatUnderline, Formula, HeaderImagePosition, IgnoreError, Image as XlsxImage, Note,
+    ObjectMovement, Sparkline as XlsxSparkline, SparklineType, Table, TableColumn, TableStyle, Url,
+    Workbook,
 };
 use serde_json::Value;
 use xlsx_jsx::{
@@ -2152,11 +2153,20 @@ fn configure_chart_series_point_colors(
     let colors = series.props.get("pointColors").and_then(Value::as_object);
     let lines = series.props.get("pointLines").and_then(Value::as_object);
     let patterns = series.props.get("pointPatterns").and_then(Value::as_object);
+    let gradients = series
+        .props
+        .get("pointGradients")
+        .and_then(Value::as_object);
     let hidden_fills = series
         .props
         .get("pointFillHidden")
         .and_then(Value::as_array);
-    if colors.is_none() && lines.is_none() && patterns.is_none() && hidden_fills.is_none() {
+    if colors.is_none()
+        && lines.is_none()
+        && patterns.is_none()
+        && gradients.is_none()
+        && hidden_fills.is_none()
+    {
         return;
     }
     let max_property_index = colors
@@ -2164,6 +2174,7 @@ fn configure_chart_series_point_colors(
         .flat_map(serde_json::Map::keys)
         .chain(lines.into_iter().flat_map(serde_json::Map::keys))
         .chain(patterns.into_iter().flat_map(serde_json::Map::keys))
+        .chain(gradients.into_iter().flat_map(serde_json::Map::keys))
         .filter_map(|key| key.parse::<usize>().ok())
         .max();
     let max_hidden_index = hidden_fills
@@ -2184,70 +2195,132 @@ fn configure_chart_series_point_colors(
         let color = colors.and_then(|values| values.get(&index.to_string()));
         let line = lines.and_then(|values| values.get(&index.to_string()));
         let pattern = patterns.and_then(|values| values.get(&index.to_string()));
+        let gradient = gradients.and_then(|values| values.get(&index.to_string()));
         let fill_hidden = hidden_fills.is_some_and(|indices| {
             indices
                 .iter()
                 .any(|value| value.as_u64() == Some(index as u64))
         });
-        if color.is_none() && line.is_none() && pattern.is_none() && !fill_hidden {
+        if color.is_none()
+            && line.is_none()
+            && pattern.is_none()
+            && gradient.is_none()
+            && !fill_hidden
+        {
             continue;
         }
         let mut format = ChartFormat::new();
         if fill_hidden {
             format.set_no_fill();
         }
-        if let Some(color) = color.and_then(Value::as_str) {
-            let mut fill = ChartSolidFill::new();
-            fill.set_color(color);
-            if let Some(transparency) = transparencies
-                .and_then(|values| values.get(&index.to_string()))
-                .and_then(Value::as_u64)
-            {
-                fill.set_transparency(
-                    u8::try_from(transparency).expect("validated point color transparency"),
-                );
-            }
-            format.set_solid_fill(&fill);
-        }
-        if let Some(properties) = pattern.and_then(Value::as_object) {
-            let mut pattern_fill = ChartPatternFill::new();
-            let pattern_name = properties
-                .get("pattern")
-                .and_then(Value::as_str)
-                .expect("validated point pattern");
-            pattern_fill.set_pattern(chart_pattern_fill_type(pattern_name));
-            if let Some(color) = properties.get("foregroundColor").and_then(Value::as_str) {
-                pattern_fill.set_foreground_color(color);
-            }
-            if let Some(color) = properties.get("backgroundColor").and_then(Value::as_str) {
-                pattern_fill.set_background_color(color);
-            }
-            format.set_pattern_fill(&pattern_fill);
-        }
-        if let Some(properties) = line.and_then(Value::as_object) {
-            let mut chart_line = ChartLine::new();
-            if let Some(color) = properties.get("color").and_then(Value::as_str) {
-                chart_line.set_color(color);
-            }
-            if let Some(width) = properties.get("width").and_then(Value::as_f64) {
-                chart_line.set_width(width);
-            }
-            if let Some(dash) = properties.get("dash").and_then(Value::as_str) {
-                chart_line.set_dash_type(chart_line_dash_type(dash));
-            }
-            if let Some(transparency) = properties.get("transparency").and_then(Value::as_u64) {
-                chart_line.set_transparency(
-                    u8::try_from(transparency).expect("validated point line transparency"),
-                );
-            }
-            if let Some(hidden) = properties.get("hidden").and_then(Value::as_bool) {
-                chart_line.set_hidden(hidden);
-            }
-            format.set_line(&chart_line);
-        }
+        configure_chart_point_fill(&mut format, color, pattern, gradient, transparencies, index);
+        configure_chart_point_line(&mut format, line);
         *point = ChartPoint::new().set_format(&mut format);
     }
     chart_series.set_points(&points);
+}
+
+fn configure_chart_point_fill(
+    format: &mut ChartFormat,
+    color: Option<&Value>,
+    pattern: Option<&Value>,
+    gradient: Option<&Value>,
+    transparencies: Option<&serde_json::Map<String, Value>>,
+    index: usize,
+) {
+    if let Some(color) = color.and_then(Value::as_str) {
+        let mut fill = ChartSolidFill::new();
+        fill.set_color(color);
+        if let Some(transparency) = transparencies
+            .and_then(|values| values.get(&index.to_string()))
+            .and_then(Value::as_u64)
+        {
+            fill.set_transparency(
+                u8::try_from(transparency).expect("validated point color transparency"),
+            );
+        }
+        format.set_solid_fill(&fill);
+    }
+    if let Some(properties) = pattern.and_then(Value::as_object) {
+        let mut pattern_fill = ChartPatternFill::new();
+        let pattern_name = properties
+            .get("pattern")
+            .and_then(Value::as_str)
+            .expect("validated point pattern");
+        pattern_fill.set_pattern(chart_pattern_fill_type(pattern_name));
+        if let Some(color) = properties.get("foregroundColor").and_then(Value::as_str) {
+            pattern_fill.set_foreground_color(color);
+        }
+        if let Some(color) = properties.get("backgroundColor").and_then(Value::as_str) {
+            pattern_fill.set_background_color(color);
+        }
+        format.set_pattern_fill(&pattern_fill);
+    }
+    if let Some(properties) = gradient.and_then(Value::as_object) {
+        let mut fill = ChartGradientFill::new();
+        let gradient_type = match properties
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("linear")
+        {
+            "linear" => ChartGradientFillType::Linear,
+            "radial" => ChartGradientFillType::Radial,
+            "rectangular" => ChartGradientFillType::Rectangular,
+            "path" => ChartGradientFillType::Path,
+            _ => unreachable!("validated point gradient type"),
+        };
+        fill.set_type(gradient_type);
+        if let Some(angle) = properties.get("angle").and_then(Value::as_u64) {
+            fill.set_angle(u16::try_from(angle).expect("validated gradient angle"));
+        }
+        let stops = properties
+            .get("stops")
+            .and_then(Value::as_array)
+            .expect("validated gradient stops");
+        let stops = stops
+            .iter()
+            .map(|stop| {
+                let stop = stop.as_object().expect("validated gradient stop");
+                ChartGradientStop::new(
+                    stop.get("color")
+                        .and_then(Value::as_str)
+                        .expect("validated stop color"),
+                    u8::try_from(
+                        stop.get("position")
+                            .and_then(Value::as_u64)
+                            .expect("validated stop position"),
+                    )
+                    .expect("validated stop position range"),
+                )
+            })
+            .collect::<Vec<_>>();
+        fill.set_gradient_stops(&stops);
+        format.set_gradient_fill(&fill);
+    }
+}
+
+fn configure_chart_point_line(format: &mut ChartFormat, line: Option<&Value>) {
+    if let Some(properties) = line.and_then(Value::as_object) {
+        let mut chart_line = ChartLine::new();
+        if let Some(color) = properties.get("color").and_then(Value::as_str) {
+            chart_line.set_color(color);
+        }
+        if let Some(width) = properties.get("width").and_then(Value::as_f64) {
+            chart_line.set_width(width);
+        }
+        if let Some(dash) = properties.get("dash").and_then(Value::as_str) {
+            chart_line.set_dash_type(chart_line_dash_type(dash));
+        }
+        if let Some(transparency) = properties.get("transparency").and_then(Value::as_u64) {
+            chart_line.set_transparency(
+                u8::try_from(transparency).expect("validated point line transparency"),
+            );
+        }
+        if let Some(hidden) = properties.get("hidden").and_then(Value::as_bool) {
+            chart_line.set_hidden(hidden);
+        }
+        format.set_line(&chart_line);
+    }
 }
 
 fn configure_chart_series_line(chart_series: &mut rust_xlsxwriter::ChartSeries, series: &Node) {
@@ -7129,6 +7202,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
         if !series.point_patterns.is_empty() {
             output.push_str(" pointPatterns={{");
             for (entry_index, (point, properties)) in series.point_patterns.iter().enumerate() {
+                if entry_index > 0 {
+                    output.push_str(", ");
+                }
+                let _ = write!(output, "{point}: {}", Value::Object(properties.clone()));
+            }
+            output.push_str("}}");
+        }
+        if !series.point_gradients.is_empty() {
+            output.push_str(" pointGradients={{");
+            for (entry_index, (point, properties)) in series.point_gradients.iter().enumerate() {
                 if entry_index > 0 {
                     output.push_str(", ");
                 }
@@ -13731,6 +13814,13 @@ fn parse_chart_xml(
         "ln",
         "solidFill",
         "pattFill",
+        "gradFill",
+        "gsLst",
+        "gs",
+        "lin",
+        "path",
+        "fillToRect",
+        "tileRect",
         "fgClr",
         "bgClr",
         "srgbClr",
@@ -13864,6 +13954,12 @@ fn parse_chart_xml(
     let mut point_pattern: Option<String> = None;
     let mut point_pattern_foreground_color: Option<String> = None;
     let mut point_pattern_background_color: Option<String> = None;
+    let mut point_gradient_type: Option<&'static str> = None;
+    let mut point_gradient_angle: Option<u16> = None;
+    let mut point_gradient_stops = Vec::<Value>::new();
+    let mut point_gradient_stop_position: Option<u8> = None;
+    let mut point_gradient_stop_color: Option<String> = None;
+    let mut point_gradient_seen = false;
     let mut point_fill_hidden = false;
     let mut point_line_style = WorksheetChartGridlineStyle::default();
     let mut point_line_seen = false;
@@ -14932,6 +15028,14 @@ fn parse_chart_xml(
                         "chart part `{part}` contains unsupported `<{tag}>` semantics; remove chart titles/formatting or add matching Chart properties and reverse support"
                     )));
                 }
+                if tag == "gradFill"
+                    && !(stack.last().is_some_and(|parent| parent == "spPr")
+                        && stack.iter().any(|ancestor| ancestor == "dPt"))
+                {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` uses a gradient outside a data-point fill; only `Series.pointGradients` is represented, so remove it or add matching DSL support"
+                    )));
+                }
                 let in_error_bars = stack.iter().any(|ancestor| ancestor == "errBars");
                 if in_error_bars
                     && !matches!(
@@ -15189,6 +15293,13 @@ fn parse_chart_xml(
                             | "noFill"
                             | "prstDash"
                             | "pattFill"
+                            | "gradFill"
+                            | "gsLst"
+                            | "gs"
+                            | "lin"
+                            | "path"
+                            | "fillToRect"
+                            | "tileRect"
                             | "fgClr"
                             | "bgClr"
                     )
@@ -15618,6 +15729,12 @@ fn parse_chart_xml(
                         point_pattern = None;
                         point_pattern_foreground_color = None;
                         point_pattern_background_color = None;
+                        point_gradient_type = None;
+                        point_gradient_angle = None;
+                        point_gradient_stops.clear();
+                        point_gradient_stop_position = None;
+                        point_gradient_stop_color = None;
+                        point_gradient_seen = false;
                         point_fill_hidden = false;
                         point_line_style = WorksheetChartGridlineStyle::default();
                         point_line_seen = false;
@@ -15651,6 +15768,77 @@ fn parse_chart_xml(
                                 "chart part `{part}` repeats a point pattern fill; keep one supported pattern per point"
                             )));
                         }
+                    }
+                    "gradFill"
+                        if stack.last().is_some_and(|parent| parent == "spPr")
+                            && stack.iter().any(|ancestor| ancestor == "dPt") =>
+                    {
+                        if point_gradient_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a point gradient fill; retain one fill per point"
+                            )));
+                        }
+                        point_gradient_seen = true;
+                        for (name, expected) in [("flip", "none"), ("rotWithShape", "1")] {
+                            if let Some(value) =
+                                chart_xml_attribute(&event, name, reader.decoder())?
+                                && value != expected
+                            {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` has unsupported gradient {name}=`{value}`; keep the writer-default `{expected}` value"
+                                )));
+                            }
+                        }
+                    }
+                    "gs" if stack.last().is_some_and(|parent| parent == "gsLst")
+                        && stack.iter().any(|ancestor| ancestor == "gradFill") =>
+                    {
+                        let raw = chart_xml_attribute(&event, "pos", reader.decoder())?
+                            .ok_or_else(|| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has a gradient stop without pos"
+                                ))
+                            })?;
+                        let position = raw.parse::<u32>().ok().filter(|value| *value <= 100_000 && value % 1000 == 0)
+                            .ok_or_else(|| Error::Reverse(format!("chart part `{part}` has gradient stop position `{raw}` not representable as an integer percent; use whole-percent stops")))?;
+                        point_gradient_stop_position =
+                            Some(u8::try_from(position / 1000).expect("validated percent"));
+                    }
+                    "lin" if stack.last().is_some_and(|parent| parent == "gradFill") => {
+                        let raw = chart_xml_attribute(&event, "ang", reader.decoder())?
+                            .ok_or_else(|| {
+                                Error::Reverse(format!(
+                                    "chart part `{part}` has a linear gradient without ang"
+                                ))
+                            })?;
+                        let angle = raw.parse::<u32>().ok().filter(|value| *value <= 21_540_000 && value % 60_000 == 0)
+                            .ok_or_else(|| Error::Reverse(format!("chart part `{part}` has linear gradient angle `{raw}` not representable as whole degrees")))?;
+                        point_gradient_angle =
+                            Some(u16::try_from(angle / 60_000).expect("validated angle"));
+                        if let Some(scaled) =
+                            chart_xml_attribute(&event, "scaled", reader.decoder())?
+                            && scaled != "0"
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported linear gradient scaled=`{scaled}`; keep scaled=0"
+                            )));
+                        }
+                        point_gradient_type = Some("linear");
+                    }
+                    "path" if stack.last().is_some_and(|parent| parent == "gradFill") => {
+                        point_gradient_type = Some(
+                            match chart_xml_attribute(&event, "path", reader.decoder())?.as_deref()
+                            {
+                                Some("circle") => "radial",
+                                Some("rect") => "rectangular",
+                                Some("shape") => "path",
+                                _ => {
+                                    return Err(Error::Reverse(format!(
+                                        "chart part `{part}` has an unsupported path gradient type; use circle, rect, or shape"
+                                    )));
+                                }
+                            },
+                        );
                     }
                     "pattFill"
                         if stack.last().is_some_and(|parent| parent == "spPr")
@@ -17578,6 +17766,7 @@ fn parse_chart_xml(
                         point_color_transparencies: BTreeMap::new(),
                         point_lines: BTreeMap::new(),
                         point_patterns: BTreeMap::new(),
+                        point_gradients: BTreeMap::new(),
                         point_fill_hidden: BTreeSet::new(),
                         custom_labels: BTreeMap::new(),
                         point_labels: BTreeMap::new(),
@@ -19373,6 +19562,30 @@ fn parse_chart_xml(
                         }
                     }
                     "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "gs")
+                            && stack.iter().any(|ancestor| ancestor == "gradFill") =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "gradient stop color",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB gradient stop; use opaque six-digit RGB colors"
+                            )));
+                        }
+                        if point_gradient_stop_color
+                            .replace(format!("#{color}").to_ascii_uppercase())
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a gradient stop color; keep one opaque RGB color per stop"
+                            )));
+                        }
+                    }
+                    "srgbClr"
                         if matches!(stack.last().map(String::as_str), Some("fgClr" | "bgClr"))
                             && stack.iter().any(|ancestor| ancestor == "dTable")
                             && stack.iter().any(|ancestor| ancestor == "pattFill")
@@ -19446,6 +19659,11 @@ fn parse_chart_xml(
                             .any(|item| matches!(item.as_str(), "upBars" | "downBars")) =>
                     {
                         // The targeted stock-bar parser handles fill/line alpha.
+                    }
+                    "alpha" if stack.iter().any(|ancestor| ancestor == "gradFill") => {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has alpha on a gradient stop; point gradients support opaque RGB colors only, so remove alpha or use an opaque color"
+                        )));
                     }
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
@@ -21045,8 +21263,10 @@ fn parse_chart_xml(
                     let color = point_color.take();
                     let transparency = point_transparency.take();
                     let pattern = point_pattern.take();
+                    let gradient = point_gradient_seen;
                     if color.is_none()
                         && pattern.is_none()
+                        && !gradient
                         && !point_fill_hidden
                         && !point_line_seen
                     {
@@ -21054,12 +21274,16 @@ fn parse_chart_xml(
                             "chart part `{part}` has an empty data-point override; add a supported RGB or pattern fill, or a ChartLine outline"
                         )));
                     }
-                    if color.is_some() && pattern.is_some() {
+                    if usize::from(color.is_some())
+                        + usize::from(pattern.is_some())
+                        + usize::from(gradient)
+                        > 1
+                    {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` has both solid and pattern fills on one data point; retain only one fill representation"
                         )));
                     }
-                    if point_fill_hidden && (color.is_some() || pattern.is_some()) {
+                    if point_fill_hidden && (color.is_some() || pattern.is_some() || gradient) {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` combines point no-fill with another fill; retain only one fill representation"
                         )));
@@ -21091,6 +21315,15 @@ fn parse_chart_xml(
                     if color.is_some() && current.point_patterns.contains_key(&index) {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` has both solid and pattern fills at point index {index}; retain only one fill representation"
+                        )));
+                    }
+                    if gradient
+                        && (current.point_colors.contains_key(&index)
+                            || current.point_patterns.contains_key(&index)
+                            || current.point_fill_hidden.contains(&index))
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has conflicting fill representations at point index {index}; retain one fill per point"
                         )));
                     }
                     if let Some(color) = color
@@ -21130,10 +21363,41 @@ fn parse_chart_xml(
                             )));
                         }
                     }
+                    if point_fill_hidden && current.point_gradients.contains_key(&index) {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` combines point no-fill and gradient fill at index {index}; retain one fill representation"
+                        )));
+                    }
                     if point_fill_hidden && !current.point_fill_hidden.insert(index) {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` repeats point no-fill at index {index}; keep one no-fill override"
                         )));
+                    }
+                    if gradient {
+                        let gradient_type = point_gradient_type.unwrap_or("linear");
+                        let stops = std::mem::take(&mut point_gradient_stops);
+                        if !(2..=10).contains(&stops.len()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has {} gradient stops; retain 2 through 10 stops",
+                                stops.len()
+                            )));
+                        }
+                        let mut properties = serde_json::Map::new();
+                        if gradient_type != "linear" {
+                            properties.insert("type".into(), Value::String(gradient_type.into()));
+                        }
+                        if gradient_type == "linear"
+                            && point_gradient_angle.is_some_and(|angle| angle != 90)
+                        {
+                            properties
+                                .insert("angle".into(), serde_json::json!(point_gradient_angle));
+                        }
+                        properties.insert("stops".into(), Value::Array(stops));
+                        if current.point_gradients.insert(index, properties).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats gradient at point index {index}; keep one gradient fill per point"
+                            )));
+                        }
                     }
                     if point_line_seen {
                         let mut properties = serde_json::Map::new();
@@ -21160,6 +21424,22 @@ fn parse_chart_xml(
                             )));
                         }
                     }
+                }
+                if tag == "gs" && stack.iter().any(|ancestor| ancestor == "gradFill") {
+                    let position = point_gradient_stop_position.take().ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "chart part `{part}` has a gradient stop without a position"
+                        ))
+                    })?;
+                    let color = point_gradient_stop_color.take().ok_or_else(|| {
+                        Error::Reverse(format!(
+                            "chart part `{part}` has a gradient stop without an opaque RGB color"
+                        ))
+                    })?;
+                    let mut stop = serde_json::Map::new();
+                    stop.insert("color".into(), Value::String(color));
+                    stop.insert("position".into(), serde_json::json!(position));
+                    point_gradient_stops.push(Value::Object(stop));
                 }
                 if tag == "trendline" {
                     let trendline = series
@@ -21581,6 +21861,7 @@ fn parse_chart_xml(
             .point_colors
             .keys()
             .chain(item.point_patterns.keys())
+            .chain(item.point_gradients.keys())
             .chain(item.point_lines.keys())
             .chain(item.point_fill_hidden.iter())
             .max()
@@ -23907,6 +24188,17 @@ fn is_supported_chart_attribute(
         ("srgbClr", "val") => {
             value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
         }
+        ("gradFill", "flip") => value == "none",
+        ("gs", "pos") => value
+            .parse::<u32>()
+            .is_ok_and(|position| position <= 100_000 && position % 1000 == 0),
+        ("lin", "ang") => value
+            .parse::<u32>()
+            .is_ok_and(|angle| angle <= 21_540_000 && angle % 60_000 == 0),
+        ("path", "path") => matches!(value, "circle" | "rect" | "shape"),
+        ("fillToRect", "l" | "t") => matches!(value, "100000" | "50000"),
+        ("fillToRect", "r" | "b") => value == "50000",
+        ("tileRect", "r" | "b") => value == "-100000",
         ("layoutTarget", "val") => matches!(value, "inner" | "outer"),
         ("xMode" | "yMode", "val") => value == "edge",
         ("x" | "y" | "w" | "h", "val") => value
@@ -23999,7 +24291,8 @@ fn is_supported_chart_attribute(
         ("dispEq" | "dispRSqr", "val") => {
             matches!(value, "0" | "1" | "false" | "true")
         }
-        ("auto" | "marker" | "varyColors", "val") => value == "1",
+        ("gradFill", "rotWithShape") | ("auto" | "marker" | "varyColors", "val") => value == "1",
+        ("lin", "scaled") | ("pPr", "rtl") => value == "0",
         ("delete", "val") => matches!(value, "0" | "1" | "false" | "true"),
         ("numFmt", "sourceLinked") => {
             matches!(value, "0" | "1" | "false" | "true")
@@ -24058,7 +24351,6 @@ fn is_supported_chart_attribute(
         ("errDir" | "errBarType" | "errValType" | "noEndCap", "val") => {
             is_supported_error_bar_attribute(tag, value)
         }
-        ("pPr", "rtl") => value == "0",
         ("pageMargins", "b" | "t") => value == "0.75",
         ("pageMargins", "l" | "r") => value == "0.7",
         ("pageMargins", "header" | "footer") => value == "0.3",
@@ -27421,6 +27713,7 @@ struct WorksheetChartSeries {
     point_color_transparencies: BTreeMap<usize, u32>,
     point_lines: BTreeMap<usize, serde_json::Map<String, Value>>,
     point_patterns: BTreeMap<usize, serde_json::Map<String, Value>>,
+    point_gradients: BTreeMap<usize, serde_json::Map<String, Value>>,
     point_fill_hidden: BTreeSet<usize>,
     custom_labels: BTreeMap<usize, String>,
     point_labels: BTreeMap<usize, serde_json::Map<String, Value>>,

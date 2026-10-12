@@ -6,9 +6,10 @@ use rust_xlsxwriter::{
     Chart as XlsxChart, ChartAxisCrossing, ChartAxisDateUnitType, ChartAxisDisplayUnitType,
     ChartAxisLabelAlignment, ChartAxisLabelPosition, ChartAxisTickType, ChartDataLabel,
     ChartDataLabelPosition, ChartDataTable as XlsxChartDataTable, ChartEmptyCells, ChartErrorBars,
-    ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartLine,
-    ChartLineDashType, ChartMarker, ChartMarkerType, ChartPatternFill, ChartPatternFillType,
-    ChartPoint, ChartRange, ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType, Color,
+    ChartErrorBarsDirection, ChartErrorBarsType, ChartFont, ChartFormat, ChartGradientFill,
+    ChartGradientFillType, ChartGradientStop, ChartLine, ChartLineDashType, ChartMarker,
+    ChartMarkerType, ChartPatternFill, ChartPatternFillType, ChartPoint, ChartRange,
+    ChartSolidFill, ChartTrendline, ChartTrendlineType, ChartType, Color,
     DocProperties as XlsxDocProperties, ExcelDateTime, HeaderImagePosition, Image as XlsxImage,
     ObjectMovement, Sparkline as XlsxSparkline, SparklineType, Workbook as XlsxWorkbook,
 };
@@ -819,7 +820,88 @@ fn spec_exposes_chart_point_formatting() {
         .success()
         .stdout(predicate::str::contains("pointLines"))
         .stdout(predicate::str::contains("pointPatterns"))
+        .stdout(predicate::str::contains("pointGradients"))
         .stdout(predicate::str::contains("pointFillHidden"));
+}
+
+#[test]
+fn reverses_external_chart_point_gradient_without_manifest_and_rebuilds_it() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("point-gradient.xlsx");
+    let source_path = directory.path().join("point-gradient.tsx");
+    let rebuilt_path = directory.path().join("point-gradient-rebuilt.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_number(0, 0, 10).unwrap();
+    worksheet.write_number(1, 0, 20).unwrap();
+    let mut gradient = ChartGradientFill::new();
+    gradient
+        .set_type(ChartGradientFillType::Radial)
+        .set_gradient_stops(&[
+            ChartGradientStop::new("#C00000", 0),
+            ChartGradientStop::new("#FFF2CC", 55),
+            ChartGradientStop::new("#4472C4", 100),
+        ]);
+    let mut point_format = ChartFormat::new();
+    point_format.set_gradient_fill(&gradient);
+    let points = [
+        ChartPoint::new(),
+        ChartPoint::new().set_format(&mut point_format),
+    ];
+    let mut chart = XlsxChart::new(ChartType::Column);
+    chart
+        .add_series()
+        .set_values("Data!$A$1:$A$2")
+        .set_points(&points);
+    worksheet.insert_chart(4, 2, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&source_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&source_path).unwrap();
+    assert!(source.contains("pointGradients={{1:"), "{source}");
+    assert!(source.contains("\"type\":\"radial\""), "{source}");
+    assert!(source.contains("\"position\":55"), "{source}");
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<a:path path=\"circle\">"), "{xml}");
+    assert!(
+        xml.contains("<a:gs pos=\"55000\"><a:srgbClr val=\"FFF2CC\"/></a:gs>"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn point_gradients_reject_invalid_stops_with_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source_path = directory.path().join("invalid-point-gradient.tsx");
+    std::fs::write(
+        &source_path,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="column" cell="D2"><Series values="Data!B2:B3" pointGradients={{1: {stops: [{color: "#FF0000", position: 0}]}}} /></Chart></Worksheet></Workbook>;"##,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(&source_path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("pointGradients[1].stops"))
+        .stderr(predicate::str::contains("2 through 10"));
 }
 
 #[test]

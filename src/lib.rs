@@ -5173,6 +5173,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "pointColorTransparencies",
                 "pointLines",
                 "pointPatterns",
+                "pointGradients",
                 "pointFillHidden",
                 "gap",
                 "overlap",
@@ -5724,6 +5725,7 @@ fn validate_chart_series_properties(
     validate_chart_series_point_color_transparencies(series)?;
     validate_chart_series_point_lines(series)?;
     validate_chart_series_point_patterns(series)?;
+    validate_chart_series_point_gradients(series)?;
     validate_chart_series_point_fill_hidden(series)?;
     validate_chart_series_trendline(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
@@ -6614,6 +6616,144 @@ fn validate_chart_series_point_fill_hidden(series: &Node) -> Result<()> {
                 "Series.pointFillHidden index {index} conflicts with pointPatterns[{index}]; choose one fill representation"
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_chart_series_point_gradients(series: &Node) -> Result<()> {
+    const MAX_POINT_INDEX: usize = 1_048_575;
+    let Some(value) = series.props.get("pointGradients") else {
+        return Ok(());
+    };
+    let Some(gradients) = value.as_object() else {
+        return Err(Error::Compile("Series.pointGradients must be an object keyed by zero-based point index; use `{1: {stops: [{color: \"#FF0000\", position: 0}, {color: \"#0000FF\", position: 100}]}}`".into()));
+    };
+    if gradients.is_empty() {
+        return Err(Error::Compile(
+            "Series.pointGradients cannot be empty; add a gradient or omit the property".into(),
+        ));
+    }
+    let point_count = series
+        .props
+        .get("values")
+        .and_then(Value::as_str)
+        .and_then(|formula| formula.split_once('!'))
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length);
+    let colors = series.props.get("pointColors").and_then(Value::as_object);
+    let patterns = series.props.get("pointPatterns").and_then(Value::as_object);
+    let hidden = series
+        .props
+        .get("pointFillHidden")
+        .and_then(Value::as_array);
+    for (index_text, gradient) in gradients {
+        let index = index_text.parse::<usize>().ok()
+            .filter(|index| *index <= MAX_POINT_INDEX && index.to_string() == *index_text)
+            .ok_or_else(|| Error::Compile(format!("Series.pointGradients key `{index_text}` must be a canonical index from 0 through {MAX_POINT_INDEX}")))?;
+        if point_count.is_some_and(|count| index >= count as usize) {
+            return Err(Error::Compile(format!(
+                "Series.pointGradients[{index}] is outside Series.values; choose an index within the source range"
+            )));
+        }
+        let key = index.to_string();
+        if colors.is_some_and(|items| items.contains_key(&key))
+            || patterns.is_some_and(|items| items.contains_key(&key))
+            || hidden
+                .is_some_and(|items| items.iter().any(|item| item.as_u64() == Some(index as u64)))
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointGradients[{index}] conflicts with another point fill; choose one fill representation"
+            )));
+        }
+        validate_chart_point_gradient_properties(index, gradient)?;
+    }
+    Ok(())
+}
+
+fn validate_chart_point_gradient_properties(index: usize, gradient: &Value) -> Result<()> {
+    const ALLOWED: [&str; 3] = ["type", "angle", "stops"];
+    let Some(properties) = gradient.as_object() else {
+        return Err(Error::Compile(format!(
+            "Series.pointGradients[{index}] must be an object with stops"
+        )));
+    };
+    if let Some(property) = properties
+        .keys()
+        .find(|key| !ALLOWED.contains(&key.as_str()))
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointGradients[{index}] has unsupported property `{property}`; use type, angle, and stops"
+        )));
+    }
+    let gradient_type = properties
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or("linear");
+    if !matches!(gradient_type, "linear" | "radial" | "rectangular" | "path") {
+        return Err(Error::Compile(format!(
+            "Series.pointGradients[{index}].type must be linear, radial, rectangular, or path"
+        )));
+    }
+    if let Some(angle) = properties.get("angle") {
+        if gradient_type != "linear" {
+            return Err(Error::Compile(format!(
+                "Series.pointGradients[{index}].angle applies only to linear gradients; remove angle or use type=\"linear\""
+            )));
+        }
+        if angle.as_u64().is_none_or(|angle| angle > 359) {
+            return Err(Error::Compile(format!(
+                "Series.pointGradients[{index}].angle must be an integer from 0 through 359"
+            )));
+        }
+    }
+    let Some(stops) = properties.get("stops").and_then(Value::as_array) else {
+        return Err(Error::Compile(format!(
+            "Series.pointGradients[{index}].stops must be an array of 2 through 10 color stops"
+        )));
+    };
+    if !(2..=10).contains(&stops.len()) {
+        return Err(Error::Compile(format!(
+            "Series.pointGradients[{index}].stops must contain 2 through 10 entries; add or remove stops"
+        )));
+    }
+    for (stop_index, stop) in stops.iter().enumerate() {
+        validate_chart_point_gradient_stop(index, stop_index, stop)?;
+    }
+    Ok(())
+}
+
+fn validate_chart_point_gradient_stop(index: usize, stop_index: usize, stop: &Value) -> Result<()> {
+    let Some(stop) = stop.as_object() else {
+        return Err(Error::Compile(format!(
+            "Series.pointGradients[{index}].stops[{stop_index}] must be an object with color and position"
+        )));
+    };
+    if stop.len() != 2
+        || stop
+            .keys()
+            .any(|key| !matches!(key.as_str(), "color" | "position"))
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointGradients[{index}].stops[{stop_index}] accepts only color and position"
+        )));
+    }
+    if !stop
+        .get("color")
+        .and_then(Value::as_str)
+        .is_some_and(is_opaque_rgb_color)
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointGradients[{index}].stops[{stop_index}].color must be an opaque RGB color like #336699"
+        )));
+    }
+    if stop
+        .get("position")
+        .and_then(Value::as_u64)
+        .is_none_or(|position| position > 100)
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointGradients[{index}].stops[{stop_index}].position must be an integer percentage from 0 through 100"
+        )));
     }
     Ok(())
 }

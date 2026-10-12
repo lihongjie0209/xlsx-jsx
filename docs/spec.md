@@ -294,13 +294,23 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   and optionally accepts opaque RGB `foregroundColor` / `backgroundColor`.
   A pattern and `pointColors` cannot target the same index because they encode
   different fill representations; a pattern can be combined with `pointLines`.
-  Reverse preserves pattern and color values without a manifest; gradient fills,
-  alpha, theme/indexed colors, and malformed or out-of-range point indices are
+  Reverse preserves pattern and color values without a manifest; alpha,
+  theme/indexed colors, and malformed or out-of-range point indices are
   rejected with repair guidance.
+  `Series.pointGradients?: Record<pointIndex, PointGradient>` assigns sparse
+  chart-point gradient fills. Each entry has `stops` (2–10 `{color, position}`
+  values; opaque RGB `#RRGGBB`, integer position 0–100), optional `type`
+  (`linear`, `radial`, `rectangular`, or `path`; default `linear`), and optional
+  `angle` (integer 0–359; linear only, default 90). Stop order is significant
+  and preserved. Gradient fills conflict with `pointColors`, `pointPatterns`,
+  and `pointFillHidden` at the same index, but can combine with `pointLines`.
+  Reverse preserves external RGB gradients without a manifest; alpha/theme
+  colors, malformed stops, unsupported gradient metadata, and out-of-range point
+  indices are rejected with repair guidance.
   `Series.pointFillHidden?: number[]` disables the point fill through
   `ChartFormat::set_no_fill()`; indices are unique, zero-based points within the
   `Series.values` range. It can be combined with `pointLines` at the same index,
-  but conflicts with `pointColors` or `pointPatterns` there. Reverse preserves
+  but conflicts with `pointColors`, `pointPatterns`, or `pointGradients` there. Reverse preserves
   external point no-fill without a manifest.
 - A `Trendline` child of `Series` supports `type="linear" | "exponential" |
   "logarithmic" | "polynomial" | "power" | "movingAverage"`, optional
