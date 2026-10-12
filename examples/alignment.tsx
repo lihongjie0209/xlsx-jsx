@@ -12,5 +12,9 @@ export default <Workbook>
       <Cell textRotation={45}>Angled down</Cell>
       <Cell textRotation={270}>Stacked vertical</Cell>
     </Row>
+    <Row height={40.5}>
+      <Cell verticalAlign="justify">Vertically justified</Cell>
+      <Cell verticalAlign="distributed">Vertically distributed</Cell>
+    </Row>
   </Worksheet>
 </Workbook>;

@@ -572,6 +572,16 @@ fn agent_json_spec_is_valid_json_and_describes_sparkline_options() {
             .as_array()
             .is_some_and(|values| values.iter().any(|value| value == "justify"))
     );
+    assert!(["justify", "distributed"].iter().all(|alignment| {
+        cell_format["verticalAlign"]["enum"]
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value == alignment))
+    }));
+    assert!(["justify", "distributed"].iter().all(|alignment| {
+        schema["$defs"]["formatProps"]["properties"]["verticalAlign"]["enum"]
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value == alignment))
+    }));
 
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command.args(["spec", "--format", "json"]);
@@ -14904,11 +14914,13 @@ fn row_and_column_default_formats_reverse_and_rebuild() {
     let row_format = rust_xlsxwriter::Format::new()
         .set_bold()
         .set_background_color("ABCDEF")
-        .set_font_scheme(rust_xlsxwriter::FontScheme::Headings);
+        .set_font_scheme(rust_xlsxwriter::FontScheme::Headings)
+        .set_align(rust_xlsxwriter::FormatAlign::VerticalJustify);
     let column_format = rust_xlsxwriter::Format::new()
         .set_font_color("123456")
         .set_num_format("0.00")
-        .set_font_scheme(rust_xlsxwriter::FontScheme::None);
+        .set_font_scheme(rust_xlsxwriter::FontScheme::None)
+        .set_align(rust_xlsxwriter::FormatAlign::VerticalDistributed);
     worksheet
         .set_row_format(0, &row_format)
         .expect("row format applies");
@@ -14933,6 +14945,11 @@ fn row_and_column_default_formats_reverse_and_rebuild() {
     assert!(source.contains("fontScheme=\"headings\""), "{source}");
     assert!(source.contains("fontScheme=\"none\""), "{source}");
     assert!(source.contains("fillColor={\"#ABCDEF\"}"), "{source}");
+    assert!(source.contains("verticalAlign={\"justify\"}"), "{source}");
+    assert!(
+        source.contains("verticalAlign={\"distributed\"}"),
+        "{source}"
+    );
 
     let regenerated = directory.path().join("row-column-formats-roundtrip.xlsx");
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
@@ -14943,7 +14960,7 @@ fn row_and_column_default_formats_reverse_and_rebuild() {
         .arg(&regenerated);
     command.assert().success();
     let mut archive =
-        ZipArchive::new(std::fs::File::open(regenerated).expect("regenerated workbook opens"))
+        ZipArchive::new(std::fs::File::open(&regenerated).expect("regenerated workbook opens"))
             .expect("regenerated workbook is a ZIP package");
     let mut sheet = String::new();
     archive
@@ -14956,6 +14973,9 @@ fn row_and_column_default_formats_reverse_and_rebuild() {
         sheet.contains("<col min=\"1\" max=\"1\" width=\""),
         "{sheet}"
     );
+    let styles = read_zip_part_for_test(&regenerated, "xl/styles.xml");
+    assert!(styles.contains("vertical=\"justify\""), "{styles}");
+    assert!(styles.contains("vertical=\"distributed\""), "{styles}");
 }
 
 #[test]
@@ -17293,11 +17313,26 @@ fn external_table_column_alignment_reverses_without_manifest() {
         .stderr(predicate::str::contains("justify differential alignment"))
         .stderr(predicate::str::contains("not losslessly reproducible"));
 
+    rewrite_part(&external, "xl/styles.xml", |xml| {
+        xml.replace("horizontal=\"justify\"", "horizontal=\"right\"")
+            .replace("vertical=\"top\"", "vertical=\"justify\"")
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "vertical justify/distributed differential alignment",
+        ))
+        .stderr(predicate::str::contains("not losslessly reproducible"));
+
     let supported_external = directory
         .path()
         .join("external-table-alignment-supported.xlsx");
     rewrite_part(&external, "xl/styles.xml", |xml| {
-        xml.replace("horizontal=\"justify\"", "horizontal=\"right\"")
+        xml.replace("vertical=\"justify\"", "vertical=\"top\"")
     });
     std::fs::copy(&external, &supported_external).expect("supported workbook copy exists");
     let reversed = directory.path().join("external-table-alignment.tsx");
@@ -22853,13 +22888,34 @@ fn external_cell_alignment_survives_recompile() {
             &rust_xlsxwriter::Format::new().set_align(rust_xlsxwriter::FormatAlign::Justify),
         )
         .expect("justified cell writes");
+    worksheet
+        .write_string_with_format(
+            1,
+            0,
+            "vertically justified text",
+            &rust_xlsxwriter::Format::new()
+                .set_align(rust_xlsxwriter::FormatAlign::VerticalJustify),
+        )
+        .expect("vertically justified cell writes");
+    worksheet
+        .write_string_with_format(
+            1,
+            1,
+            "vertically distributed text",
+            &rust_xlsxwriter::Format::new()
+                .set_align(rust_xlsxwriter::FormatAlign::VerticalDistributed),
+        )
+        .expect("vertically distributed cell writes");
     workbook.save(&input).expect("workbook writes");
+    assert_cell_alignment_round_trip(directory.path(), &input);
+}
 
-    let reversed = directory.path().join("alignment.tsx");
+fn assert_cell_alignment_round_trip(directory: &std::path::Path, input: &std::path::Path) {
+    let reversed = directory.join("alignment.tsx");
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command
         .args(["reverse"])
-        .arg(&input)
+        .arg(input)
         .args(["-o"])
         .arg(&reversed);
     command.assert().success();
@@ -22868,9 +22924,14 @@ fn external_cell_alignment_survives_recompile() {
     assert!(source.contains("horizontalAlign={\"left\"} verticalAlign={\"center\"}"));
     assert!(source.contains("horizontalAlign={\"right\"}"));
     assert!(source.contains("horizontalAlign={\"justify\"}"), "{source}");
+    assert!(source.contains("verticalAlign={\"justify\"}"), "{source}");
+    assert!(
+        source.contains("verticalAlign={\"distributed\"}"),
+        "{source}"
+    );
     assert!(source.contains("formula={\"=1+1\"}"));
 
-    let regenerated = directory.path().join("alignment-roundtrip.xlsx");
+    let regenerated = directory.join("alignment-roundtrip.xlsx");
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command
         .args(["build"])
@@ -22883,8 +22944,13 @@ fn external_cell_alignment_survives_recompile() {
         styles_xml.contains("horizontal=\"justify\""),
         "{styles_xml}"
     );
+    assert!(styles_xml.contains("vertical=\"justify\""), "{styles_xml}");
+    assert!(
+        styles_xml.contains("vertical=\"distributed\""),
+        "{styles_xml}"
+    );
 
-    let roundtrip = directory.path().join("alignment-roundtrip.tsx");
+    let roundtrip = directory.join("alignment-roundtrip.tsx");
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command
         .args(["reverse"])

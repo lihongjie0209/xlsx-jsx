@@ -29,6 +29,10 @@ reported as complete.
 
 ## Recently delivered
 
+- Cell, row, and column formats now preserve vertical `justify` and
+  `distributed` alignment in both directions; table-column differential
+  overrides remain rejected until direct-cell interactions are losslessly
+  established.
 - External cell-format errors now list the actual supported horizontal
   alignments, including `justify`, rather than directing users to add an already
   implemented alignment. The spec requires repair guidance to track the DSL
@@ -71,10 +75,11 @@ reported as complete.
 
 ## Deferred lower-frequency table differential formats
 
-- Table-column `horizontalAlign="justify"`. The writer also applies table
-  differential formatting to worksheet cells, so an external workbook with a
-  different direct cell alignment cannot be rebuilt without changing that
-  explicit cell style; external justify DXFs are rejected with repair guidance.
+- Table-column `horizontalAlign="justify"`, `verticalAlign="justify"`, and
+  `verticalAlign="distributed"`. The writer applies table differential
+  formatting to worksheet cells, so different direct cell alignments cannot be
+  assumed losslessly rebuildable; external DXFs using these values are rejected
+  with repair guidance.
 - Table-column `textRotation`, `readingDirection`, `indent`, and `shrinkToFit`.
   They are less common than alignment/wrapping and require more constraints for
   lossless dxf handling.

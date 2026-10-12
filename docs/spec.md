@@ -1317,9 +1317,10 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   use `{ theme: 0..9, shade: 0..5 }`; the pinned writer emits the discrete
   theme variants in DXFs, and reverse preserves theme index and shade from
   external table DXFs. Differential alignment preserves supported horizontal,
-  vertical, and wrapping properties; justify differential alignment remains
-  unsupported because its interaction with direct cell styles cannot be
-  reconstructed losslessly with the pinned writer;
+  vertical top/center/bottom and wrapping properties; horizontal justify and
+  vertical justify/distributed remain unsupported in table-column DXFs because
+  their interaction with direct worksheet cell styles is not yet proven
+  lossless.
   text rotation, reading direction,
   indentation, and shrink-to-fit remain rejected because table differential
   formats are not yet modeled for those properties.
@@ -1761,7 +1762,11 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   work with scalar values, dates, formulas, and blanks. The reverse reader emits
   only explicitly applied `true` flags; default/false values use the unstyled form.
 - `horizontalAlign?: "left" | "center" | "right" | "justify" | "distributed"` and
-  `verticalAlign?: "top" | "center" | "bottom"` control the independent axes.
+  `verticalAlign?: "top" | "center" | "bottom" | "justify" | "distributed"`
+  control the independent axes. Vertical `justify` and `distributed` preserve
+  the corresponding OOXML `alignment@vertical` values for Cell, Row, and Column
+  formats. Table-column differential formats remain limited to top/center/bottom
+  until their interaction with direct worksheet cell styles is proven lossless.
   Default/General horizontal and Bottom vertical alignment are omitted when
   reversing because they have the same effective behavior. `justify` is
   preserved as OOXML `horizontal="justify"`; `shrinkToFit=true` cannot be

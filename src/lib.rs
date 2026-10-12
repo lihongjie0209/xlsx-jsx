@@ -12936,7 +12936,10 @@ fn validate_cell_style(cell: &Node, row: usize, column: usize) -> Result<()> {
             "horizontalAlign",
             &["left", "center", "right", "justify", "distributed"][..],
         ),
-        ("verticalAlign", &["top", "center", "bottom"][..]),
+        (
+            "verticalAlign",
+            &["top", "center", "bottom", "justify", "distributed"][..],
+        ),
     ] {
         if let Some(value) = cell.props.get(property) {
             let Some(value) = value.as_str() else {
@@ -16245,6 +16248,30 @@ mod tests {
     }
 
     #[test]
+    fn rejects_vertical_justify_table_column_format_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet", "props":{"name":"Inventory"}, "children":[
+                {"type":"Table","props":{"range":"A1:A2","name":"InventoryTable"},"children":[
+                    {"type":"TableColumn","props":{"format":{"verticalAlign":"justify"}},"children":[]}
+                ]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Description"]}]},
+                {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["A long description"]}]}
+            ]
+        })]);
+
+        let error = input
+            .validate()
+            .expect_err("table differential vertical justify is not in the lossless subset");
+
+        assert!(
+            error
+                .to_string()
+                .contains("TableColumn.format.verticalAlign")
+        );
+        assert!(error.to_string().contains("top`, `center`, or `bottom"));
+    }
+
+    #[test]
     fn rejects_false_table_column_wrap_override_with_repair_guidance() {
         let input = workbook(vec![serde_json::json!({
             "type":"Worksheet", "props":{"name":"Inventory"}, "children":[
@@ -16983,6 +17010,25 @@ mod tests {
                 "type":"Row",
                 "children":[{"type":"Cell","props":{"horizontalAlign":"justify"},"children":["wrapped text"]}]
             })],
+        )]);
+
+        assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn accepts_vertical_justify_and_distributed_alignment() {
+        let input = workbook(vec![worksheet(
+            "VerticalAlignment",
+            vec![
+                serde_json::json!({
+                    "type":"Row",
+                    "children":[{"type":"Cell","props":{"verticalAlign":"justify"},"children":["Justified"]}]
+                }),
+                serde_json::json!({
+                    "type":"Row",
+                    "children":[{"type":"Cell","props":{"verticalAlign":"distributed"},"children":["Distributed"]}]
+                }),
+            ],
         )]);
 
         assert!(input.validate().is_ok(), "{:?}", input.validate());
@@ -17787,7 +17833,7 @@ mod tests {
 
     #[test]
     fn rejects_alignment_values_outside_the_lossless_subset() {
-        for (property, value) in [("horizontalAlign", "fill"), ("verticalAlign", "justify")] {
+        for (property, value) in [("horizontalAlign", "fill"), ("verticalAlign", "fill")] {
             let input = workbook(vec![worksheet(
                 "Data",
                 vec![serde_json::json!({

@@ -7262,6 +7262,8 @@ fn build_cell_format(cell: &Node) -> xlsx_jsx::Result<Format> {
             "top" => FormatAlign::Top,
             "center" => FormatAlign::VerticalCenter,
             "bottom" => FormatAlign::Bottom,
+            "justify" => FormatAlign::VerticalJustify,
+            "distributed" => FormatAlign::VerticalDistributed,
             _ => FormatAlign::General,
         };
         format = format.set_align(align);
@@ -12473,6 +12475,14 @@ fn parse_table_xml(
                                 if style.horizontal_align == Some(HorizontalAlignment::Justify) {
                                     return Err(Error::Reverse(format!(
                                         "table part `{part}` column uses justify differential alignment, whose interaction with direct worksheet cell formatting is not losslessly reproducible by the pinned writer; remove the table-column justify format or normalize the affected cells to the same alignment"
+                                    )));
+                                }
+                                if matches!(
+                                    style.vertical_align,
+                                    Some(VerticalAlignment::Justify | VerticalAlignment::Distributed)
+                                ) {
+                                    return Err(Error::Reverse(format!(
+                                        "table part `{part}` column uses vertical justify/distributed differential alignment, whose interaction with direct worksheet cell formatting is not losslessly reproducible by the pinned writer; remove the table-column vertical override or normalize the affected cells to the same alignment"
                                     )));
                                 }
                                 Ok(style.clone())
@@ -29866,6 +29876,8 @@ impl HorizontalAlignment {
 enum VerticalAlignment {
     Top,
     Center,
+    Justify,
+    Distributed,
 }
 
 impl VerticalAlignment {
@@ -29873,6 +29885,8 @@ impl VerticalAlignment {
         match self {
             Self::Top => "top",
             Self::Center => "center",
+            Self::Justify => "justify",
+            Self::Distributed => "distributed",
         }
     }
 }
@@ -41173,15 +41187,7 @@ fn parse_cell_alignment(
                 };
             }
             b"vertical" => {
-                style.vertical_align = match value.as_ref() {
-                    "top" => Some(VerticalAlignment::Top),
-                    "center" => Some(VerticalAlignment::Center),
-                    "bottom" => None,
-                    _ => {
-                        style.support = StyleSupport::Unsupported;
-                        None
-                    }
-                };
+                parse_vertical_alignment(value.as_ref(), style);
             }
             b"wrapText" => match value.as_ref() {
                 "1" | "true" => style.wrap_text = Some(true),
@@ -41248,6 +41254,20 @@ fn parse_cell_alignment(
         ));
     }
     Ok(())
+}
+
+fn parse_vertical_alignment(value: &str, style: &mut CellFontStyle) {
+    style.vertical_align = match value {
+        "top" => Some(VerticalAlignment::Top),
+        "center" => Some(VerticalAlignment::Center),
+        "justify" => Some(VerticalAlignment::Justify),
+        "distributed" => Some(VerticalAlignment::Distributed),
+        "bottom" => None,
+        _ => {
+            style.support = StyleSupport::Unsupported;
+            None
+        }
+    };
 }
 
 fn parse_text_rotation(value: &str) -> xlsx_jsx::Result<Option<i16>> {
