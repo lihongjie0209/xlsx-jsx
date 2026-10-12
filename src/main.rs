@@ -2814,6 +2814,36 @@ fn configure_chart_category_axis_intervals(chart: &mut Chart, component: &Node) 
     }
 }
 
+fn configure_chart_secondary_category_axis_intervals(
+    chart: &mut Chart,
+    component: &Node,
+    is_bar: bool,
+) {
+    let category_axis = if is_bar {
+        chart.y2_axis()
+    } else {
+        chart.x2_axis()
+    };
+    if let Some(interval) = component
+        .props
+        .get("secondaryCategoryAxisLabelInterval")
+        .and_then(Value::as_u64)
+    {
+        category_axis.set_label_interval(
+            u16::try_from(interval).expect("validated secondary category label interval"),
+        );
+    }
+    if let Some(interval) = component
+        .props
+        .get("secondaryCategoryAxisTickInterval")
+        .and_then(Value::as_u64)
+    {
+        category_axis.set_tick_interval(
+            u16::try_from(interval).expect("validated secondary category tick interval"),
+        );
+    }
+}
+
 fn configure_chart_axis_tick_types(chart: &mut Chart, component: &Node) -> xlsx_jsx::Result<()> {
     for (property, axis_name, major) in [
         ("horizontalAxisMajorTickType", "x", true),
@@ -2865,6 +2895,7 @@ fn configure_chart_category_axis_settings(
         .and_then(Value::as_str)
         .is_some_and(|chart_type| chart_type.starts_with("bar"));
     configure_chart_category_axis_intervals(chart, component);
+    configure_chart_secondary_category_axis_intervals(chart, component, is_bar);
     configure_chart_axis_tick_types(chart, component)?;
     configure_chart_axis_label_positions(chart, component)?;
     configure_chart_category_axis_label_alignment(chart, component)?;
@@ -6854,6 +6885,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     append_chart_axis_reversal_properties(&mut properties, chart);
     append_chart_secondary_tick_properties(&mut properties, chart);
     append_chart_secondary_axis_hidden_properties(&mut properties, chart);
+    append_chart_secondary_category_axis_interval_properties(&mut properties, chart);
     append_chart_scatter_axis_display_unit_properties(&mut properties, chart);
     append_chart_secondary_axis_display_unit_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
@@ -7448,6 +7480,26 @@ fn append_chart_secondary_axis_hidden_properties(properties: &mut String, chart:
     ] {
         if let Some(hidden) = hidden {
             let _ = write!(properties, " {name}={{{hidden}}}");
+        }
+    }
+}
+
+fn append_chart_secondary_category_axis_interval_properties(
+    properties: &mut String,
+    chart: &WorksheetChart,
+) {
+    for (name, interval) in [
+        (
+            "secondaryCategoryAxisLabelInterval",
+            chart.secondary_category_axis_label_interval,
+        ),
+        (
+            "secondaryCategoryAxisTickInterval",
+            chart.secondary_category_axis_tick_interval,
+        ),
+    ] {
+        if let Some(interval) = interval.filter(|value| *value != 1) {
+            let _ = write!(properties, " {name}={{{interval}}}");
         }
     }
 }
@@ -10447,6 +10499,8 @@ struct ParsedSecondaryChartGroups {
     y2_axis_label_position: Option<&'static str>,
     x2_axis_hidden: Option<bool>,
     y2_axis_hidden: Option<bool>,
+    secondary_category_axis_label_interval: Option<u16>,
+    secondary_category_axis_tick_interval: Option<u16>,
     secondary_gridlines: [Option<bool>; 4],
     secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4],
     secondary_value_axis_min: Option<f64>,
@@ -11035,12 +11089,39 @@ fn parse_secondary_chart_groups(
     let mut y2_axis_label_position = None;
     let mut x2_axis_hidden = None;
     let mut y2_axis_hidden = None;
+    let mut secondary_category_axis_label_interval = None;
+    let mut secondary_category_axis_tick_interval = None;
     let mut x2_axis_crossing = None;
     let mut y2_axis_crossing = None;
     let mut x2_axis_crossing_value = None;
     let mut y2_axis_crossing_value = None;
     for index in &secondary_axis_indices {
         let parsed_axis = &axes[*index];
+        for (tag, target) in [
+            ("tickLblSkip", &mut secondary_category_axis_label_interval),
+            ("tickMarkSkip", &mut secondary_category_axis_tick_interval),
+        ] {
+            let Some((_, attributes)) = parsed_axis.tags.iter().find(|(name, _)| name == tag)
+            else {
+                continue;
+            };
+            if !matches!(parsed_axis.kind.as_deref(), Some("catAx" | "dateAx")) {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has secondary {tag} on a value axis; move it to the secondary category/date axis or remove it"
+                )));
+            }
+            let raw = attributes.get("val").ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` secondary {tag} has no val; use an integer from 1 through 65535"
+            )))?;
+            let interval = raw.parse::<u16>().ok().filter(|value| *value > 0).ok_or_else(|| Error::Reverse(format!(
+                "chart part `{part}` secondary {tag} `{raw}` is invalid; use an integer from 1 through 65535"
+            )))?;
+            if target.replace(interval).is_some() {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` repeats secondary {tag}; retain one interval on the category/date axis"
+                )));
+            }
+        }
         let position = parsed_axis
             .tags
             .iter()
@@ -11527,6 +11608,8 @@ fn parse_secondary_chart_groups(
         y2_axis_label_position,
         x2_axis_hidden,
         y2_axis_hidden,
+        secondary_category_axis_label_interval,
+        secondary_category_axis_tick_interval,
         secondary_gridlines,
         secondary_gridline_styles,
         secondary_value_axis_min,
@@ -11567,6 +11650,8 @@ fn validate_secondary_axis_defaults(
         "delete",
         "axPos",
         "tickLblPos",
+        "tickLblSkip",
+        "tickMarkSkip",
         "majorTickMark",
         "minorTickMark",
         "crossAx",
@@ -11627,9 +11712,10 @@ fn validate_secondary_axis_defaults(
         }
         let allowed_attributes: &[&str] = match tag.as_str() {
             "axId" | "crossAx" | "orientation" | "delete" | "axPos" | "tickLblPos"
-            | "majorTickMark" | "minorTickMark" | "crosses" | "auto" | "lblAlgn" | "lblOffset"
-            | "crossBetween" | "min" | "max" | "majorUnit" | "minorUnit" | "logBase"
-            | "crossesAt" | "srgbClr" | "alpha" | "prstDash" | "builtInUnit" => &["val"],
+            | "majorTickMark" | "minorTickMark" | "tickLblSkip" | "tickMarkSkip" | "crosses"
+            | "auto" | "lblAlgn" | "lblOffset" | "crossBetween" | "min" | "max" | "majorUnit"
+            | "minorUnit" | "logBase" | "crossesAt" | "srgbClr" | "alpha" | "prstDash"
+            | "builtInUnit" => &["val"],
             "numFmt" => &["formatCode", "sourceLinked"],
             "bodyPr" => &["rot", "vert"],
             "rPr" | "defRPr" | "endParaRPr" => &["lang", "b", "i", "u", "sz", "baseline"],
@@ -11674,6 +11760,13 @@ fn validate_secondary_axis_defaults(
             "majorTickMark" | "minorTickMark" => attributes
                 .get("val")
                 .is_some_and(|value| matches!(value.as_str(), "cross" | "in" | "out" | "none")),
+            "tickLblSkip" | "tickMarkSkip" => {
+                attributes
+                    .get("val")
+                    .and_then(|value| value.parse::<u16>().ok())
+                    .is_some_and(|value| value > 0)
+                    && matches!(axis.kind.as_deref(), Some("catAx" | "dateAx"))
+            }
             "crossesAt" => attributes
                 .get("val")
                 .and_then(|value| value.parse::<f64>().ok())
@@ -20272,6 +20365,10 @@ fn parse_chart_xml(
         y2_axis_label_position: secondary_chart_groups.y2_axis_label_position,
         x2_axis_hidden: secondary_chart_groups.x2_axis_hidden,
         y2_axis_hidden: secondary_chart_groups.y2_axis_hidden,
+        secondary_category_axis_label_interval: secondary_chart_groups
+            .secondary_category_axis_label_interval,
+        secondary_category_axis_tick_interval: secondary_chart_groups
+            .secondary_category_axis_tick_interval,
         secondary_value_axis_display_unit: secondary_chart_groups.secondary_value_axis_display_unit,
         secondary_value_axis_display_unit_label: secondary_chart_groups
             .secondary_value_axis_display_unit_label,
@@ -24750,6 +24847,8 @@ struct WorksheetChart {
     y2_axis_label_position: Option<&'static str>,
     x2_axis_hidden: Option<bool>,
     y2_axis_hidden: Option<bool>,
+    secondary_category_axis_label_interval: Option<u16>,
+    secondary_category_axis_tick_interval: Option<u16>,
     secondary_value_axis_display_unit: Option<&'static str>,
     secondary_value_axis_display_unit_label: Option<bool>,
     x2_axis_display_unit: Option<&'static str>,

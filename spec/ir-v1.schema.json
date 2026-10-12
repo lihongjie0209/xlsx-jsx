@@ -599,6 +599,8 @@
             "y2AxisLabelPosition": { "enum": ["nextTo", "high", "low", "none"] },
             "x2AxisHidden": { "type": "boolean" },
             "y2AxisHidden": { "type": "boolean" },
+            "secondaryCategoryAxisLabelInterval": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "secondaryCategoryAxisTickInterval": { "type": "integer", "minimum": 1, "maximum": 65535 },
             "xAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "xAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMin": { "type": "number" },
@@ -1202,6 +1204,8 @@
                     { "required": ["y2AxisLabelPosition"] },
                     { "required": ["x2AxisHidden"] },
                     { "required": ["y2AxisHidden"] },
+                    { "required": ["secondaryCategoryAxisLabelInterval"] },
+                    { "required": ["secondaryCategoryAxisTickInterval"] },
                     { "required": ["categoryAxisLabelAlignment"] },
                     { "required": ["categoryAxisOnTickMarks"] },
                     { "required": ["categoryAxisType"] },
@@ -1237,7 +1241,7 @@
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },
           "then": {
             "properties": {
-              "props": { "not": { "anyOf": [{ "required": ["categoryAxisLabelAlignment"] }, { "required": ["categoryAxisOnTickMarks"] }, { "required": ["categoryAxisType"] }, { "required": ["categoryAxisMajorTimeUnit"] }, { "required": ["categoryAxisMinorTimeUnit"] }, { "required": ["categoryAxisMinDate"] }, { "required": ["categoryAxisMaxDate"] }] } }
+              "props": { "not": { "anyOf": [{ "required": ["categoryAxisLabelAlignment"] }, { "required": ["categoryAxisOnTickMarks"] }, { "required": ["categoryAxisType"] }, { "required": ["categoryAxisMajorTimeUnit"] }, { "required": ["categoryAxisMinorTimeUnit"] }, { "required": ["categoryAxisMinDate"] }, { "required": ["categoryAxisMaxDate"] }, { "required": ["secondaryCategoryAxisLabelInterval"] }, { "required": ["secondaryCategoryAxisTickInterval"] }] } }
             }
           }
         },
@@ -1252,7 +1256,9 @@
                     { "required": ["valueAxisDisplayUnit"] },
                     { "required": ["valueAxisDisplayUnitLabel"] },
                     { "required": ["categoryAxisLabelInterval"] },
-                    { "required": ["categoryAxisTickInterval"] }
+                    { "required": ["categoryAxisTickInterval"] },
+                    { "required": ["secondaryCategoryAxisLabelInterval"] },
+                    { "required": ["secondaryCategoryAxisTickInterval"] }
                   ]
                 }
               }

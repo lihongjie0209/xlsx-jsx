@@ -140,6 +140,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   `x2AxisHidden` and `y2AxisHidden` independently hide or show those axes with
   boolean values. They require a secondary series; reverse preserves each
   axis' OOXML `delete` state by physical position, including horizontal bars.
+  `secondaryCategoryAxisLabelInterval` and
+  `secondaryCategoryAxisTickInterval` accept integers from 1 through 65535 and
+  control label and tick skipping on the secondary category/date axis. They
+  require a secondary series; reverse resolves the category axis by chart-group
+  IDs and maps horizontal bars to the y2 handle.
   `Chart.x2AxisMajorGridlines`, `x2AxisMinorGridlines`, `y2AxisMajorGridlines`,
   and `y2AxisMinorGridlines` control gridlines on the secondary horizontal and
   vertical axes. Each accepts a boolean or the same `{color, width, dash,
@@ -614,6 +619,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   absent. Reverse preserves `tickLblSkip` and `tickMarkSkip` only on a primary
   category/date axis, omits the semantically default value `1`, and rejects
   invalid values or skips on value axes.
+  `Chart.secondaryCategoryAxisLabelInterval?: integer` and
+  `Chart.secondaryCategoryAxisTickInterval?: integer` apply the same 1–65535
+  rules to the secondary category/date axis. Reverse maps horizontal bars to
+  the secondary y2 handle and other category-axis charts to x2; skips on a
+  secondary value axis remain errors.
 - `Chart.horizontalAxisMajorTickType?: "cross" | "inside" | "outside" | "none"`,
   `Chart.horizontalAxisMinorTickType?: "cross" | "inside" | "outside" | "none"`,
   `Chart.verticalAxisMajorTickType?: "cross" | "inside" | "outside" | "none"`,

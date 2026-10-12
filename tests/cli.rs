@@ -53,6 +53,9 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("x2AxisReversed"))
         .stdout(predicate::str::contains("x2AxisMajorTickType"))
         .stdout(predicate::str::contains("x2AxisHidden"))
+        .stdout(predicate::str::contains(
+            "secondaryCategoryAxisLabelInterval",
+        ))
         .stdout(predicate::str::contains("x2AxisMajorGridlines"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
@@ -4467,6 +4470,56 @@ fn secondary_axis_visibility_rejects_non_boolean_values() {
         ))
         .stderr(predicate::str::contains(
             "use true to hide the axis or false to keep it visible",
+        ));
+}
+
+#[test]
+fn secondary_category_axis_intervals_require_a_secondary_series() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory
+        .path()
+        .join("secondary-category-interval-without-axis.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" secondaryCategoryAxisLabelInterval={2}><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(source)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "require at least one Series with secondaryAxis={true}",
+        ))
+        .stderr(predicate::str::contains(
+            "add a secondary series or remove these properties",
+        ));
+}
+
+#[test]
+fn secondary_category_axis_intervals_reject_values_outside_the_writer_range() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory
+        .path()
+        .join("invalid-secondary-category-interval.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" secondaryCategoryAxisTickInterval={0}><Series values="Data!B2:B4" /><Series values="Data!C2:C4" secondaryAxis={true} /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(source)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Chart.secondaryCategoryAxisTickInterval must be an integer from 1 through 65535",
+        ))
+        .stderr(predicate::str::contains(
+            "omit it to use the default interval",
         ));
 }
 
@@ -9088,6 +9141,109 @@ fn secondary_axis_visibility_maps_horizontal_bar_handles_without_a_manifest() {
     let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
     assert!(source.contains("x2AxisHidden={true}"), "{source}");
     assert!(source.contains("y2AxisHidden={false}"), "{source}");
+}
+
+#[test]
+fn secondary_category_axis_intervals_round_trip_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-secondary-category-intervals.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-secondary-category-intervals.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_values("Data!B2:B5")
+        .set_categories("Data!A2:A5");
+    chart
+        .add_series()
+        .set_values("Data!C2:C5")
+        .set_categories("Data!A2:A5")
+        .set_secondary_axis(true);
+    chart.x2_axis().set_label_interval(3).set_tick_interval(2);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(
+        source.contains("secondaryCategoryAxisLabelInterval={3}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("secondaryCategoryAxisTickInterval={2}"),
+        "{source}"
+    );
+
+    let rebuilt_path = directory
+        .path()
+        .join("rebuilt-secondary-category-intervals.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:tickLblSkip val=\"3\"/>"), "{xml}");
+    assert!(xml.contains("<c:tickMarkSkip val=\"2\"/>"), "{xml}");
+}
+
+#[test]
+fn secondary_category_axis_intervals_map_horizontal_bars_to_y2() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-secondary-bar-intervals.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-secondary-bar-intervals.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Bar);
+    chart
+        .add_series()
+        .set_values("Data!B2:B5")
+        .set_categories("Data!A2:A5");
+    chart
+        .add_series()
+        .set_values("Data!C2:C5")
+        .set_categories("Data!A2:A5")
+        .set_secondary_axis(true);
+    chart.y2_axis().set_label_interval(4).set_tick_interval(3);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(
+        source.contains("secondaryCategoryAxisLabelInterval={4}"),
+        "{source}"
+    );
+    assert!(
+        source.contains("secondaryCategoryAxisTickInterval={3}"),
+        "{source}"
+    );
 }
 
 #[test]
