@@ -38,6 +38,9 @@ reported as complete.
   because they also need matching default-format metadata.
 - Reverse diagnostics now explain the legacy array-formula cache limitation and
   distinguish it from scalar cached results on ordinary formulas.
+- Reverse diagnostics for unsupported Excel error tokens now direct users to the
+  seven supported literal error values instead of suggesting that the already
+  implemented `Cell.error` type be added.
 - Image fit modes: `stretch`, `contain`, and `containCenter` use the effective
   dimensions of the target cell. Reverse emits canonical explicit pixel
   dimensions/offsets because OOXML records picture geometry, not the author's

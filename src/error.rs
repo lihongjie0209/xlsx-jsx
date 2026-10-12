@@ -84,6 +84,10 @@ impl Error {
                 "The source cell is an ISO duration that the current DSL cannot express.",
                 "Convert it to plain text or add a duration component with matching writer and reader behavior.",
             ),
+            Self::Reverse(message) if message.contains("unsupported Excel error") => (
+                "The source cell uses an Excel error token outside the lossless v1 subset.",
+                "Replace it with one of the supported error tokens shown above, or repair the source cell before reversing.",
+            ),
             Self::Reverse(message) if message.contains("Excel error") => (
                 "The source cell contains an Excel error value rather than a scalar result.",
                 "Fix the formula/error or add an explicit error-cell type before reversing.",
@@ -108,5 +112,23 @@ impl Error {
         format!(
             "error: {self}\nexplanation: {explanation}\nsuggestion: {suggestion}\nspec: run `xlsx-jsx spec` for the complete contract"
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Error;
+
+    #[test]
+    fn unsupported_excel_error_diagnostic_lists_supported_tokens() {
+        let diagnostic = Error::Reverse(
+            "cell `A1` on Worksheet `Sheet1` contains unsupported Excel error `#CALC!`; use one of #NULL!, #DIV/0!, #VALUE!, #REF!, #NAME?, #NUM!, #N/A or repair the source cell".into(),
+        )
+        .render_diagnostic();
+
+        assert!(diagnostic.contains("#CALC!"));
+        assert!(diagnostic.contains("#N/A"));
+        assert!(diagnostic.contains("repair the source cell"));
+        assert!(!diagnostic.contains("add an explicit error-cell type"));
     }
 }
