@@ -1261,6 +1261,9 @@ fn compile_sparkline(
             _ => unreachable!("validated Sparkline.sparklineType"),
         });
     }
+    if let Some(date_range) = component.props.get("dateRange").and_then(Value::as_str) {
+        sparkline = sparkline.set_date_range(date_range);
+    }
     sparkline = apply_sparkline_options(sparkline, component);
     worksheet
         .add_sparkline(row, column, &sparkline)
@@ -1295,6 +1298,9 @@ fn compile_sparkline_group(
     }
     if component.props.get("dataRowOrder").and_then(Value::as_bool) == Some(false) {
         sparkline = sparkline.set_column_order(true);
+    }
+    if let Some(date_range) = component.props.get("dateRange").and_then(Value::as_str) {
+        sparkline = sparkline.set_date_range(date_range);
     }
     sparkline = apply_sparkline_options(sparkline, component);
     worksheet.add_sparkline_group(first_row, first_col, last_row, last_col, &sparkline)
@@ -6392,6 +6398,9 @@ fn render_sparklines(output: &mut String, sparklines: &[WorksheetSparkline]) {
         );
         if sparkline.sparkline_type != "line" {
             let _ = write!(output, " sparklineType={:?}", sparkline.sparkline_type);
+        }
+        if let Some(date_range) = &sparkline.options.date_range {
+            let _ = write!(output, " dateRange={date_range:?}");
         }
         for (enabled, property) in [
             (sparkline.options.show_high_point, "showHighPoint"),
@@ -25458,6 +25467,7 @@ struct SparklineOptions {
     max: Option<f64>,
     min_axis_type: &'static str,
     max_axis_type: &'static str,
+    date_range: Option<String>,
     colors: SparklineColors,
 }
 
@@ -25491,6 +25501,7 @@ impl Default for SparklineOptions {
             max: None,
             min_axis_type: "individual",
             max_axis_type: "individual",
+            date_range: None,
             colors: SparklineColors::default(),
         }
     }
@@ -27708,6 +27719,7 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
     let mut in_sparkline = false;
     let mut current_type = "line";
     let mut current_options = SparklineOptions::default();
+    let mut current_date_axis = false;
     let mut current_formula = None;
     let mut current_cell = None;
     let mut text_element = None;
@@ -27802,6 +27814,7 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         group_sparkline_count = sparklines.len();
                         current_type = "line";
                         current_options = SparklineOptions::default();
+                        current_date_axis = false;
                         group_colors.clear();
                         for attribute in event.attributes() {
                             let attribute = attribute.map_err(|error| Error::Reverse(format!(
@@ -27836,6 +27849,10 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                                             )));
                                         }
                                     };
+                                }
+                                b"dateAxis" => {
+                                    current_date_axis =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
                                 }
                                 b"high" => {
                                     current_options.show_high_point =
@@ -27946,6 +27963,16 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         require_no_sparkline_attributes(&event, part, "xm:f")?;
                         text_element = Some("formula");
                     }
+                    b"xm:f" if in_sparkline_group => {
+                        require_no_sparkline_attributes(&event, part, "xm:f")?;
+                        if current_options.date_range.is_some() {
+                            return Err(Error::Reverse(format!(
+                                "worksheet `{part}` sparkline group has duplicate date-axis formulas; retain one xm:f range"
+                            )));
+                        }
+                        current_options.date_range = Some(String::new());
+                        text_element = Some("dateRange");
+                    }
                     b"xm:sqref" if in_sparkline => {
                         require_no_sparkline_attributes(&event, part, "xm:sqref")?;
                         text_element = Some("cell");
@@ -27981,6 +28008,10 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                     Some("cell") => current_cell
                         .get_or_insert_with(String::new)
                         .push_str(&value),
+                    Some("dateRange") => current_options
+                        .date_range
+                        .get_or_insert_with(String::new)
+                        .push_str(&value),
                     _ => {}
                 }
             }
@@ -28005,6 +28036,10 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         .get_or_insert_with(String::new)
                         .push_str(&value),
                     Some("cell") => current_cell
+                        .get_or_insert_with(String::new)
+                        .push_str(&value),
+                    Some("dateRange") => current_options
+                        .date_range
                         .get_or_insert_with(String::new)
                         .push_str(&value),
                     _ => {}
@@ -28061,6 +28096,12 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         )));
                     }
                     validate_reversed_sparkline_axis(&current_options, part)?;
+                    validate_reversed_sparkline_date_range(
+                        current_date_axis,
+                        &current_options,
+                        &sparklines[group_sparkline_count..],
+                        part,
+                    )?;
                     for (color, enabled, property) in [
                         (
                             &current_options.colors.negative,
@@ -28221,6 +28262,56 @@ fn validate_reversed_sparkline_axis(
         )));
     }
     Ok(())
+}
+
+fn validate_reversed_sparkline_date_range(
+    date_axis: bool,
+    options: &SparklineOptions,
+    sparklines: &[WorksheetSparkline],
+    part: &str,
+) -> xlsx_jsx::Result<()> {
+    let Some(date_range) = options.date_range.as_deref() else {
+        if date_axis {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` sparkline group enables dateAxis but has no date formula; add a group-level xm:f date range or disable dateAxis"
+            )));
+        }
+        return Ok(());
+    };
+    if !date_axis {
+        return Err(Error::Reverse(format!(
+            "worksheet `{part}` sparkline group has a date formula without dateAxis=1; add dateAxis=1 or remove the formula"
+        )));
+    }
+    let Some(date_count) = sparkline_formula_point_count(date_range) else {
+        return Err(Error::Reverse(format!(
+            "worksheet `{part}` sparkline date range `{date_range}` is not a sheet-qualified one-dimensional A1 reference; repair the group-level xm:f formula"
+        )));
+    };
+    for sparkline in sparklines {
+        let Some(sparkline_count) = sparkline_formula_point_count(&sparkline.range) else {
+            continue;
+        };
+        if sparkline_count != date_count {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` sparkline date range has {date_count} cells but `{}` has {sparkline_count}; align both ranges before reversing",
+                sparkline.range
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn sparkline_formula_point_count(formula: &str) -> Option<u32> {
+    let (_, reference) = formula.rsplit_once('!')?;
+    let coordinates = parse_a1_range(reference).or_else(|| {
+        parse_a1_cell_reference(reference).map(|(row, column)| (row, column, row, column))
+    })?;
+    let (first_row, first_column, last_row, last_column) = coordinates;
+    if first_row != last_row && first_column != last_column {
+        return None;
+    }
+    Some((last_row - first_row + 1).max(u32::from(last_column - first_column + 1)))
 }
 
 fn require_no_sparkline_attributes(

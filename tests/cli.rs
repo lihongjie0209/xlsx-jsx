@@ -169,6 +169,8 @@ fn agent_json_spec_is_valid_json_and_describes_sparkline_options() {
     assert_eq!(group["showMarkers"]["type"], "boolean");
     assert_eq!(group["showEmptyCellsAs"]["enum"][2], "span");
     assert_eq!(group["sparklineColor"]["pattern"], "^#[0-9A-Fa-f]{6}$");
+    assert_eq!(group["dateRange"]["type"], "string");
+    assert_eq!(group["lineWeight"]["exclusiveMinimum"], 0);
 }
 
 #[test]
@@ -21458,6 +21460,7 @@ fn reverses_external_sparkline_without_a_manifest() {
     let sparkline = XlsxSparkline::new()
         .set_range(("Revenue & Growth", 0, 0, 0, 2))
         .set_type(SparklineType::Column)
+        .set_date_range(("Revenue & Growth", 0, 3, 0, 5))
         .set_sparkline_color(Color::RGB(0x0011_2233))
         .set_negative_points_color(Color::RGB(0x0022_3344))
         .set_markers_color(Color::RGB(0x0033_4455))
@@ -21510,7 +21513,7 @@ fn reverses_external_sparkline_without_a_manifest() {
     let source = std::fs::read_to_string(&source_path).unwrap();
     assert!(
         source.contains(
-            "<Sparkline cell=\"D2\" range=\"'Revenue & Growth'!A1:C1\" sparklineType=\"column\" showHighPoint={true} showLowPoint={true} showFirstPoint={true} showLastPoint={true} showNegativePoints={true} showMarkers={true} showAxis={true} showHiddenData={true} rightToLeft={true} showEmptyCellsAs=\"span\" lineWeight={2.25} min={-0.5} max={10.0} minAxisType=\"custom\" maxAxisType=\"custom\" sparklineColor=\"#112233\" negativePointColor=\"#223344\" markersColor=\"#334455\" firstPointColor=\"#445566\" lastPointColor=\"#556677\" highPointColor=\"#667788\" lowPointColor=\"#778899\" />"
+            "<Sparkline cell=\"D2\" range=\"'Revenue & Growth'!A1:C1\" sparklineType=\"column\" dateRange=\"'Revenue & Growth'!D1:F1\" showHighPoint={true} showLowPoint={true} showFirstPoint={true} showLastPoint={true} showNegativePoints={true} showMarkers={true} showAxis={true} showHiddenData={true} rightToLeft={true} showEmptyCellsAs=\"span\" lineWeight={2.25} min={-0.5} max={10.0} minAxisType=\"custom\" maxAxisType=\"custom\" sparklineColor=\"#112233\" negativePointColor=\"#223344\" markersColor=\"#334455\" firstPointColor=\"#445566\" lastPointColor=\"#556677\" highPointColor=\"#667788\" lowPointColor=\"#778899\" />"
         ),
         "{source}"
     );
@@ -21559,6 +21562,8 @@ fn reverses_external_sparkline_without_a_manifest() {
         "lineWeight=\"2.25\"",
         "manualMin=\"-0.5\"",
         "manualMax=\"10\"",
+        "dateAxis=\"1\"",
+        "<xm:f>'Revenue &amp; Growth'!D1:F1</xm:f>",
         "minAxisType=\"custom\"",
         "maxAxisType=\"custom\"",
         "colorSeries rgb=\"FF112233\"",
@@ -21585,7 +21590,7 @@ fn builds_and_reverses_sparkline_group_without_a_manifest() {
     let rebuilt_path = directory.path().join("sparkline-group-rebuilt.xlsx");
     std::fs::write(
         &input,
-        r#"import { Workbook, Worksheet, SparklineGroup } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><SparklineGroup cells="F2:F4" range="Data!A2:D4" sparklineType="column" showMarkers={true} showAxis={true} rightToLeft={true} showEmptyCellsAs="span" lineWeight={1.25} minAxisType="group" maxAxisType="group" /></Worksheet></Workbook>;"#,
+        r#"import { Workbook, Worksheet, SparklineGroup } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><SparklineGroup cells="F2:F4" range="Data!A2:D4" dateRange="Data!A1:D1" sparklineType="column" showMarkers={true} showAxis={true} rightToLeft={true} showEmptyCellsAs="span" lineWeight={1.25} minAxisType="group" maxAxisType="group" /></Worksheet></Workbook>;"#,
     )
     .unwrap();
 
@@ -21612,6 +21617,8 @@ fn builds_and_reverses_sparkline_group_without_a_manifest() {
     assert!(generated.contains("lineWeight=\"1.25\""), "{generated}");
     assert!(generated.contains("minAxisType=\"group\""), "{generated}");
     assert!(generated.contains("maxAxisType=\"group\""), "{generated}");
+    assert!(generated.contains("dateAxis=\"1\""), "{generated}");
+    assert!(generated.contains("<xm:f>Data!A1:D1</xm:f>"), "{generated}");
     for source_row in ["A2:D2", "A3:D3", "A4:D4"] {
         assert!(
             generated.contains(&format!("<xm:f>Data!{source_row}</xm:f>")),
@@ -21637,6 +21644,7 @@ fn builds_and_reverses_sparkline_group_without_a_manifest() {
     assert!(reversed.contains("lineWeight={1.25}"), "{reversed}");
     assert!(reversed.contains("minAxisType=\"group\""), "{reversed}");
     assert!(reversed.contains("maxAxisType=\"group\""), "{reversed}");
+    assert!(reversed.contains("dateRange=\"Data!A1:D1\""), "{reversed}");
 
     Command::cargo_bin("xlsx-jsx")
         .unwrap()
@@ -21734,6 +21742,25 @@ fn rejects_reversed_manual_sparkline_bounds() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("min must be less than max"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn rejects_sparkline_date_range_with_a_different_point_count() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("mismatched-sparkline-date-range.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Sparkline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Sparkline cell="F2" range="Data!A2:D2" dateRange="Data!A1:C1" /></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("dateRange has 3 cells"))
         .stderr(predicate::str::contains("suggestion:"));
 }
 

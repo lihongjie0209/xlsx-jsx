@@ -7008,6 +7008,20 @@ fn validate_sparkline_sheet_references(
                     "Sparkline.range `{range}` on Worksheet `{destination_sheet}` refers to missing worksheet `{source_sheet}`; add that Worksheet or correct the range"
                 )));
             }
+            if let Some(date_range) = child.props.get("dateRange").and_then(Value::as_str) {
+                let date_sheet = sparkline_range_sheet_name(date_range).ok_or_else(|| {
+                    Error::Compile(format!(
+                        "{}.dateRange `{date_range}` must be sheet-qualified; add a worksheet name and `!` before the A1 reference",
+                        child.r#type
+                    ))
+                })?;
+                if !worksheet_names.contains(&date_sheet.to_lowercase()) {
+                    return Err(Error::Compile(format!(
+                        "{}.dateRange `{date_range}` on Worksheet `{destination_sheet}` refers to missing worksheet `{date_sheet}`; add that Worksheet or correct the range",
+                        child.r#type
+                    )));
+                }
+            }
         }
     }
     Ok(())
@@ -7407,6 +7421,7 @@ fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<Stri
             "max",
             "minAxisType",
             "maxAxisType",
+            "dateRange",
         ],
         "Sparkline",
     )?;
@@ -7480,6 +7495,14 @@ fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<Stri
             "Sparkline.range `{range}` is not a valid one-dimensional A1 range; use a single row or column such as `Data!A1:C1`"
         )));
     }
+    let source_point_count = coordinates
+        .and_then(one_dimensional_range_length)
+        .expect("validated Sparkline.range");
+    validate_sparkline_date_range(
+        sparkline.props.get("dateRange"),
+        source_point_count,
+        "Sparkline.dateRange",
+    )?;
     if let Some(kind) = sparkline.props.get("sparklineType")
         && !kind
             .as_str()
@@ -7532,6 +7555,7 @@ fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Ve
             "max",
             "minAxisType",
             "maxAxisType",
+            "dateRange",
         ],
         "SparklineGroup",
     )?;
@@ -7596,6 +7620,12 @@ fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Ve
             if row_order { "row" } else { "column" }
         )));
     }
+    validate_sparkline_date_range(
+        group.props.get("dateRange"),
+        u32::try_from(if row_order { source_cols } else { source_rows })
+            .expect("source range dimensions fit in u32"),
+        "SparklineGroup.dateRange",
+    )?;
     if let Some(value) = group.props.get("dataRowOrder")
         && !value.is_boolean()
     {
@@ -7623,6 +7653,47 @@ fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Ve
         }
     }
     Ok(result)
+}
+
+fn validate_sparkline_date_range(
+    date_range: Option<&Value>,
+    source_point_count: u32,
+    property: &str,
+) -> Result<()> {
+    let Some(date_range) = date_range else {
+        return Ok(());
+    };
+    let Some(date_range) = date_range.as_str() else {
+        return Err(Error::Compile(format!(
+            "{property} must be a sheet-qualified one-dimensional A1 range; use `Dates!A1:C1`"
+        )));
+    };
+    let point_count = |range: &str| {
+        let (_, reference) = range.split_once('!')?;
+        let coordinates = parse_a1_range(reference).or_else(|| {
+            parse_a1_cell_reference(reference).map(|(row, column)| (row, column, row, column))
+        })?;
+        one_dimensional_range_length(coordinates)
+    };
+    let valid_shape = |range: &str| {
+        range.len() <= 255
+            && !range.starts_with('=')
+            && range.matches('!').count() == 1
+            && sparkline_range_sheet_name(range).is_some()
+            && point_count(range).is_some()
+    };
+    if !valid_shape(date_range) {
+        return Err(Error::Compile(format!(
+            "{property} `{date_range}` must be a sheet-qualified one-dimensional A1 range; use `Dates!A1:C1`"
+        )));
+    }
+    let date_points = point_count(date_range).expect("date range shape was validated");
+    if source_point_count != date_points {
+        return Err(Error::Compile(format!(
+            "{property} has {date_points} cells but each sparkline data range has {source_point_count}; use equally sized ranges"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_sparkline_options(component: &Node, name: &str) -> Result<()> {

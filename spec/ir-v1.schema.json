@@ -540,6 +540,7 @@
             "lastPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "highPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "lowPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "dateRange": { "type": "string", "minLength": 3, "maxLength": 255 },
             "lineWeight": { "type": "number", "exclusiveMinimum": 0 },
             "min": { "type": "number" },
             "max": { "type": "number" },
@@ -581,12 +582,13 @@
             "firstPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "lastPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
             "highPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
-            "lowPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }
-            ,"lineWeight": { "type": "number", "exclusiveMinimum": 0 }
-            ,"min": { "type": "number" }
-            ,"max": { "type": "number" }
-            ,"minAxisType": { "enum": ["individual", "group", "custom"] }
-            ,"maxAxisType": { "enum": ["individual", "group", "custom"] }
+            "lowPointColor": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "lineWeight": { "type": "number", "exclusiveMinimum": 0 },
+            "min": { "type": "number" },
+            "max": { "type": "number" },
+            "minAxisType": { "enum": ["individual", "group", "custom"] },
+            "maxAxisType": { "enum": ["individual", "group", "custom"] },
+            "dateRange": { "type": "string", "minLength": 3, "maxLength": 255 }
           },
           "additionalProperties": false
         },
