@@ -3,8 +3,11 @@
 Priorities favor common spreadsheet authoring workflows that can be represented
 losslessly in both directions. Each delivered batch must follow `AGENTS.md`:
 coverage audit, spec-first, red/green tests, external-file reverse coverage,
-Open XML SDK validation, and its own commit. CI and GitHub Release follow a
-completed batch; they do not block work on the next batch.
+Open XML SDK validation, and its own commit. After push, verify GitHub Actions CI;
+after CI succeeds, create and verify a GitHub Release and its assets. Continue
+work on the next common feature while CI/release pipelines run, but report their
+actual state accurately. Low-frequency, upstream-blocked, or lossy features stay
+in this roadmap instead of blocking common workflows.
 
 ## Next priorities
 
@@ -15,6 +18,14 @@ completed batch; they do not block work on the next batch.
    lower-frequency or missing an upstream serialization path.
 3. Re-audit public writer APIs as batches land; full upstream API coverage is
    not claimed.
+
+## Release prerequisite
+
+The local checkout currently has no Git remote configured. Do not guess a remote
+or create a public repository. Before the next push/release, the user must provide
+or configure the intended GitHub repository remote; until then local batches can
+be committed and fully tested, but GitHub CI and Release cannot be truthfully
+reported as complete.
 
 ## Recently delivered
 

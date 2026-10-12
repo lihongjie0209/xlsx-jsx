@@ -23,8 +23,14 @@
 6. 本地质量门：fmt、`cargo test --all-targets --all-features --locked`、clippy、
    `git diff --check`；XLSX 包用 .NET `DocumentFormat.OpenXml` 做集成合法性验证。
 7. 远端 GPU 验证只同步源码并增量构建；暂不可达时记录准确错误，继续本地工作。
-8. 正反向、规范与验证完整的功能批次独立提交；发布遵循 cargo-dist、main/tag/gh
-   检查流程，不把标签存在当作 Release 成功。
+8. 正反向、规范与验证完整的功能批次独立提交。推送后检查 GitHub Actions CI
+   真实运行结果；CI 成功后使用 cargo-dist 计划并创建 GitHub Release，再用
+   `gh` 确认 Release 和跨平台资产真实存在。标签存在不等于 Release 成功。
+   Release/CI 流水线运行时可以继续下一个常用功能，但必须如实记录状态；若仓库
+   remote 或 GitHub 仓库未配置，停止发布并向用户说明所需信息，不猜测或创建仓库。
+9. 功能优先级以常见工作流和可无损正反向闭环为准。低频、上游 writer 缺失、输出
+   不合法或难以无损逆向的能力明确写入 `docs/roadmap.md`，不为追求一次性全覆盖
+   阻塞常用功能。
 
 ## 镜像与安全
 
