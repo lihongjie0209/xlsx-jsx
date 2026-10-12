@@ -20,6 +20,8 @@ cargo build --locked
 "${DOTNET}" restore "${VALIDATOR_PROJECT}" --configfile "${NUGET_CONFIG}" --locked-mode
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/basic.tsx" -o "${TEMP_DIR}/basic.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/basic.xlsx"
+"${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/theme-colors.tsx" -o "${TEMP_DIR}/theme-colors.xlsx"
+"${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/theme-colors.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/error-cells.tsx" -o "${TEMP_DIR}/error-cells.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/error-cells.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/chartsheet.tsx" -o "${TEMP_DIR}/chartsheet.xlsx"

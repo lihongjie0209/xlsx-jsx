@@ -434,6 +434,15 @@ fn agent_json_spec_is_valid_json_and_describes_sparkline_options() {
     assert_eq!(group["lineWeight"]["exclusiveMinimum"], 0);
     assert_eq!(group["style"]["minimum"], 1);
     assert_eq!(group["style"]["maximum"], 36);
+    let theme_color = &schema["$defs"]["styleColor"]["oneOf"][1];
+    assert_eq!(theme_color["properties"]["theme"]["minimum"], 0);
+    assert_eq!(theme_color["properties"]["theme"]["maximum"], 9);
+    assert_eq!(theme_color["properties"]["shade"]["minimum"], 0);
+    assert_eq!(theme_color["properties"]["shade"]["maximum"], 5);
+    assert_eq!(
+        schema["$defs"]["formatProps"]["properties"]["fontColor"]["$ref"],
+        "#/$defs/styleColor"
+    );
     let background_image = &schema["$defs"]["backgroundImage"]["properties"]["props"];
     assert_eq!(background_image["required"][0], "data");
 }
@@ -21299,30 +21308,99 @@ fn external_diagonal_borders_survive_reverse_and_recompile() {
 }
 
 #[test]
-fn reverse_rejects_theme_border_colors_with_guidance() {
+fn reverse_preserves_theme_colors_and_rebuilds_without_manifest() {
     let directory = tempdir().expect("temporary directory is available");
-    let input = directory.path().join("theme-border-color.xlsx");
+    let input = directory.path().join("theme-style-colors.xlsx");
+    write_external_theme_styles(&input);
+
+    let reversed = directory.path().join("theme-style-colors.tsx");
+    run_theme_color_cli("reverse", &input, &reversed);
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert_theme_colors_present(&source);
+
+    let rebuilt = directory.path().join("theme-style-colors-roundtrip.xlsx");
+    run_theme_color_cli("build", &reversed, &rebuilt);
+    let second_reverse = directory.path().join("theme-style-colors-second.tsx");
+    run_theme_color_cli("reverse", &rebuilt, &second_reverse);
+    let second_source = std::fs::read_to_string(second_reverse).expect("second reverse exists");
+    assert_theme_colors_present(&second_source);
+}
+
+fn run_theme_color_cli(action: &str, input: &std::path::Path, output: &std::path::Path) {
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args([action]).arg(input).args(["-o"]).arg(output);
+    command.assert().success();
+}
+
+fn write_external_theme_styles(path: &std::path::Path) {
     let mut workbook = rust_xlsxwriter::Workbook::new();
-    workbook
-        .add_worksheet()
+    let worksheet = workbook.add_worksheet();
+    worksheet
         .write_string_with_format(
             0,
             0,
-            "theme border",
+            "font and solid fill",
             &rust_xlsxwriter::Format::new()
-                .set_border_top(rust_xlsxwriter::FormatBorder::Thin)
-                .set_border_top_color(rust_xlsxwriter::Color::Theme(4, 0)),
+                .set_font_color(rust_xlsxwriter::Color::Theme(4, 3))
+                .set_background_color(rust_xlsxwriter::Color::Theme(5, 2)),
         )
-        .expect("theme border color writes");
-    workbook.save(&input).expect("workbook writes");
+        .expect("theme font and solid fill write");
+    worksheet
+        .write_string_with_format(
+            1,
+            0,
+            "pattern and borders",
+            &rust_xlsxwriter::Format::new()
+                .set_pattern(rust_xlsxwriter::FormatPattern::DarkDown)
+                .set_foreground_color(rust_xlsxwriter::Color::Theme(0, 4))
+                .set_background_color(rust_xlsxwriter::Color::Theme(3, 1))
+                .set_border_top(rust_xlsxwriter::FormatBorder::Thin)
+                .set_border_top_color(rust_xlsxwriter::Color::Theme(2, 5))
+                .set_border_diagonal(rust_xlsxwriter::FormatBorder::Dashed)
+                .set_border_diagonal_type(rust_xlsxwriter::FormatDiagonalBorder::BorderUp)
+                .set_border_diagonal_color(rust_xlsxwriter::Color::Theme(1, 4)),
+        )
+        .expect("theme pattern and borders write");
+    worksheet
+        .set_row_format(
+            2,
+            &rust_xlsxwriter::Format::new().set_font_color(rust_xlsxwriter::Color::Theme(6, 0)),
+        )
+        .expect("theme row format writes");
+    worksheet
+        .set_column_format(
+            2,
+            &rust_xlsxwriter::Format::new()
+                .set_background_color(rust_xlsxwriter::Color::Theme(7, 5)),
+        )
+        .expect("theme column format writes");
+    let run_format =
+        rust_xlsxwriter::Format::new().set_font_color(rust_xlsxwriter::Color::Theme(8, 4));
+    worksheet
+        .write_rich_string_with_format(
+            3,
+            0,
+            &[(&run_format, "themed run")],
+            &rust_xlsxwriter::Format::new(),
+        )
+        .expect("theme rich-text run writes");
+    workbook.save(path).expect("workbook writes");
+}
 
-    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
-    command.args(["reverse"]).arg(input);
-    command
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("theme/indexed border colors"))
-        .stderr(predicate::str::contains("suggestion:"));
+fn assert_theme_colors_present(source: &str) {
+    for color in [
+        "theme: 0, shade: 4",
+        "theme: 1, shade: 4",
+        "theme: 2, shade: 5",
+        "theme: 3, shade: 1",
+        "theme: 4, shade: 3",
+        "theme: 5, shade: 2",
+        "theme: 6, shade: 0",
+        "theme: 7, shade: 5",
+        "theme: 8, shade: 4",
+    ] {
+        assert!(source.contains(color), "reverse lost {color}: {source}");
+    }
 }
 
 #[test]
@@ -22229,31 +22307,6 @@ fn external_rgb_font_colors_survive_recompile() {
         std::fs::read_to_string(roundtrip).expect("second reverse output exists"),
         source
     );
-}
-
-#[test]
-fn reverse_rejects_theme_font_colors_with_guidance() {
-    let directory = tempdir().expect("temporary directory is available");
-    let input = directory.path().join("theme-font-color.xlsx");
-    let mut workbook = rust_xlsxwriter::Workbook::new();
-    workbook
-        .add_worksheet()
-        .write_string_with_format(
-            0,
-            0,
-            "theme",
-            &rust_xlsxwriter::Format::new().set_font_color(rust_xlsxwriter::Color::Theme(4, 0)),
-        )
-        .expect("theme font color writes");
-    workbook.save(&input).expect("workbook writes");
-
-    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
-    command.args(["reverse"]).arg(input);
-    command
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("theme/indexed font colors"))
-        .stderr(predicate::str::contains("suggestion:"));
 }
 
 #[test]

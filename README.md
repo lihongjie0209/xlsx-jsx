@@ -58,11 +58,11 @@ xlsx-jsx spec --format json
 | String, number, boolean, blank values | yes | yes | v1 |
 | Formula text, cached result and dynamic arrays | yes | yes | Ordinary formulas, scalar caches, legacy array groups and Excel 365 dynamic arrays round-trip; dynamic arrays use `dynamicArray={true}` with optional `arrayFormulaRange`; formulas are not calculated, non-default array caches and shared/data-table formulas are rejected |
 | Bold and italic cell font | yes | yes | applied as boolean `Cell` props |
-| Cell, row and column fills | yes | yes | `fillColor` is the solid-fill shorthand; `fillPattern` plus optional opaque RGB foreground/background colors preserves OOXML patterns; gradients and theme/indexed colors are rejected |
-| Font color | yes | yes | `fontColor` uses opaque RGB `#RRGGBB`; theme/indexed colors are rejected |
+| Cell, row and column fills | yes | yes | `fillColor` is the solid-fill shorthand; `fillPattern` plus optional RGB/theme foreground/background colors preserves OOXML patterns; arbitrary tint, indexed/automatic colors and gradients are rejected |
+| Font color | yes | yes | `fontColor` accepts RGB `#RRGGBB` or `{theme: 0..9, shade: 0..5}` and reverses the writer's exact theme tint variants |
 | Font name, size, family, charset, theme scheme, underline, strikethrough and script | yes | yes | Literal `fontName`; size 1–409 pt; family 0–5; charset byte; `fontScheme` none/body/headings; four underline styles; boolean strike; superscript/subscript |
-| Rich text cell runs | yes | yes | `<TextRun>` preserves run boundaries and supported font properties in shared or inline strings; phonetics and unmodeled run properties are rejected |
-| Cell borders | yes | yes | Four independent edge styles, diagonal style/direction, and opaque RGB colors; theme/indexed colors remain rejected |
+| Rich text cell runs | yes | yes | `<TextRun>` preserves run boundaries and supported RGB/theme font colors in shared or inline strings; phonetics and unmodeled run properties are rejected |
+| Cell borders | yes | yes | Four independent edge styles, diagonal style/direction, and RGB/theme colors; indexed/automatic colors and non-writer tint values remain rejected |
 | Date and local datetime | yes | yes | ISO `date` property; time zones and 1904-epoch workbooks are rejected |
 | Row height, hidden state, outline levels and default format | yes | yes | `outlineLevel` supports levels 1–7; `collapsed={true}` marks a summary row; row format properties provide defaults for cells without explicit format |
 | Column width, hidden state, outline levels and default format | yes | yes | `Column` ranges use 1-based indices and pixel widths; `collapsed={true}` marks a one-column summary; format properties provide defaults for cells without explicit format; best-fit flags are rejected |

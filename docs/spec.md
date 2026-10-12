@@ -1729,21 +1729,30 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   values, and durations are represented as their numeric serial plus
   `numberFormat`; `date` is used for ISO-typed dates and the three canonical DSL
   date formats when that conversion preserves millisecond precision.
-- Cell, Row, and Column accept fill properties. `fillColor?: string` remains the shorthand for a solid fill using an
-  HTML-style RGB color `#RRGGBB`. For pattern fills, `fillPattern` is one of
+- Cell, Row, and Column accept fill properties. A color is either an HTML-style
+  RGB string `#RRGGBB` or a theme color object
+  `{ theme: 0..9, shade: 0..5 }`. `theme` is the SpreadsheetML theme slot
+  (0–9); `shade` selects the pinned `rust_xlsxwriter::Color::Theme` palette
+  variant (0 is the base color, 1–5 are the writer's discrete tint/shade
+  variants). `fillColor?: Color` remains the shorthand for a solid fill. For pattern fills, `fillPattern` is one of
   `none`, `solid`, `mediumGray`, `darkGray`, `lightGray`, `darkHorizontal`,
   `darkVertical`, `darkDown`, `darkUp`, `darkGrid`, `darkTrellis`,
   `lightHorizontal`, `lightVertical`, `lightDown`, `lightUp`, `lightGrid`,
   `lightTrellis`, `gray125`, or `gray0625`, matching OOXML `patternType` and
   `FormatPattern`. Optional `fillForegroundColor` and `fillBackgroundColor`
-  provide opaque RGB `#RRGGBB` colors. The legacy `fillColor` shorthand is
+  provide colors using the same RGB or theme representation. The legacy `fillColor` shorthand is
   mutually exclusive with `fillPattern` and the foreground/background props;
   foreground/background colors require an explicit `fillPattern`. Reverse
-  preserves supported pattern names and both colors exactly; theme, indexed,
-  automatic custom colors and gradient fills remain rejected.
-- `fontColor?: string` sets the cell font color as HTML-style RGB `#RRGGBB`.
-  It composes with other supported cell styles. Reverse emits uppercase RGB;
-  theme, indexed, automatic, and non-opaque alpha colors are rejected.
+  preserves supported pattern names and RGB/theme colors exactly. Indexed,
+  automatic custom colors, unrecognized tint values, and gradient fills remain
+  rejected.
+- `fontColor?: Color` sets the cell font color. `borderTopColor`,
+  `borderRightColor`, `borderBottomColor`, `borderLeftColor`, and
+  `borderDiagonalColor` accept the same color forms when paired with a
+  non-`none` border style. Theme colors preserve the theme index and the exact
+  discrete shade supported by the pinned writer; indexed, automatic, and
+  non-opaque alpha colors remain rejected. Reverse emits uppercase RGB for
+  RGB colors and `{theme, shade}` for theme colors.
 - `fontName?: string` selects a literal font name (not a theme font). It must
   contain 1–255 valid XML characters. Reverse preserves explicit font names;
   theme-linked font names and font metadata outside family/charset remain unsupported.
@@ -1839,7 +1848,8 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   components and requires exactly one non-empty string child.
 - `bold`, `italic`, `fontColor`, `fontName`, `fontSize`, `fontFamily`,
   `fontCharset`, `underline`, `strikethrough`, and `script` mirror the matching
-  cell font properties and affect only that run. Fill, borders, alignment,
+  cell font properties and affect only that run. `fontColor` accepts the same
+  RGB string or `{ theme, shade }` value as Cell. Fill, borders, alignment,
   number formats, and phonetic annotations are not run-level properties.
 - `Cell` may contain one or more `TextRun` children, but cannot combine them
   with `value`, `date`, `formula`, or `hyperlink`. Cell-level styles still apply

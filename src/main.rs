@@ -6026,13 +6026,13 @@ fn compile_conditional_format_style(node: &Node) -> xlsx_jsx::Result<Format> {
             _ => FormatScript::None,
         });
     }
-    if let Some(color) = node.props.get("fontColor").and_then(Value::as_str) {
-        format = format.set_font_color(color.trim_start_matches('#'));
+    if let Some(color) = node.props.get("fontColor") {
+        format = format.set_font_color(parse_style_color(color, "fontColor")?);
     }
     if let Some(number_format) = node.props.get("numberFormat").and_then(Value::as_str) {
         format = format.set_num_format(number_format);
     }
-    format = apply_cell_borders(format, node);
+    format = apply_cell_borders(format, node)?;
     apply_cell_fill(format, node)
 }
 
@@ -6632,8 +6632,8 @@ fn build_cell_format(cell: &Node) -> xlsx_jsx::Result<Format> {
     }
     format = apply_cell_font_decorations(format, cell);
     format = apply_cell_fill(format, cell)?;
-    if let Some(font_color) = cell.props.get("fontColor").and_then(Value::as_str) {
-        format = format.set_font_color(font_color);
+    if let Some(font_color) = cell.props.get("fontColor") {
+        format = format.set_font_color(parse_style_color(font_color, "fontColor")?);
     }
     if let Some(font_name) = cell.props.get("fontName").and_then(Value::as_str) {
         format = format.set_font_name(font_name);
@@ -6652,7 +6652,7 @@ fn build_cell_format(cell: &Node) -> xlsx_jsx::Result<Format> {
         format = format.set_font_charset(font_charset);
     }
     format = apply_font_scheme(format, cell);
-    format = apply_cell_borders(format, cell);
+    format = apply_cell_borders(format, cell)?;
     let explicit_number_format = cell.props.get("numberFormat").and_then(Value::as_str);
     if let Some(horizontal_align) = cell.props.get("horizontalAlign").and_then(Value::as_str) {
         let align = match horizontal_align {
@@ -6724,8 +6724,8 @@ fn apply_font_scheme(mut format: Format, cell: &Node) -> Format {
 }
 
 fn apply_cell_fill(mut format: Format, cell: &Node) -> xlsx_jsx::Result<Format> {
-    if let Some(color) = cell.props.get("fillColor").and_then(Value::as_str) {
-        return Ok(format.set_background_color(color));
+    if let Some(color) = cell.props.get("fillColor") {
+        return Ok(format.set_background_color(parse_style_color(color, "fillColor")?));
     }
     let Some(pattern_name) = cell.props.get("fillPattern").and_then(Value::as_str) else {
         return Ok(format);
@@ -6757,19 +6757,11 @@ fn apply_cell_fill(mut format: Format, cell: &Node) -> xlsx_jsx::Result<Format> 
         }
     };
     format = format.set_pattern(pattern);
-    if let Some(color) = cell
-        .props
-        .get("fillForegroundColor")
-        .and_then(Value::as_str)
-    {
-        format = format.set_foreground_color(color);
+    if let Some(color) = cell.props.get("fillForegroundColor") {
+        format = format.set_foreground_color(parse_style_color(color, "fillForegroundColor")?);
     }
-    if let Some(color) = cell
-        .props
-        .get("fillBackgroundColor")
-        .and_then(Value::as_str)
-    {
-        format = format.set_background_color(color);
+    if let Some(color) = cell.props.get("fillBackgroundColor") {
+        format = format.set_background_color(parse_style_color(color, "fillBackgroundColor")?);
     }
     Ok(format)
 }
@@ -9266,19 +9258,19 @@ fn table_column_format_value(style: &CellFontStyle) -> Value {
         props.insert("fontCharset".into(), Value::from(font_charset));
     }
     if let Some(color) = &style.font_color {
-        props.insert("fontColor".into(), Value::String(color.clone()));
+        props.insert("fontColor".into(), color.to_value());
     }
     if let Some(color) = &style.fill_color {
-        props.insert("fillColor".into(), Value::String(color.clone()));
+        props.insert("fillColor".into(), color.to_value());
     }
     if let Some(pattern) = &style.fill_pattern {
         props.insert("fillPattern".into(), Value::String(pattern.clone()));
     }
     if let Some(color) = &style.fill_foreground_color {
-        props.insert("fillForegroundColor".into(), Value::String(color.clone()));
+        props.insert("fillForegroundColor".into(), color.to_value());
     }
     if let Some(color) = &style.fill_background_color {
-        props.insert("fillBackgroundColor".into(), Value::String(color.clone()));
+        props.insert("fillBackgroundColor".into(), color.to_value());
     }
     if let Some(number_format) = &style.number_format {
         props.insert("numberFormat".into(), Value::String(number_format.clone()));
@@ -9292,10 +9284,7 @@ fn table_column_format_value(style: &CellFontStyle) -> Value {
             );
         }
         if let Some(color) = &edge.color {
-            props.insert(
-                format!("border{}Color", side.suffix()),
-                Value::String(color.clone()),
-            );
+            props.insert(format!("border{}Color", side.suffix()), color.to_value());
         }
     }
     if let Some(direction) = &style.borders.diagonal_type {
@@ -9872,20 +9861,20 @@ fn write_conditional_style_props(output: &mut String, style: &CellFontStyle) {
     if let Some(script) = style.script.as_deref() {
         let _ = write!(output, " script={script:?}");
     }
-    if let Some(color) = style.font_color.as_deref() {
-        let _ = write!(output, " fontColor={color:?}");
+    if let Some(color) = &style.font_color {
+        write_color_string_prop(output, "fontColor", color);
     }
-    if let Some(color) = style.fill_color.as_deref() {
-        let _ = write!(output, " fillColor={color:?}");
+    if let Some(color) = &style.fill_color {
+        write_color_string_prop(output, "fillColor", color);
     }
     if let Some(pattern) = style.fill_pattern.as_deref() {
         let _ = write!(output, " fillPattern=\"{pattern}\"");
     }
-    if let Some(color) = style.fill_foreground_color.as_deref() {
-        let _ = write!(output, " fillForegroundColor=\"{color}\"");
+    if let Some(color) = &style.fill_foreground_color {
+        write_color_string_prop(output, "fillForegroundColor", color);
     }
-    if let Some(color) = style.fill_background_color.as_deref() {
-        let _ = write!(output, " fillBackgroundColor=\"{color}\"");
+    if let Some(color) = &style.fill_background_color {
+        write_color_string_prop(output, "fillBackgroundColor", color);
     }
     if let Some(number_format) = style.number_format.as_deref() {
         let _ = write!(output, " numberFormat={number_format:?}");
@@ -9900,8 +9889,8 @@ fn write_conditional_style_props(output: &mut String, style: &CellFontStyle) {
                 border_style_name(border_style)
             );
         }
-        if let Some(color) = edge.color.as_deref() {
-            let _ = write!(output, " border{}Color={color:?}", side.suffix());
+        if let Some(color) = &edge.color {
+            write_color_string_prop(output, &format!("border{}Color", side.suffix()), color);
         }
     }
 }
@@ -10146,7 +10135,7 @@ fn write_text_run_props(output: &mut String, style: &CellFontStyle) {
         let _ = write!(output, " script={{{script:?}}}");
     }
     if let Some(color) = &style.font_color {
-        let _ = write!(output, " fontColor={{{color:?}}}");
+        write_color_prop(output, "fontColor", color);
     }
     if let Some(name) = &style.font_name {
         let _ = write!(output, " fontName={{{name:?}}}");
@@ -10230,19 +10219,19 @@ fn write_style_props(output: &mut String, style: &CellFontStyle) {
         let _ = write!(output, " numberFormat={{{number_format:?}}}");
     }
     if let Some(fill_color) = &style.fill_color {
-        let _ = write!(output, " fillColor={{{fill_color:?}}}");
+        write_color_prop(output, "fillColor", fill_color);
     }
     if let Some(pattern) = &style.fill_pattern {
         let _ = write!(output, " fillPattern=\"{pattern}\"");
     }
     if let Some(color) = &style.fill_foreground_color {
-        let _ = write!(output, " fillForegroundColor=\"{color}\"");
+        write_color_string_prop(output, "fillForegroundColor", color);
     }
     if let Some(color) = &style.fill_background_color {
-        let _ = write!(output, " fillBackgroundColor=\"{color}\"");
+        write_color_string_prop(output, "fillBackgroundColor", color);
     }
     if let Some(font_color) = &style.font_color {
-        let _ = write!(output, " fontColor={{{font_color:?}}}");
+        write_color_prop(output, "fontColor", font_color);
     }
     if let Some(font_name) = &style.font_name {
         let _ = write!(output, " fontName={{{font_name:?}}}");
@@ -10272,7 +10261,7 @@ fn write_style_props(output: &mut String, style: &CellFontStyle) {
             );
         }
         if let Some(color) = &edge.color {
-            let _ = write!(output, " border{}Color={{{color:?}}}", side.suffix());
+            write_color_prop(output, &format!("border{}Color", side.suffix()), color);
         }
     }
     if let Some(border_style) = style.borders.diagonal.style {
@@ -10283,14 +10272,14 @@ fn write_style_props(output: &mut String, style: &CellFontStyle) {
         );
     }
     if let Some(color) = &style.borders.diagonal.color {
-        let _ = write!(output, " borderDiagonalColor={{{color:?}}}");
+        write_color_prop(output, "borderDiagonalColor", color);
     }
     if let Some(direction) = &style.borders.diagonal_type {
         let _ = write!(output, " borderDiagonalType={{{direction:?}}}");
     }
 }
 
-fn apply_cell_borders(mut format: Format, cell: &Node) -> Format {
+fn apply_cell_borders(mut format: Format, cell: &Node) -> xlsx_jsx::Result<Format> {
     for side in BorderSide::ALL {
         let style_property = format!("border{}", side.suffix());
         if let Some(style) = cell.props.get(&style_property).and_then(Value::as_str)
@@ -10304,7 +10293,8 @@ fn apply_cell_borders(mut format: Format, cell: &Node) -> Format {
             };
         }
         let color_property = format!("border{}Color", side.suffix());
-        if let Some(color) = cell.props.get(&color_property).and_then(Value::as_str) {
+        if let Some(color) = cell.props.get(&color_property) {
+            let color = parse_style_color(color, &color_property)?;
             format = match side {
                 BorderSide::Top => format.set_border_top_color(color),
                 BorderSide::Right => format.set_border_right_color(color),
@@ -10318,12 +10308,8 @@ fn apply_cell_borders(mut format: Format, cell: &Node) -> Format {
     {
         format = format.set_border_diagonal(border_style);
     }
-    if let Some(color) = cell
-        .props
-        .get("borderDiagonalColor")
-        .and_then(Value::as_str)
-    {
-        format = format.set_border_diagonal_color(color);
+    if let Some(color) = cell.props.get("borderDiagonalColor") {
+        format = format.set_border_diagonal_color(parse_style_color(color, "borderDiagonalColor")?);
     }
     if let Some(direction) = cell.props.get("borderDiagonalType").and_then(Value::as_str) {
         let direction = match direction {
@@ -10334,7 +10320,32 @@ fn apply_cell_borders(mut format: Format, cell: &Node) -> Format {
         };
         format = format.set_border_diagonal_type(direction);
     }
-    format
+    Ok(format)
+}
+
+fn parse_style_color(value: &Value, property: &str) -> xlsx_jsx::Result<Color> {
+    if let Some(rgb) = value.as_str() {
+        return Ok(Color::from(rgb));
+    }
+    let theme = value
+        .get("theme")
+        .and_then(Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())
+        .ok_or_else(|| {
+            Error::Compile(format!(
+                "{property}.theme must be an integer from 0 through 9"
+            ))
+        })?;
+    let shade = value
+        .get("shade")
+        .and_then(Value::as_u64)
+        .and_then(|value| u8::try_from(value).ok())
+        .ok_or_else(|| {
+            Error::Compile(format!(
+                "{property}.shade must be an integer from 0 through 5"
+            ))
+        })?;
+    Ok(Color::Theme(theme, shade))
 }
 
 fn parse_border_style(value: &str) -> Option<FormatBorder> {
@@ -28772,11 +28783,11 @@ struct CellFontStyle {
     wrap_text: Option<bool>,
     shrink_to_fit: Option<bool>,
     indent: Option<u8>,
-    fill_color: Option<String>,
+    fill_color: Option<SpreadsheetColor>,
     fill_pattern: Option<String>,
-    fill_foreground_color: Option<String>,
-    fill_background_color: Option<String>,
-    font_color: Option<String>,
+    fill_foreground_color: Option<SpreadsheetColor>,
+    fill_background_color: Option<SpreadsheetColor>,
+    font_color: Option<SpreadsheetColor>,
     font_name: Option<String>,
     font_size: Option<f64>,
     font_family: Option<u8>,
@@ -28793,7 +28804,69 @@ struct CellFontStyle {
     apply_protection: bool,
 }
 
+#[derive(Clone, Debug)]
+enum SpreadsheetColor {
+    Rgb(String),
+    Theme { theme: u8, shade: u8 },
+}
+
+impl SpreadsheetColor {
+    fn to_value(&self) -> Value {
+        match self {
+            Self::Rgb(rgb) => Value::String(rgb.clone()),
+            Self::Theme { theme, shade } => serde_json::json!({"theme": theme, "shade": shade}),
+        }
+    }
+
+    fn write_jsx_expression(&self, output: &mut String) {
+        match self {
+            Self::Rgb(rgb) => {
+                let _ = write!(output, "{{{rgb:?}}}");
+            }
+            Self::Theme { theme, shade } => {
+                let _ = write!(output, "{{{{theme: {theme}, shade: {shade}}}}}");
+            }
+        }
+    }
+}
+
+fn write_color_prop(output: &mut String, property: &str, color: &SpreadsheetColor) {
+    let _ = write!(output, " {property}=");
+    color.write_jsx_expression(output);
+}
+
+fn write_color_string_prop(output: &mut String, property: &str, color: &SpreadsheetColor) {
+    match color {
+        SpreadsheetColor::Rgb(rgb) => {
+            let _ = write!(output, " {property}={rgb:?}");
+        }
+        SpreadsheetColor::Theme { .. } => write_color_prop(output, property, color),
+    }
+}
+
 impl CellFontStyle {
+    fn has_theme_color(&self) -> bool {
+        matches!(self.font_color, Some(SpreadsheetColor::Theme { .. }))
+            || matches!(self.fill_color, Some(SpreadsheetColor::Theme { .. }))
+            || matches!(
+                self.fill_foreground_color,
+                Some(SpreadsheetColor::Theme { .. })
+            )
+            || matches!(
+                self.fill_background_color,
+                Some(SpreadsheetColor::Theme { .. })
+            )
+            || self
+                .borders
+                .edges
+                .iter()
+                .any(|edge| matches!(edge.color, Some(SpreadsheetColor::Theme { .. })))
+            || matches!(
+                self.borders.diagonal.color,
+                Some(SpreadsheetColor::Theme { .. })
+            )
+    }
+
     fn has_conditional_dxf_style(&self) -> bool {
         self.bold
             || self.italic
@@ -28874,7 +28947,7 @@ impl BorderSide {
 #[derive(Clone, Default)]
 struct BorderEdge {
     style: Option<FormatBorder>,
-    color: Option<String>,
+    color: Option<SpreadsheetColor>,
 }
 
 #[derive(Clone, Default)]
@@ -38458,7 +38531,11 @@ impl StyleParser {
                 if self.current_font.is_some() =>
             {
                 if let Some(style) = &mut self.current_font {
-                    parse_font_component(event, tag.as_ref(), style, decoder)?;
+                    if tag.as_ref() == b"color" && self.fonts.is_empty() {
+                        audit_default_font_component(event, b"color", style, decoder)?;
+                    } else {
+                        parse_font_component(event, tag.as_ref(), style, decoder)?;
+                    }
                 }
             }
             b"sz" | b"name" if self.current_font.is_some() => {
@@ -38671,7 +38748,7 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         }
                     }
                     b"color" if in_font => {
-                        parse_font_color(&event, style, reader.decoder())?;
+                        parse_font_color(&event, style, reader.decoder());
                     }
                     b"name" | b"sz" if in_font => {
                         parse_font_name_or_size(
@@ -38717,7 +38794,9 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         }
                         foreground_seen = true;
                         match parse_fill_rgb(&event, reader.decoder()) {
-                            Some(color) => style.fill_foreground_color = Some(color),
+                            Some(color) => {
+                                style.fill_foreground_color = Some(SpreadsheetColor::Rgb(color));
+                            }
                             None => style.support = StyleSupport::Unsupported,
                         }
                     }
@@ -38728,7 +38807,10 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         background_seen = true;
                         if !is_default_fill_background(&event, reader.decoder()) {
                             match parse_fill_rgb(&event, reader.decoder()) {
-                                Some(color) => style.fill_background_color = Some(color),
+                                Some(color) => {
+                                    style.fill_background_color =
+                                        Some(SpreadsheetColor::Rgb(color));
+                                }
                                 _ => style.support = StyleSupport::Unsupported,
                             }
                         }
@@ -38753,6 +38835,9 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         {
                             style.support = StyleSupport::Unsupported;
                         }
+                    }
+                    if style.has_theme_color() {
+                        style.support = StyleSupport::Unsupported;
                     }
                     let has_supported_style = style.bold
                         || style.italic
@@ -38823,11 +38908,11 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
 #[derive(Clone)]
 enum FillFormat {
     None,
-    Solid(String),
+    Solid(SpreadsheetColor),
     Pattern {
         pattern: String,
-        foreground: Option<String>,
-        background: Option<String>,
+        foreground: Option<SpreadsheetColor>,
+        background: Option<SpreadsheetColor>,
     },
     Unsupported,
 }
@@ -39044,7 +39129,7 @@ impl BorderBuilder {
             }
         };
         match parse_border_color(event, decoder) {
-            Some(BorderColor::Rgb(color)) => edge.color = Some(color),
+            Some(BorderColor::Value(color)) => edge.color = Some(color),
             Some(BorderColor::Automatic) => {}
             None => self.valid = false,
         }
@@ -39333,7 +39418,7 @@ fn parse_border_start_event(
 }
 
 enum BorderColor {
-    Rgb(String),
+    Value(SpreadsheetColor),
     Automatic,
 }
 
@@ -39341,40 +39426,110 @@ fn parse_border_color(
     event: &BytesStart<'_>,
     decoder: quick_xml::encoding::Decoder,
 ) -> Option<BorderColor> {
-    let mut color = None;
+    let mut color_kind = None;
+    let mut tint = None;
     for attribute in event.attributes().with_checks(false) {
         let attribute = attribute.ok()?;
-        if color.is_some() {
-            return None;
-        }
         let value = attribute
             .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
             .ok()?;
-        color = Some(match attribute.key.local_name().as_ref() {
-            b"rgb"
-                if value.len() == 8
-                    && value
-                        .get(..2)
-                        .is_some_and(|alpha| alpha.eq_ignore_ascii_case("FF"))
-                    && value
-                        .get(2..)
-                        .is_some_and(|rgb| rgb.bytes().all(|b| b.is_ascii_hexdigit())) =>
-            {
-                BorderColor::Rgb(format!("#{}", value.get(2..)?.to_ascii_uppercase()))
+        match attribute.key.local_name().as_ref() {
+            b"rgb" if color_kind.is_none() => {
+                color_kind = Some(("rgb", value.into_owned()));
             }
-            b"auto" if value == "1" => BorderColor::Automatic,
-            b"indexed" if value == "64" => BorderColor::Automatic,
+            b"theme" if color_kind.is_none() => {
+                color_kind = Some(("theme", value.into_owned()));
+            }
+            b"indexed" if color_kind.is_none() && value == "64" => {
+                color_kind = Some(("indexed", value.into_owned()));
+            }
+            b"auto" if color_kind.is_none() && value == "1" => {
+                color_kind = Some(("auto", value.into_owned()));
+            }
+            b"tint" if tint.is_none() => tint = Some(value.parse::<f64>().ok()?),
             _ => return None,
-        });
+        }
     }
-    color
+    match color_kind? {
+        ("rgb", value)
+            if tint.is_none()
+                && value.len() == 8
+                && value
+                    .get(..2)
+                    .is_some_and(|alpha| alpha.eq_ignore_ascii_case("FF"))
+                && value
+                    .get(2..)
+                    .is_some_and(|rgb| rgb.bytes().all(|byte| byte.is_ascii_hexdigit())) =>
+        {
+            Some(BorderColor::Value(SpreadsheetColor::Rgb(format!(
+                "#{}",
+                &value[2..].to_ascii_uppercase()
+            ))))
+        }
+        ("theme", value) => {
+            let theme = value.parse::<u8>().ok().filter(|theme| *theme <= 9)?;
+            Some(BorderColor::Value(SpreadsheetColor::Theme {
+                theme,
+                shade: theme_shade_from_tint(theme, tint)?,
+            }))
+        }
+        ("indexed" | "auto", _) if tint.is_none() => Some(BorderColor::Automatic),
+        _ => None,
+    }
+}
+
+fn theme_shade_from_tint(theme: u8, tint: Option<f64>) -> Option<u8> {
+    let Some(tint) = tint else { return Some(0) };
+    if tint.to_bits() == 0.0_f64.to_bits() {
+        return Some(0);
+    }
+    let values: [&str; 5] = match theme {
+        0 => [
+            "-4.9989318521683403E-2",
+            "-0.14999847407452621",
+            "-0.249977111117893",
+            "-0.34998626667073579",
+            "-0.499984740745262",
+        ],
+        1 => [
+            "0.499984740745262",
+            "0.34998626667073579",
+            "0.249977111117893",
+            "0.14999847407452621",
+            "4.9989318521683403E-2",
+        ],
+        2 => [
+            "-9.9978637043366805E-2",
+            "-0.249977111117893",
+            "-0.499984740745262",
+            "-0.749992370372631",
+            "-0.89999084444715716",
+        ],
+        _ => [
+            "0.79998168889431442",
+            "0.59999389629810485",
+            "0.39997558519241921",
+            "-0.249977111117893",
+            "-0.499984740745262",
+        ],
+    };
+    let tint_bits = tint.to_bits();
+    values
+        .iter()
+        .position(|candidate| {
+            candidate
+                .parse::<f64>()
+                .is_ok_and(|value| value.to_bits() == tint_bits)
+        })
+        .and_then(|index| u8::try_from(index).ok())
+        .and_then(|shade| shade.checked_add(1))
 }
 
 #[derive(Default)]
 struct FillBuilder {
     pattern: Option<String>,
-    foreground: Option<String>,
-    background: Option<String>,
+    foreground: Option<SpreadsheetColor>,
+    background: Option<SpreadsheetColor>,
     background_seen: bool,
     valid: bool,
 }
@@ -39439,7 +39594,7 @@ fn parse_fill_formats(xml: &str) -> xlsx_jsx::Result<Vec<FillFormat>> {
                             if fill.foreground.is_some() {
                                 fill.valid = false;
                             }
-                            match parse_fill_rgb(&event, reader.decoder()) {
+                            match parse_spreadsheet_color(&event, reader.decoder()) {
                                 Some(color) => fill.foreground = Some(color),
                                 None => fill.valid = false,
                             }
@@ -39451,7 +39606,9 @@ fn parse_fill_formats(xml: &str) -> xlsx_jsx::Result<Vec<FillFormat>> {
                                 fill.valid = false;
                             } else if is_default_fill_background(&event, reader.decoder()) {
                                 // OOXML's default indexed background is equivalent to no explicit color.
-                            } else if let Some(color) = parse_fill_rgb(&event, reader.decoder()) {
+                            } else if let Some(color) =
+                                parse_spreadsheet_color(&event, reader.decoder())
+                            {
                                 fill.background = Some(color);
                             } else {
                                 fill.valid = false;
@@ -39558,6 +39715,16 @@ fn parse_fill_rgb(event: &BytesStart<'_>, decoder: quick_xml::encoding::Decoder)
     Some(format!("#{}", &rgb[2..]).to_ascii_uppercase())
 }
 
+fn parse_spreadsheet_color(
+    event: &BytesStart<'_>,
+    decoder: quick_xml::encoding::Decoder,
+) -> Option<SpreadsheetColor> {
+    match parse_border_color(event, decoder)? {
+        BorderColor::Value(color) => Some(color),
+        BorderColor::Automatic => None,
+    }
+}
+
 fn is_default_fill_background(
     event: &BytesStart<'_>,
     decoder: quick_xml::encoding::Decoder,
@@ -39616,7 +39783,10 @@ fn parse_font_component(
         b"strike" => parse_font_strikethrough(event, style, decoder),
         b"u" => parse_font_underline(event, style, decoder),
         b"vertAlign" => parse_font_script(event, style, decoder),
-        b"color" => parse_font_color(event, style, decoder),
+        b"color" => {
+            parse_font_color(event, style, decoder);
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
@@ -39703,38 +39873,12 @@ fn parse_font_color(
     event: &BytesStart<'_>,
     style: &mut CellFontStyle,
     decoder: quick_xml::encoding::Decoder,
-) -> xlsx_jsx::Result<()> {
-    let mut color = None;
-    let mut default_theme = false;
-    for attribute in event.attributes().with_checks(false) {
-        let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
-        let value = attribute
-            .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
-            .map_err(|error| Error::Reverse(error.to_string()))?;
-        match attribute.key.local_name().as_ref() {
-            b"rgb"
-                if value.len() == 8
-                    && value
-                        .get(..2)
-                        .is_some_and(|alpha| alpha.eq_ignore_ascii_case("FF"))
-                    && value
-                        .get(2..)
-                        .is_some_and(|rgb| rgb.bytes().all(|byte| byte.is_ascii_hexdigit())) =>
-            {
-                color = Some(format!("#{}", value[2..].to_ascii_uppercase()));
-            }
-            b"theme" if value == "1" => default_theme = true,
-            _ => style.support = StyleSupport::Unsupported,
-        }
+) {
+    match parse_spreadsheet_color(event, decoder) {
+        Some(SpreadsheetColor::Theme { theme: 1, shade: 0 }) => {}
+        Some(color) => style.font_color = Some(color),
+        None => style.support = StyleSupport::Unsupported,
     }
-    if color.is_some() && default_theme {
-        style.support = StyleSupport::Unsupported;
-    }
-    style.font_color = color;
-    if style.font_color.is_none() && !default_theme {
-        style.support = StyleSupport::Unsupported;
-    }
-    Ok(())
 }
 
 fn parse_font_name_or_size(
@@ -40340,6 +40484,36 @@ fn builtin_number_format(id: usize) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_shade_parser_rejects_tints_the_writer_cannot_emit() {
+        assert_eq!(theme_shade_from_tint(4, Some(0.2)), None);
+    }
+
+    #[test]
+    fn theme_shade_parser_preserves_writer_generated_tint_values() {
+        assert_eq!(
+            theme_shade_from_tint(
+                0,
+                Some("-4.9989318521683403E-2".parse().expect("valid tint"))
+            ),
+            Some(1)
+        );
+        assert_eq!(
+            theme_shade_from_tint(1, Some("0.499984740745262".parse().expect("valid tint"))),
+            Some(1)
+        );
+        assert_eq!(
+            theme_shade_from_tint(2, Some("-0.89999084444715716".parse().expect("valid tint"))),
+            Some(5)
+        );
+        assert_eq!(
+            theme_shade_from_tint(3, Some("0.79998168889431442".parse().expect("valid tint"))),
+            Some(1)
+        );
+        assert_eq!(theme_shade_from_tint(9, None), Some(0));
+        assert_eq!(theme_shade_from_tint(4, Some(0.0)), Some(0));
+    }
 
     #[test]
     fn chart_data_table_pattern_names_match_the_pinned_writer_presets() {

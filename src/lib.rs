@@ -12824,7 +12824,7 @@ fn validate_cell_font_properties(cell: &Node, row: usize, column: usize) -> Resu
         "fontColor",
     ] {
         if let Some(color) = cell.props.get(property) {
-            validate_rgb_color(color, property, row, column)?;
+            validate_style_color(color, property, row, column)?;
         }
     }
     validate_cell_fill_properties(cell, row, column)?;
@@ -12986,7 +12986,7 @@ fn validate_cell_border_properties(cell: &Node, row: usize, column: usize) -> Re
                     column + 1
                 )));
             }
-            validate_rgb_color(color, &color_property, row, column)?;
+            validate_style_color(color, &color_property, row, column)?;
         }
     }
     let diagonal_style = cell.props.get("borderDiagonal");
@@ -13019,7 +13019,7 @@ fn validate_cell_border_properties(cell: &Node, row: usize, column: usize) -> Re
                 column + 1
             )));
         }
-        validate_rgb_color(color, "borderDiagonalColor", row, column)?;
+        validate_style_color(color, "borderDiagonalColor", row, column)?;
     }
     if let Some(direction) = cell.props.get("borderDiagonalType")
         && !direction
@@ -13049,6 +13049,32 @@ fn validate_rgb_color(value: &Value, property: &str, row: usize, column: usize) 
     {
         return Err(Error::Compile(format!(
             "Cell.{property} at row {}, column {} must match `#RRGGBB`; use exactly six hexadecimal digits after `#`",
+            row + 1,
+            column + 1
+        )));
+    }
+    Ok(())
+}
+
+fn validate_style_color(value: &Value, property: &str, row: usize, column: usize) -> Result<()> {
+    if value.is_string() {
+        return validate_rgb_color(value, property, row, column);
+    }
+    let Some(object) = value.as_object() else {
+        return Err(Error::Compile(format!(
+            "Cell.{property} at row {}, column {} must be a `#RRGGBB` string or a theme color object {{ theme, shade }}; use an RGB color or a supported theme slot and shade",
+            row + 1,
+            column + 1
+        )));
+    };
+    let theme = object.get("theme").and_then(Value::as_u64);
+    let shade = object.get("shade").and_then(Value::as_u64);
+    if object.len() != 2
+        || theme.is_none_or(|theme| theme > 9)
+        || shade.is_none_or(|shade| shade > 5)
+    {
+        return Err(Error::Compile(format!(
+            "Cell.{property} at row {}, column {} must be {{ theme: 0..9, shade: 0..5 }} with no extra fields; use a valid SpreadsheetML theme slot and writer-supported shade",
             row + 1,
             column + 1
         )));
@@ -16779,6 +16805,46 @@ mod tests {
             })],
         )]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_theme_colors_for_cell_fill_font_border_and_pattern() {
+        let input = workbook(vec![worksheet(
+            "Theme",
+            vec![serde_json::json!({
+                "type":"Row",
+                "children":[{"type":"Cell","props":{
+                    "value":"themed",
+                    "fontColor":{"theme":4,"shade":2},
+                    "fillColor":{"theme":5,"shade":0},
+                    "borderTop":"thin",
+                    "borderTopColor":{"theme":2,"shade":5}
+                }}]
+            })],
+        )]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_theme_color_slots_and_extra_fields_with_repair() {
+        for color in [
+            serde_json::json!({"theme":10,"shade":0}),
+            serde_json::json!({"theme":1,"shade":6}),
+            serde_json::json!({"theme":1}),
+            serde_json::json!({"theme":1,"shade":2,"tint":0.2}),
+        ] {
+            let input = workbook(vec![worksheet(
+                "Theme",
+                vec![serde_json::json!({
+                    "type":"Row","children":[{"type":"Cell","props":{"value":1,"fontColor":color}}]
+                })],
+            )]);
+            let error = input
+                .validate()
+                .expect_err("invalid theme colors are rejected");
+            assert!(error.to_string().contains("fontColor"));
+            assert!(error.to_string().contains("theme"));
+        }
     }
 
     #[test]
