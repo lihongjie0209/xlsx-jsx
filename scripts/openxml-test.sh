@@ -24,6 +24,8 @@ cargo build --locked
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/autofit.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/theme-colors.tsx" -o "${TEMP_DIR}/theme-colors.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/theme-colors.xlsx"
+"${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/excel-2023-theme.tsx" -o "${TEMP_DIR}/excel-2023-theme.xlsx"
+"${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/excel-2023-theme.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/theme-differential-formats.tsx" -o "${TEMP_DIR}/theme-differential-formats.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/theme-differential-formats.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/error-cells.tsx" -o "${TEMP_DIR}/error-cells.xlsx"

@@ -1029,6 +1029,15 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `HyperlinkBase`; unknown authored app properties are rejected. Other
   authored core metadata (identifiers and independent last-modifier values) is
   rejected because it has no lossless Workbook property in v1.
+- `theme?: "excel2023"` selects the pinned writer's Excel 2023 Office/Aptos
+  preset with `Workbook::use_excel_2023_theme()`. Omission uses the writer's
+  default Office theme. Reverse recognizes the built-in presets without a
+  manifest, ignoring XML declaration, indentation, and attribute order, emits
+  `theme="excel2023"` for Excel 2023, and
+  omits the property for the default Office theme. Unrecognized custom theme
+  XML is rejected because replacing its colors/typefaces would change the
+  appearance of theme-linked cells and charts; arbitrary custom themes and
+  their default-format metrics are not modeled in v1.
 
 ### Chartsheet
 

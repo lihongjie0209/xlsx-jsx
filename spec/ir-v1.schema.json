@@ -43,7 +43,8 @@
             "manager": { "type": "string" },
             "company": { "type": "string" },
             "hyperlinkBase": { "type": "string" },
-            "codeName": { "type": "string", "minLength": 1, "maxLength": 31 }
+            "codeName": { "type": "string", "minLength": 1, "maxLength": 31 },
+            "theme": { "const": "excel2023" }
           }
         },
         "children": {

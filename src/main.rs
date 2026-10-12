@@ -238,6 +238,11 @@ fn require_extension(path: &std::path::Path, expected: &str) -> xlsx_jsx::Result
 #[allow(clippy::too_many_lines)] // Worksheet serialization keeps row and column ordering together.
 fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     let mut workbook = Workbook::new();
+    if ir.workbook.props.get("theme").and_then(Value::as_str) == Some("excel2023") {
+        workbook
+            .use_excel_2023_theme()
+            .map_err(|error| Error::Compile(format!("cannot apply Workbook.theme: {error}")))?;
+    }
     let mut properties = DocProperties::new();
     if let Some(value) = ir.workbook.props.get("title").and_then(Value::as_str) {
         properties = properties.set_title(value);
@@ -7279,6 +7284,9 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
             let _ = write!(output, " {name}={value:?}");
         }
     }
+    if workbook_properties.theme == Some(WorkbookTheme::Excel2023) {
+        output.push_str(" theme=\"excel2023\"");
+    }
     if let Some(code_name) = workbook_properties.code_name.as_deref() {
         let _ = write!(output, " codeName={code_name:?}");
     }
@@ -10781,9 +10789,10 @@ fn audit_reverse_subset(
     })?;
     let mut archive = ZipArchive::new(file).map_err(|error| Error::Reverse(error.to_string()))?;
     validate_custom_properties_package(&mut archive)?;
-    let (formats, differential_formats) = parse_style_tables(&mut archive)?;
     let workbook_xml = read_zip_part(&mut archive, "xl/workbook.xml")?;
     let relationships_xml = read_zip_part(&mut archive, "xl/_rels/workbook.xml.rels")?;
+    let workbook_theme = audit_workbook_theme(&mut archive)?;
+    let (formats, differential_formats) = parse_style_tables(&mut archive)?;
     let has_dynamic_metadata = archive.file_names().any(|name| name == "xl/metadata.xml");
     let has_checkbox_property_bag = archive
         .file_names()
@@ -10955,7 +10964,10 @@ fn audit_reverse_subset(
         table_relationships_by_sheet.insert(worksheet_part, relationships.tables);
     }
     let mut styles_by_sheet = HashMap::new();
-    let mut workbook_properties = WorkbookProperties::default();
+    let mut workbook_properties = WorkbookProperties {
+        theme: (workbook_theme == WorkbookTheme::Excel2023).then_some(workbook_theme),
+        ..Default::default()
+    };
     for index in 0..archive.len() {
         let mut part = archive
             .by_index(index)
@@ -11712,6 +11724,141 @@ fn parse_style_tables(
             Vec::new(),
         ))
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WorkbookTheme {
+    Office,
+    Excel2023,
+}
+
+fn audit_workbook_theme<R: std::io::Read + std::io::Seek>(
+    archive: &mut ZipArchive<R>,
+) -> xlsx_jsx::Result<WorkbookTheme> {
+    if !archive
+        .file_names()
+        .any(|name| name == "xl/theme/theme1.xml")
+    {
+        return Ok(WorkbookTheme::Office);
+    }
+    let theme_xml = read_zip_part(archive, "xl/theme/theme1.xml")?;
+    let (office_theme, excel_2023_theme) = builtin_theme_xmls()?;
+    let theme_tokens = canonical_theme_tokens(&theme_xml)?;
+    if theme_tokens == canonical_theme_tokens(office_theme)? {
+        return Ok(WorkbookTheme::Office);
+    }
+    if theme_tokens == canonical_theme_tokens(excel_2023_theme)? {
+        return Ok(WorkbookTheme::Excel2023);
+    }
+    Err(Error::Reverse(
+        "workbook uses an unmodeled custom theme; replacing it would change theme-linked colors and typefaces. Use the default Office or built-in Excel 2023 theme, or extend lossless custom-theme support"
+            .into(),
+    ))
+}
+
+fn canonical_theme_tokens(xml: &str) -> xlsx_jsx::Result<Vec<String>> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut tokens = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event)) => {
+                append_theme_start(&event, reader.decoder(), false, &mut tokens)?;
+            }
+            Ok(Event::Empty(event)) => {
+                append_theme_start(&event, reader.decoder(), true, &mut tokens)?;
+            }
+            Ok(Event::End(event)) => tokens.push(format!(
+                "end:{}",
+                String::from_utf8_lossy(event.name().as_ref())
+            )),
+            Ok(Event::Text(event)) => {
+                let text = event
+                    .decode()
+                    .map_err(|error| Error::Reverse(format!("invalid theme XML: {error}")))?;
+                if !text.trim().is_empty() {
+                    tokens.push(format!("text:{text}"));
+                }
+            }
+            Ok(Event::GeneralRef(event)) => {
+                tokens.push(format!(
+                    "ref:{}",
+                    event.decode().map_err(|error| {
+                        Error::Reverse(format!("invalid theme XML entity: {error}"))
+                    })?
+                ));
+            }
+            Ok(Event::Eof) => break,
+            Ok(Event::Decl(_) | Event::Comment(_) | Event::PI(_)) => {}
+            Ok(_) => {
+                return Err(Error::Reverse(
+                    "workbook theme contains unsupported XML markup".into(),
+                ));
+            }
+            Err(error) => return Err(Error::Reverse(format!("invalid theme XML: {error}"))),
+        }
+    }
+    Ok(tokens)
+}
+
+fn append_theme_start(
+    event: &BytesStart<'_>,
+    decoder: quick_xml::encoding::Decoder,
+    empty: bool,
+    tokens: &mut Vec<String>,
+) -> xlsx_jsx::Result<()> {
+    let name = String::from_utf8_lossy(event.name().as_ref()).into_owned();
+    let mut attributes = event
+        .attributes()
+        .with_checks(false)
+        .map(|attribute| {
+            let attribute =
+                attribute.map_err(|error| Error::Reverse(format!("invalid theme XML: {error}")))?;
+            let name = String::from_utf8_lossy(attribute.key.as_ref()).into_owned();
+            let value = attribute
+                .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+                .map_err(|error| Error::Reverse(format!("invalid theme XML: {error}")))?
+                .into_owned();
+            Ok::<_, Error>((name, value))
+        })
+        .collect::<xlsx_jsx::Result<Vec<_>>>()?;
+    attributes.sort_unstable();
+    tokens.push(format!("start:{name}:{attributes:?}"));
+    if empty {
+        tokens.push(format!("end:{name}"));
+    }
+    Ok(())
+}
+
+fn builtin_theme_xmls() -> xlsx_jsx::Result<&'static (String, String)> {
+    static THEMES: std::sync::OnceLock<std::result::Result<(String, String), String>> =
+        std::sync::OnceLock::new();
+    match THEMES.get_or_init(|| {
+        let office_theme = generate_builtin_theme_xml(false).map_err(|error| error.to_string())?;
+        let excel_2023_theme =
+            generate_builtin_theme_xml(true).map_err(|error| error.to_string())?;
+        Ok((office_theme, excel_2023_theme))
+    }) {
+        Ok(themes) => Ok(themes),
+        Err(error) => Err(Error::Reverse(format!(
+            "cannot audit built-in workbook themes: {error}"
+        ))),
+    }
+}
+
+fn generate_builtin_theme_xml(excel_2023: bool) -> xlsx_jsx::Result<String> {
+    let mut workbook = Workbook::new();
+    if excel_2023 {
+        workbook
+            .use_excel_2023_theme()
+            .map_err(|error| Error::Reverse(format!("cannot create Excel 2023 theme: {error}")))?;
+    }
+    workbook.add_worksheet();
+    let bytes = workbook
+        .save_to_buffer()
+        .map_err(|error| Error::Reverse(format!("cannot create built-in theme: {error}")))?;
+    let mut archive = ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|error| Error::Reverse(format!("cannot inspect built-in theme: {error}")))?;
+    read_zip_part(&mut archive, "xl/theme/theme1.xml")
 }
 
 fn read_zip_part<R: std::io::Read + std::io::Seek>(
@@ -38127,6 +38274,7 @@ fn validate_filter_database_definitions(
 #[derive(Debug, Default)]
 struct WorkbookProperties {
     code_name: Option<String>,
+    theme: Option<WorkbookTheme>,
     title: Option<String>,
     subject: Option<String>,
     author: Option<String>,
@@ -40316,7 +40464,7 @@ fn parse_font_scheme(
 
 fn finalize_font_style(mut style: CellFontStyle) -> CellFontStyle {
     if style.font_scheme.as_deref() == Some("minor") {
-        if style.font_name.as_deref() == Some("Calibri") {
+        if matches!(style.font_name.as_deref(), Some("Calibri" | "Aptos Narrow")) {
             style.font_name = None;
         }
         // `Format::new()` already selects the minor/body theme font.
@@ -40340,7 +40488,6 @@ fn audit_default_font_component(
     let expected = match tag {
         b"sz" => Some((b"val".as_slice(), "11")),
         b"color" => Some((b"theme".as_slice(), "1")),
-        b"name" => Some((b"val".as_slice(), "Calibri")),
         b"family" => Some((b"val".as_slice(), "2")),
         b"scheme" => Some((b"val".as_slice(), "minor")),
         _ => None,
@@ -40353,7 +40500,10 @@ fn audit_default_font_component(
             .map_err(|error| Error::Reverse(error.to_string()))?;
         if expected.is_some_and(|(name, expected_value)| {
             attribute.key.local_name().as_ref() == name && value == expected_value
-        }) {
+        }) || (tag == b"name"
+            && attribute.key.local_name().as_ref() == b"val"
+            && matches!(value.as_ref(), "Calibri" | "Aptos Narrow"))
+        {
             matched = true;
         } else {
             style.support = StyleSupport::Unsupported;

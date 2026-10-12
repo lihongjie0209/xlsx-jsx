@@ -14,6 +14,7 @@ use rust_xlsxwriter::{
     ObjectMovement, Sparkline as XlsxSparkline, SparklineType, Workbook as XlsxWorkbook,
 };
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use tempfile::tempdir;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
@@ -239,6 +240,113 @@ fn workbook_document_properties_round_trip_external_xlsx_without_manifest() {
 }
 
 #[test]
+fn external_excel_2023_theme_reverses_and_recompiles_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("excel-2023-theme.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .use_excel_2023_theme()
+        .expect("Excel 2023 theme applies before worksheets");
+    workbook
+        .add_worksheet()
+        .write_string(0, 0, "Aptos")
+        .expect("cell writes");
+    workbook.save(&input).expect("external workbook saves");
+    rewrite_part(&input, "xl/theme/theme1.xml", |xml| {
+        xml.replace(
+            "<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" name=\"Office Theme\">",
+            "<a:theme name=\"Office Theme\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">",
+        )
+        .replace("><a:", ">\n  <a:")
+    });
+
+    let reversed = directory.path().join("excel-2023-theme.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("theme=\"excel2023\""), "{source}");
+
+    let regenerated = directory.path().join("excel-2023-theme-roundtrip.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&regenerated)
+        .assert()
+        .success();
+    let mut archive =
+        ZipArchive::new(std::fs::File::open(regenerated).expect("regenerated workbook exists"))
+            .expect("regenerated XLSX is a ZIP package");
+    let mut theme_xml = String::new();
+    archive
+        .by_name("xl/theme/theme1.xml")
+        .expect("theme part exists")
+        .read_to_string(&mut theme_xml)
+        .expect("theme XML reads");
+    assert!(theme_xml.contains("Aptos Narrow"), "{theme_xml}");
+    assert!(theme_xml.contains("156082"), "{theme_xml}");
+}
+
+#[test]
+fn public_excel_2023_theme_example_builds_and_reverses() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("excel-2023-theme.xlsx");
+    let example = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/excel-2023-theme.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(example)
+        .args(["-o"])
+        .arg(&input)
+        .assert()
+        .success();
+
+    let reversed = directory.path().join("excel-2023-theme.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(reversed).expect("reverse output exists");
+    assert!(source.contains("theme=\"excel2023\""), "{source}");
+}
+
+#[test]
+fn reverse_rejects_unmodeled_custom_theme_instead_of_replacing_its_colors() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("custom-theme.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .use_excel_2023_theme()
+        .expect("Excel 2023 theme applies before worksheets");
+    workbook.add_worksheet();
+    workbook.save(&input).expect("external workbook saves");
+    rewrite_part(&input, "xl/theme/theme1.xml", |xml| {
+        xml.replace("156082", "123456")
+    });
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("custom theme"))
+        .stderr(predicate::str::contains("theme-linked colors"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
 fn reverse_rejects_inconsistent_custom_properties_relationship() {
     let directory = tempdir().expect("temporary directory is available");
     let external = directory.path().join("custom-properties.xlsx");
@@ -297,6 +405,7 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("BackgroundImage"))
         .stdout(predicate::str::contains("category"))
         .stdout(predicate::str::contains("status"))
+        .stdout(predicate::str::contains("excel2023"))
         .stdout(predicate::str::contains("manager"))
         .stdout(predicate::str::contains("company"))
         .stdout(predicate::str::contains("hyperlinkBase"))

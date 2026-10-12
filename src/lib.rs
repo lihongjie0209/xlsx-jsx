@@ -379,6 +379,7 @@ const WORKBOOK_PROPERTIES: &[&str] = &[
     "company",
     "hyperlinkBase",
     "codeName",
+    "theme",
 ];
 
 impl IrEnvelope {
@@ -604,6 +605,13 @@ fn validate_workbook_properties(workbook: &Node) -> Result<()> {
                 "Workbook.{property} must be a string; use a quoted string or remove the property"
             )));
         }
+    }
+    if let Some(theme) = workbook.props.get("theme")
+        && theme.as_str() != Some("excel2023")
+    {
+        return Err(Error::Compile(
+            "Workbook.theme must be `excel2023`; arbitrary custom themes are not represented, so use the built-in preset or remove the property".into(),
+        ));
     }
     if let Some(value) = workbook.props.get("codeName") {
         let code_name = value.as_str().ok_or_else(|| {
@@ -14010,6 +14018,33 @@ mod tests {
 
         let validation = input.validate();
         assert!(validation.is_ok(), "{validation:?}");
+    }
+
+    #[test]
+    fn accepts_excel_2023_workbook_theme() {
+        let mut input = workbook(vec![worksheet("Data", vec![])]);
+        input.workbook.props = serde_json::from_value(serde_json::json!({
+            "theme": "excel2023"
+        }))
+        .expect("theme is a JSON property");
+
+        let result = input.validate();
+
+        assert!(result.is_ok(), "unexpected validation error: {result:?}");
+    }
+
+    #[test]
+    fn rejects_unknown_workbook_theme_with_repair_guidance() {
+        let mut input = workbook(vec![worksheet("Data", vec![])]);
+        input.workbook.props = serde_json::from_value(serde_json::json!({
+            "theme": "custom"
+        }))
+        .expect("theme is a JSON property");
+
+        let error = input.validate().unwrap_err().to_string();
+
+        assert!(error.contains("excel2023"), "{error}");
+        assert!(error.contains("custom themes"), "{error}");
     }
 
     #[test]

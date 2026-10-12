@@ -18,6 +18,9 @@ completed batch; they do not block work on the next batch.
 
 ## Recently delivered
 
+- The Excel 2023 Office/Aptos workbook theme now has an explicit preset and
+  external reverse recognition; arbitrary custom theme payloads remain deferred
+  because they also need matching default-format metadata.
 - Reverse diagnostics now explain the legacy array-formula cache limitation and
   distinguish it from scalar cached results on ordinary formulas.
 - Image fit modes: `stretch`, `contain`, and `containCenter` use the effective
