@@ -16924,6 +16924,89 @@ fn jsx_tables_compile_reverse_and_recompile() {
 }
 
 #[test]
+fn table_column_script_only_format_survives_compile_reverse_and_rebuild() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source_path = directory.path().join("table-script.tsx");
+    std::fs::write(
+        &source_path,
+        r#"import { Workbook, Worksheet, Table, TableColumn, Row, Cell } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Sales">
+  <Table range="A1:C2" name="SalesTable">
+    <TableColumn format={{script:"superscript"}} />
+    <TableColumn format={{script:"subscript",numberFormat:"0.00"}} />
+    <TableColumn format={{bold:true,script:"superscript"}} />
+  </Table>
+  <Row><Cell>Amount</Cell><Cell>Revenue</Cell><Cell>Count</Cell></Row>
+  <Row><Cell value={12} /><Cell value={12} /><Cell value={3} /></Row>
+</Worksheet></Workbook>;
+"#,
+    )
+    .expect("temporary JSX source writes");
+    let output = directory.path().join("table-script.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source_path)
+        .args(["-o"])
+        .arg(&output)
+        .assert()
+        .success();
+
+    let styles = read_zip_part_for_test(&output, "xl/styles.xml");
+    assert!(
+        styles.contains("<vertAlign val=\"superscript\"/>"),
+        "{styles}"
+    );
+    assert!(
+        styles.contains("<vertAlign val=\"subscript\"/>"),
+        "{styles}"
+    );
+    assert!(
+        styles.contains("<b/><vertAlign val=\"superscript\"/>"),
+        "{styles}"
+    );
+
+    let reversed = directory.path().join("table-script-reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(
+        source.contains("format={{\"script\":\"superscript\"}}"),
+        "{source}"
+    );
+    assert!(source.contains("subscript"), "{source}");
+
+    let rebuilt = directory.path().join("table-script-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let rebuilt_styles = read_zip_part_for_test(&rebuilt, "xl/styles.xml");
+    assert!(
+        rebuilt_styles.contains("<vertAlign val=\"superscript\"/>"),
+        "{rebuilt_styles}"
+    );
+    assert!(
+        rebuilt_styles.contains("<vertAlign val=\"subscript\"/>"),
+        "{rebuilt_styles}"
+    );
+    assert!(
+        rebuilt_styles.contains("<b/><vertAlign val=\"superscript\"/>"),
+        "{rebuilt_styles}"
+    );
+}
+
+#[test]
 fn jsx_table_column_header_format_compiles_and_reverses_as_cell_format() {
     let directory = tempdir().expect("temporary directory is available");
     let output = directory.path().join("table-header-format.xlsx");

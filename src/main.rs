@@ -581,9 +581,18 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         source: std::io::Error::other(error.to_string()),
     })?;
     let x14_icon_normalization = collect_x14_icon_normalization_targets(ir)?;
+    let table_script_targets = collect_table_script_targets(ir)?;
     let literal_error_count = count_literal_error_cells(ir);
-    if !x14_icon_normalization.is_empty() || literal_error_count > 0 {
-        normalize_x14_icon_rules(path, &x14_icon_normalization, literal_error_count)?;
+    if !x14_icon_normalization.is_empty()
+        || !table_script_targets.is_empty()
+        || literal_error_count > 0
+    {
+        normalize_generated_xlsx(
+            path,
+            &x14_icon_normalization,
+            literal_error_count,
+            &table_script_targets,
+        )?;
     }
     Ok(())
 }
@@ -764,10 +773,52 @@ fn collect_x14_icon_normalization_targets(
     Ok(targets)
 }
 
-fn normalize_x14_icon_rules(
+fn collect_table_script_targets(
+    ir: &IrEnvelope,
+) -> xlsx_jsx::Result<HashMap<String, BTreeMap<usize, String>>> {
+    let mut targets = HashMap::new();
+    for worksheet_value in &ir.workbook.children {
+        let worksheet: Node = serde_json::from_value(worksheet_value.clone())
+            .map_err(|error| Error::Compile(error.to_string()))?;
+        if worksheet.r#type != "Worksheet" {
+            continue;
+        }
+        for table_value in &worksheet.children {
+            let table: Node = serde_json::from_value(table_value.clone())
+                .map_err(|error| Error::Compile(error.to_string()))?;
+            if table.r#type != "Table" {
+                continue;
+            }
+            let Some(name) = table.props.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            for (column_index, column_value) in table.children.iter().enumerate() {
+                let column: Node = serde_json::from_value(column_value.clone())
+                    .map_err(|error| Error::Compile(error.to_string()))?;
+                let Some(script) = column
+                    .props
+                    .get("format")
+                    .and_then(Value::as_object)
+                    .and_then(|format| format.get("script"))
+                    .and_then(Value::as_str)
+                else {
+                    continue;
+                };
+                targets
+                    .entry(name.to_owned())
+                    .or_insert_with(BTreeMap::new)
+                    .insert(column_index, script.to_owned());
+            }
+        }
+    }
+    Ok(targets)
+}
+
+fn normalize_generated_xlsx(
     path: &std::path::Path,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
+    table_script_targets: &HashMap<String, BTreeMap<usize, String>>,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -790,11 +841,12 @@ fn normalize_x14_icon_rules(
         })
         .ok_or_else(|| Error::Compile("cannot create a temporary XLSX normalization file beside the output; close conflicting processes or remove stale `.xlsx-jsx-*.tmp` files".into()))?;
 
-    let rewrite_result = rewrite_xlsx_with_x14_icon_rules(
+    let rewrite_result = rewrite_generated_xlsx(
         path,
         temporary_file,
         targets_by_part,
         literal_error_count,
+        table_script_targets,
     );
     if let Err(error) = rewrite_result {
         let _ = std::fs::remove_file(&temporary_path);
@@ -816,11 +868,12 @@ fn normalize_x14_icon_rules(
     Ok(())
 }
 
-fn rewrite_xlsx_with_x14_icon_rules(
+fn rewrite_generated_xlsx(
     path: &std::path::Path,
     temporary_file: std::fs::File,
     targets_by_part: &HashMap<String, HashMap<u32, X14IconRuleNormalization>>,
     literal_error_count: usize,
+    table_script_targets: &HashMap<String, BTreeMap<usize, String>>,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -828,6 +881,7 @@ fn rewrite_xlsx_with_x14_icon_rules(
     })?;
     let mut archive = ZipArchive::new(source_file)
         .map_err(|error| Error::Compile(format!("cannot read generated XLSX package: {error}")))?;
+    let dxf_scripts = collect_table_dxf_script_indices(&mut archive, table_script_targets)?;
     let mut writer = ZipWriter::new(temporary_file);
     let mut patched_parts = std::collections::HashSet::new();
     let mut patched_error_cells = 0_usize;
@@ -866,6 +920,11 @@ fn rewrite_xlsx_with_x14_icon_rules(
             let (xml, patched_count) = patch_literal_error_cells(&xml, &name)?;
             patched_error_cells += patched_count;
             bytes = xml.into_bytes();
+        } else if name == "xl/styles.xml" && !dxf_scripts.is_empty() {
+            let xml = String::from_utf8(bytes).map_err(|error| {
+                Error::Compile(format!("generated styles part is not UTF-8 XML: {error}"))
+            })?;
+            bytes = patch_table_dxf_scripts(&xml, &dxf_scripts)?.into_bytes();
         }
         writer
             .start_file(
@@ -911,6 +970,248 @@ fn rewrite_xlsx_with_x14_icon_rules(
     drop(output_file);
     drop(archive);
     Ok(())
+}
+
+fn collect_table_dxf_script_indices(
+    archive: &mut ZipArchive<std::fs::File>,
+    requested: &HashMap<String, BTreeMap<usize, String>>,
+) -> xlsx_jsx::Result<BTreeMap<usize, String>> {
+    let mut resolved = BTreeMap::new();
+    let mut found = BTreeSet::new();
+    let part_names = archive
+        .file_names()
+        .filter(|name| {
+            name.starts_with("xl/tables/table")
+                && std::path::Path::new(name)
+                    .extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("xml"))
+        })
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    for part in part_names {
+        let mut file = archive.by_name(&part).map_err(|error| {
+            Error::Compile(format!(
+                "cannot read generated table part `{part}`: {error}"
+            ))
+        })?;
+        let mut xml = String::new();
+        std::io::Read::read_to_string(&mut file, &mut xml).map_err(|error| {
+            Error::Compile(format!(
+                "cannot decode generated table part `{part}`: {error}"
+            ))
+        })?;
+        let mut reader = XmlReader::from_str(&xml);
+        let mut table_name = None;
+        let mut column_index = 0_usize;
+        loop {
+            match reader.read_event() {
+                Ok(Event::Start(event) | Event::Empty(event)) => {
+                    let tag = event.local_name();
+                    if tag.as_ref() == b"table" {
+                        table_name = chart_xml_attribute(&event, "name", reader.decoder())?;
+                    } else if tag.as_ref() == b"tableColumn" {
+                        let index = column_index;
+                        column_index += 1;
+                        if let Some(script) = table_name
+                            .as_deref()
+                            .and_then(|name| requested.get(name))
+                            .and_then(|columns| columns.get(&index))
+                        {
+                            let dxf_id = chart_xml_attribute(&event, "dataDxfId", reader.decoder())?
+                                .ok_or_else(|| Error::Compile(format!(
+                                    "generated table `{}` column {} is missing dataDxfId required for its `{script}` script format",
+                                    table_name.as_deref().unwrap_or("<unnamed>"),
+                                    index + 1
+                                )))?
+                                .parse::<usize>()
+                                .map_err(|error| Error::Compile(format!(
+                                    "generated table `{}` column {} has invalid dataDxfId: {error}",
+                                    table_name.as_deref().unwrap_or("<unnamed>"),
+                                    index + 1
+                                )))?;
+                            if let Some(previous) = resolved.insert(dxf_id, script.clone())
+                                && previous != *script
+                            {
+                                return Err(Error::Compile(format!(
+                                    "generated DXF {dxf_id} is shared by conflicting table scripts `{previous}` and `{script}`; keep table column formats distinct"
+                                )));
+                            }
+                            if let Some(name) = table_name.as_deref() {
+                                found.insert((name.to_owned(), index));
+                            }
+                        }
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(Error::Compile(format!(
+                        "invalid generated table XML in `{part}`: {error}"
+                    )));
+                }
+            }
+        }
+    }
+    for (table_name, columns) in requested {
+        for column_index in columns.keys() {
+            if !found.contains(&(table_name.clone(), *column_index)) {
+                return Err(Error::Compile(format!(
+                    "generated XLSX has no table `{table_name}` column {}; repair the table name or column declarations",
+                    column_index + 1
+                )));
+            }
+        }
+    }
+    Ok(resolved)
+}
+
+fn patch_table_dxf_scripts(
+    xml: &str,
+    scripts: &BTreeMap<usize, String>,
+) -> xlsx_jsx::Result<String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut dxf_index = 0_usize;
+    let mut dxf_start = None;
+    let mut fragments = Vec::new();
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(event)) if event.local_name().as_ref() == b"dxf" => {
+                dxf_start = Some(find_last_xml_tag_start(
+                    xml,
+                    usize::try_from(reader.buffer_position()).map_err(|_| {
+                        Error::Compile("generated styles.xml exceeds platform limits".into())
+                    })?,
+                    "dxf",
+                )?);
+            }
+            Ok(Event::Empty(event)) if event.local_name().as_ref() == b"dxf" => {
+                let index = dxf_index;
+                dxf_index += 1;
+                if scripts.contains_key(&index) {
+                    let end = usize::try_from(reader.buffer_position()).map_err(|_| {
+                        Error::Compile("generated styles.xml exceeds platform limits".into())
+                    })?;
+                    let start = find_last_xml_tag_start(xml, end, "dxf")?;
+                    fragments.push((index, start, end));
+                }
+            }
+            Ok(Event::End(event)) if event.local_name().as_ref() == b"dxf" => {
+                let index = dxf_index;
+                dxf_index += 1;
+                if scripts.contains_key(&index) {
+                    let start = dxf_start.take().ok_or_else(|| {
+                        Error::Compile(format!("generated DXF {index} has no opening tag"))
+                    })?;
+                    let end = usize::try_from(reader.buffer_position()).map_err(|_| {
+                        Error::Compile("generated styles.xml exceeds platform limits".into())
+                    })?;
+                    fragments.push((index, start, end));
+                } else {
+                    dxf_start = None;
+                }
+            }
+            Ok(Event::Eof) => break,
+            Ok(_) => {}
+            Err(error) => {
+                return Err(Error::Compile(format!(
+                    "invalid generated styles XML while restoring table scripts: {error}"
+                )));
+            }
+        }
+    }
+    for index in scripts.keys() {
+        if *index >= dxf_index || !fragments.iter().any(|(found, _, _)| found == index) {
+            return Err(Error::Compile(format!(
+                "generated styles.xml is missing table differential format {index}; repair the table format serialization"
+            )));
+        }
+    }
+    let mut output = xml.to_owned();
+    for (index, start, end) in fragments.into_iter().rev() {
+        let script = scripts.get(&index).ok_or_else(|| {
+            Error::Compile(format!(
+                "missing requested script for generated DXF {index}"
+            ))
+        })?;
+        let fragment = output.get(start..end).ok_or_else(|| {
+            Error::Compile(format!(
+                "generated DXF {index} has invalid XML byte boundaries"
+            ))
+        })?;
+        let replacement = patch_one_dxf_script(fragment, script, index)?;
+        output.replace_range(start..end, &replacement);
+    }
+    Ok(output)
+}
+
+fn find_last_xml_tag_start(xml: &str, end: usize, tag: &str) -> xlsx_jsx::Result<usize> {
+    let prefix = xml.get(..end).ok_or_else(|| {
+        Error::Compile(format!(
+            "generated XML has invalid byte position for `<{tag}>`"
+        ))
+    })?;
+    let marker = format!("<{tag}");
+    prefix
+        .rfind(&marker)
+        .filter(|start| {
+            prefix
+                .as_bytes()
+                .get(start + marker.len())
+                .is_some_and(|byte| byte.is_ascii_whitespace() || *byte == b'>' || *byte == b'/')
+        })
+        .ok_or_else(|| Error::Compile(format!("generated XML is missing `<{tag}>`")))
+}
+
+fn patch_one_dxf_script(fragment: &str, script: &str, index: usize) -> xlsx_jsx::Result<String> {
+    let value = match script {
+        "superscript" => "superscript",
+        "subscript" => "subscript",
+        _ => {
+            return Err(Error::Compile(format!(
+                "generated table DXF {index} has unsupported script `{script}`"
+            )));
+        }
+    };
+    if let Some(start) = fragment.find("<vertAlign") {
+        let end = fragment[start..]
+            .find('>')
+            .map(|offset| start + offset + 1)
+            .ok_or_else(|| {
+                Error::Compile(format!(
+                    "generated table DXF {index} has malformed vertAlign"
+                ))
+            })?;
+        let tag = &fragment[start..end];
+        if tag.contains(&format!("val=\"{value}\"")) {
+            return Ok(fragment.to_owned());
+        }
+        return Err(Error::Compile(format!(
+            "generated table DXF {index} contains a conflicting vertAlign; repair the writer output"
+        )));
+    }
+    let vert_align = format!("<vertAlign val=\"{value}\"/>");
+    if let Some(font_start) = fragment.find("<font") {
+        let font_end = fragment[font_start..]
+            .find("</font>")
+            .map(|offset| font_start + offset)
+            .ok_or_else(|| {
+                Error::Compile(format!("generated table DXF {index} has an unclosed font"))
+            })?;
+        let mut output = fragment.to_owned();
+        output.insert_str(font_end, &vert_align);
+        return Ok(output);
+    }
+    if let Some(empty_end) = fragment.strip_suffix("/>") {
+        return Ok(format!("{empty_end}><font>{vert_align}</font></dxf>"));
+    }
+    let open_end = fragment.find('>').map(|offset| offset + 1).ok_or_else(|| {
+        Error::Compile(format!(
+            "generated table DXF {index} has malformed opening tag"
+        ))
+    })?;
+    let mut output = fragment.to_owned();
+    output.insert_str(open_end, &format!("<font>{vert_align}</font>"));
+    Ok(output)
 }
 
 fn patch_literal_error_cells(xml: &str, part: &str) -> xlsx_jsx::Result<(String, usize)> {

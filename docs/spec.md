@@ -1270,11 +1270,11 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `numberFormat` is an Excel format code of 1–255 XML-valid characters and is
   preserved as the table column's differential number format.
   For data `format`, `script` is written as the differential font's `vertAlign`
-  property and is preserved when reversing external tables. Because the pinned
-  writer omits a script-only differential format from `<dxfs>`, data `format`
-  `script` must be combined with another supported property such as `bold` or
-  `fontColor`. `headerFormat` uses ordinary cell style XML and can use `script`
-  by itself.
+  property and is preserved when reversing external tables. The pinned writer
+  omits a script-only differential format and omits `vertAlign` from combined
+  differential fonts; the compiler restores the requested script in the table
+  column's referenced `<dxf>` before returning the XLSX. Data `format` and
+  `headerFormat` can both use `script` by itself.
   Border colors require the corresponding edge style. Diagonal direction
   (`up`, `down`, or `upDown`) is preserved; diagonal line style/color is not
   serialized by the pinned writer in differential formats and remains rejected.

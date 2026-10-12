@@ -9889,11 +9889,6 @@ fn validate_table_column_format(value: &Value, property: &str, index: usize) -> 
             "TableColumn.{property} fill properties conflict: fillColor is the solid-fill shorthand; foreground/background colors require a non-none fillPattern. Choose one fill representation"
         )));
     }
-    if property == "format" && format.contains_key("script") && format.len() == 1 {
-        return Err(Error::Compile(format!(
-            "TableColumn.{property}.script requires another TableColumn differential-format property; the pinned writer drops script-only dxf styles, so add a supported property such as bold or fontColor"
-        )));
-    }
     for suffix in ["Top", "Right", "Bottom", "Left"] {
         let style_key = format!("border{suffix}");
         let color_key = format!("border{suffix}Color");
@@ -15909,7 +15904,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_script_only_table_differential_format_that_writer_drops() {
+    fn accepts_script_only_table_differential_format() {
         let input = workbook(vec![serde_json::json!({
             "type":"Worksheet", "props":{"name":"Sales"}, "children":[
                 {"type":"Table","props":{"range":"A1:A2","name":"SalesTable"},"children":[
@@ -15919,15 +15914,9 @@ mod tests {
                 {"type":"Row","props":{},"children":[{"type":"Cell","props":{},"children":["Tea"]}]}
             ]
         })]);
-        let error = input
+        input
             .validate()
-            .expect_err("the pinned writer omits script-only differential formats");
-
-        assert!(
-            error
-                .to_string()
-                .contains("script requires another TableColumn")
-        );
+            .expect("the compiler restores script-only table differential formats");
     }
 
     #[test]
