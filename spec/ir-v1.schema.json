@@ -2888,7 +2888,7 @@
             "columnSpan": { "type": "integer", "minimum": 1, "maximum": 16384 },
             "bold": { "type": "boolean" },
             "italic": { "type": "boolean" },
-            "horizontalAlign": { "enum": ["left", "center", "right", "justify", "distributed"] },
+            "horizontalAlign": { "enum": ["left", "center", "centerAcross", "right", "justify", "distributed"] },
             "verticalAlign": { "enum": ["top", "center", "bottom", "justify", "distributed"] },
             "indent": { "type": "integer", "minimum": 1, "maximum": 255 },
             "wrapText": { "type": "boolean" },
@@ -3078,7 +3078,7 @@
       "properties": {
         "bold": { "type": "boolean" },
         "italic": { "type": "boolean" },
-        "horizontalAlign": { "enum": ["left", "center", "right", "justify", "distributed"] },
+        "horizontalAlign": { "enum": ["left", "center", "centerAcross", "right", "justify", "distributed"] },
         "verticalAlign": { "enum": ["top", "center", "bottom", "justify", "distributed"] },
         "indent": { "type": "integer", "minimum": 1, "maximum": 255 },
         "wrapText": { "type": "boolean" },

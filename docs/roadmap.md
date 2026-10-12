@@ -29,6 +29,8 @@ reported as complete.
 
 ## Recently delivered
 
+- Cell, row, and column formats now preserve horizontal `centerAcross` as OOXML
+  `centerContinuous`; table-column differential alignment remains unsupported.
 - Cell, row, and column formats now preserve vertical `justify` and
   `distributed` alignment in both directions; table-column differential
   overrides remain rejected until direct-cell interactions are losslessly
@@ -93,6 +95,12 @@ forward/reverse batch.
 
 ## Audited but deferred workbook behavior
 
+- Workbook default column width: `Workbook::set_default_format()` exposes this
+  only as a workbook-wide default-format operation that must run before any
+  worksheets exist, and the pinned version accepts only a finite set of pixel
+  widths. Defer until a common-workflow need justifies a workbook-level JSX
+  contract and external reverse coverage; do not approximate arbitrary external
+  `sheetFormatPr@defaultColWidth` values.
 - Chartsheet `zoomToFit`: the pinned `Worksheet::set_zoom_to_fit()` API only
   affects chartsheets, so this is lower priority than worksheet/table authoring.
 - External column `bestFit=true` metadata without a positive, exactly representable

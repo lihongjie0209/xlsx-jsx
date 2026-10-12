@@ -20,6 +20,8 @@ cargo build --locked
 "${DOTNET}" restore "${VALIDATOR_PROJECT}" --configfile "${NUGET_CONFIG}" --locked-mode
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/basic.tsx" -o "${TEMP_DIR}/basic.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/basic.xlsx"
+"${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/center-across.tsx" -o "${TEMP_DIR}/center-across.xlsx"
+"${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/center-across.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/autofit.tsx" -o "${TEMP_DIR}/autofit.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/autofit.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/column-autofit.tsx" -o "${TEMP_DIR}/column-autofit.xlsx"

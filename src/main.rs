@@ -7247,15 +7247,7 @@ fn build_cell_format(cell: &Node) -> xlsx_jsx::Result<Format> {
     format = apply_cell_borders(format, cell)?;
     let explicit_number_format = cell.props.get("numberFormat").and_then(Value::as_str);
     if let Some(horizontal_align) = cell.props.get("horizontalAlign").and_then(Value::as_str) {
-        let align = match horizontal_align {
-            "left" => FormatAlign::Left,
-            "center" => FormatAlign::Center,
-            "right" => FormatAlign::Right,
-            "justify" => FormatAlign::Justify,
-            "distributed" => FormatAlign::Distributed,
-            _ => FormatAlign::General,
-        };
-        format = format.set_align(align);
+        format = format.set_align(parse_horizontal_format_alignment(horizontal_align));
     }
     if let Some(vertical_align) = cell.props.get("verticalAlign").and_then(Value::as_str) {
         let align = match vertical_align {
@@ -7365,6 +7357,18 @@ fn has_format_properties(node: &Node) -> bool {
     node.props
         .keys()
         .any(|property| FORMAT_PROPERTY_NAMES.contains(&property.as_str()))
+}
+
+fn parse_horizontal_format_alignment(alignment: &str) -> FormatAlign {
+    match alignment {
+        "left" => FormatAlign::Left,
+        "center" => FormatAlign::Center,
+        "centerAcross" => FormatAlign::CenterAcross,
+        "right" => FormatAlign::Right,
+        "justify" => FormatAlign::Justify,
+        "distributed" => FormatAlign::Distributed,
+        _ => FormatAlign::General,
+    }
 }
 
 fn apply_cell_indent(
@@ -12475,6 +12479,11 @@ fn parse_table_xml(
                                 if style.horizontal_align == Some(HorizontalAlignment::Justify) {
                                     return Err(Error::Reverse(format!(
                                         "table part `{part}` column uses justify differential alignment, whose interaction with direct worksheet cell formatting is not losslessly reproducible by the pinned writer; remove the table-column justify format or normalize the affected cells to the same alignment"
+                                    )));
+                                }
+                                if style.horizontal_align == Some(HorizontalAlignment::CenterAcross) {
+                                    return Err(Error::Reverse(format!(
+                                        "table part `{part}` column uses center-across differential alignment, which the table-column DSL cannot represent; remove the data-format override or use an ordinary Cell, Row, or Column format"
                                     )));
                                 }
                                 if matches!(
@@ -29855,6 +29864,7 @@ enum StyleSupport {
 enum HorizontalAlignment {
     Left,
     Center,
+    CenterAcross,
     Right,
     Justify,
     Distributed,
@@ -29865,6 +29875,7 @@ impl HorizontalAlignment {
         match self {
             Self::Left => "left",
             Self::Center => "center",
+            Self::CenterAcross => "centerAcross",
             Self::Right => "right",
             Self::Justify => "justify",
             Self::Distributed => "distributed",
@@ -35787,7 +35798,7 @@ fn audit_cell_style(
     })?;
     if style.support != StyleSupport::Supported {
         return Err(Error::Reverse(format!(
-            "worksheet `{part}` cell `{reference}` uses a style outside the bold/italic/underline/strikethrough/script/font-name/size/family/charset/RGB-font-color/four-edge/diagonal-border/solid-fill/horizontal-alignment (left, center, right, justify, distributed)/indent/wrapText/shrinkToFit/number-format subset; unsupported metadata may include font sizes outside the OOXML range, patterned or gradient fill, unsupported built-in formats, theme/indexed font colors, theme/indexed border colors, or unmodeled border metadata. Remove the unsupported feature or add matching DSL support"
+            "worksheet `{part}` cell `{reference}` uses a style outside the bold/italic/underline/strikethrough/script/font-name/size/family/charset/RGB-font-color/four-edge/diagonal-border/solid-fill/horizontal-alignment (left, center, centerAcross, right, justify, distributed)/indent/wrapText/shrinkToFit/number-format subset; unsupported metadata may include font sizes outside the OOXML range, patterned or gradient fill, unsupported built-in formats, theme/indexed font colors, theme/indexed border colors, or unmodeled border metadata. Remove the unsupported feature or add matching DSL support"
         )));
     }
     if style.bold
@@ -41176,6 +41187,7 @@ fn parse_cell_alignment(
                 style.horizontal_align = match value.as_ref() {
                     "left" => Some(HorizontalAlignment::Left),
                     "center" => Some(HorizontalAlignment::Center),
+                    "centerContinuous" => Some(HorizontalAlignment::CenterAcross),
                     "right" => Some(HorizontalAlignment::Right),
                     "justify" => Some(HorizontalAlignment::Justify),
                     "distributed" => Some(HorizontalAlignment::Distributed),

@@ -1761,17 +1761,21 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 - `bold?: boolean` and `italic?: boolean` apply font emphasis to the cell and
   work with scalar values, dates, formulas, and blanks. The reverse reader emits
   only explicitly applied `true` flags; default/false values use the unstyled form.
-- `horizontalAlign?: "left" | "center" | "right" | "justify" | "distributed"` and
+- `horizontalAlign?: "left" | "center" | "centerAcross" | "right" | "justify" | "distributed"` and
   `verticalAlign?: "top" | "center" | "bottom" | "justify" | "distributed"`
   control the independent axes. Vertical `justify` and `distributed` preserve
   the corresponding OOXML `alignment@vertical` values for Cell, Row, and Column
   formats. Table-column differential formats remain limited to top/center/bottom
   until their interaction with direct worksheet cell styles is proven lossless.
   Default/General horizontal and Bottom vertical alignment are omitted when
-  reversing because they have the same effective behavior. `justify` is
+  reversing because they have the same effective behavior. `centerAcross`
+  maps to OOXML `horizontal="centerContinuous"` and is available for Cell,
+  Row, and Column formats; apply it to each participating cell for the intended
+  visual span. Table-column differential formats do not support this value.
+  `justify` is
   preserved as OOXML `horizontal="justify"`; `shrinkToFit=true` cannot be
   combined with it because the writer suppresses shrink-to-fit. Fill,
-  center-across and other unmodeled alignment metadata are rejected on reverse.
+  other unmodeled alignment metadata are rejected on reverse.
   `textRotation?: integer` accepts -90 through 90 degrees
   or 270 for stacked vertical text; ordinary negative angles are preserved
   using Excel's 91–180 OOXML encoding; the default is 0 and is omitted. The OOXML value 255 (stacked vertical

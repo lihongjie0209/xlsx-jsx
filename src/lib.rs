@@ -12934,7 +12934,14 @@ fn validate_cell_style(cell: &Node, row: usize, column: usize) -> Result<()> {
     for (property, allowed) in [
         (
             "horizontalAlign",
-            &["left", "center", "right", "justify", "distributed"][..],
+            &[
+                "left",
+                "center",
+                "centerAcross",
+                "right",
+                "justify",
+                "distributed",
+            ][..],
         ),
         (
             "verticalAlign",
@@ -17009,6 +17016,19 @@ mod tests {
             vec![serde_json::json!({
                 "type":"Row",
                 "children":[{"type":"Cell","props":{"horizontalAlign":"justify"},"children":["wrapped text"]}]
+            })],
+        )]);
+
+        assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn accepts_center_across_alignment() {
+        let input = workbook(vec![worksheet(
+            "CenterAcross",
+            vec![serde_json::json!({
+                "type":"Row",
+                "children":[{"type":"Cell","props":{"horizontalAlign":"centerAcross"},"children":["Heading"]}]
             })],
         )]);
 

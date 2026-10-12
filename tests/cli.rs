@@ -14915,11 +14915,13 @@ fn row_and_column_default_formats_reverse_and_rebuild() {
         .set_bold()
         .set_background_color("ABCDEF")
         .set_font_scheme(rust_xlsxwriter::FontScheme::Headings)
+        .set_align(rust_xlsxwriter::FormatAlign::CenterAcross)
         .set_align(rust_xlsxwriter::FormatAlign::VerticalJustify);
     let column_format = rust_xlsxwriter::Format::new()
         .set_font_color("123456")
         .set_num_format("0.00")
         .set_font_scheme(rust_xlsxwriter::FontScheme::None)
+        .set_align(rust_xlsxwriter::FormatAlign::CenterAcross)
         .set_align(rust_xlsxwriter::FormatAlign::VerticalDistributed);
     worksheet
         .set_row_format(0, &row_format)
@@ -14945,6 +14947,10 @@ fn row_and_column_default_formats_reverse_and_rebuild() {
     assert!(source.contains("fontScheme=\"headings\""), "{source}");
     assert!(source.contains("fontScheme=\"none\""), "{source}");
     assert!(source.contains("fillColor={\"#ABCDEF\"}"), "{source}");
+    assert!(
+        source.contains("horizontalAlign={\"centerAcross\"}"),
+        "{source}"
+    );
     assert!(source.contains("verticalAlign={\"justify\"}"), "{source}");
     assert!(
         source.contains("verticalAlign={\"distributed\"}"),
@@ -14976,6 +14982,10 @@ fn row_and_column_default_formats_reverse_and_rebuild() {
     let styles = read_zip_part_for_test(&regenerated, "xl/styles.xml");
     assert!(styles.contains("vertical=\"justify\""), "{styles}");
     assert!(styles.contains("vertical=\"distributed\""), "{styles}");
+    assert!(
+        styles.contains("horizontal=\"centerContinuous\""),
+        "{styles}"
+    );
 }
 
 #[test]
@@ -17312,6 +17322,24 @@ fn external_table_column_alignment_reverses_without_manifest() {
         .failure()
         .stderr(predicate::str::contains("justify differential alignment"))
         .stderr(predicate::str::contains("not losslessly reproducible"));
+
+    rewrite_part(&external, "xl/styles.xml", |xml| {
+        xml.replace("horizontal=\"justify\"", "horizontal=\"centerContinuous\"")
+    });
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&external)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "center-across differential alignment",
+        ))
+        .stderr(predicate::str::contains("cannot represent"));
+
+    rewrite_part(&external, "xl/styles.xml", |xml| {
+        xml.replace("horizontal=\"centerContinuous\"", "horizontal=\"justify\"")
+    });
 
     rewrite_part(&external, "xl/styles.xml", |xml| {
         xml.replace("horizontal=\"justify\"", "horizontal=\"right\"")
@@ -22576,7 +22604,7 @@ fn reverse_rejects_unmodeled_border_metadata_instead_of_silently_dropping_it() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "horizontal-alignment (left, center, right, justify, distributed)",
+            "horizontal-alignment (left, center, centerAcross, right, justify, distributed)",
         ))
         .stderr(predicate::str::contains("suggestion:"));
 }
@@ -22890,6 +22918,14 @@ fn external_cell_alignment_survives_recompile() {
         .expect("justified cell writes");
     worksheet
         .write_string_with_format(
+            0,
+            5,
+            "center across",
+            &rust_xlsxwriter::Format::new().set_align(rust_xlsxwriter::FormatAlign::CenterAcross),
+        )
+        .expect("center-across cell writes");
+    worksheet
+        .write_string_with_format(
             1,
             0,
             "vertically justified text",
@@ -22924,6 +22960,10 @@ fn assert_cell_alignment_round_trip(directory: &std::path::Path, input: &std::pa
     assert!(source.contains("horizontalAlign={\"left\"} verticalAlign={\"center\"}"));
     assert!(source.contains("horizontalAlign={\"right\"}"));
     assert!(source.contains("horizontalAlign={\"justify\"}"), "{source}");
+    assert!(
+        source.contains("horizontalAlign={\"centerAcross\"}"),
+        "{source}"
+    );
     assert!(source.contains("verticalAlign={\"justify\"}"), "{source}");
     assert!(
         source.contains("verticalAlign={\"distributed\"}"),
@@ -22942,6 +22982,10 @@ fn assert_cell_alignment_round_trip(directory: &std::path::Path, input: &std::pa
     let styles_xml = read_zip_part_for_test(&regenerated, "xl/styles.xml");
     assert!(
         styles_xml.contains("horizontal=\"justify\""),
+        "{styles_xml}"
+    );
+    assert!(
+        styles_xml.contains("horizontal=\"centerContinuous\""),
         "{styles_xml}"
     );
     assert!(styles_xml.contains("vertical=\"justify\""), "{styles_xml}");
