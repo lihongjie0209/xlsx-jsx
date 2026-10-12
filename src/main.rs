@@ -35512,6 +35512,7 @@ fn audit_column_attributes(
     let mut max = None;
     let mut width = None;
     let mut auto_fit = false;
+    let mut auto_fit_seen = false;
     let mut hidden = false;
     let mut outline_level = 0_u8;
     let mut collapsed = false;
@@ -35534,12 +35535,13 @@ fn audit_column_attributes(
                 })?);
             }
             b"bestFit" => {
-                if value != "1" {
+                if auto_fit_seen {
                     return Err(Error::Reverse(format!(
-                        "worksheet `{part}` column range has noncanonical bestFit value `{value}`; preserve only bestFit=\"1\" or remove best-fit metadata"
+                        "worksheet `{part}` column range repeats `bestFit`; remove the duplicate attribute"
                     )));
                 }
-                auto_fit = true;
+                auto_fit_seen = true;
+                auto_fit = parse_xml_bool(&value, part, "bestFit")?;
             }
             b"hidden" => hidden = parse_xml_bool(&value, part, "hidden")?,
             b"collapsed" => {

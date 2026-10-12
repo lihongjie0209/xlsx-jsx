@@ -40,6 +40,8 @@ completed batch; they do not block work on the next batch.
 - Per-column `Column.autoFitWidthPixels` preserves an explicit width together
   with external `bestFit="1"`; it is distinct from content-measuring autofit.
   Reverse accepts only positive widths exactly representable as integer pixels.
+- External `bestFit` now recognizes all XML boolean spellings and folds false
+  into an ordinary explicit width without changing column behavior.
 - External picture reverse now handles anchors crossing mixed custom/default
   row heights and column widths; exact whole-pixel anchor/transform agreement
   is still required.
@@ -63,5 +65,5 @@ forward/reverse batch.
 
 - Chartsheet `zoomToFit`: the pinned `Worksheet::set_zoom_to_fit()` API only
   affects chartsheets, so this is lower priority than worksheet/table authoring.
-- External column `bestFit` metadata without a positive, exactly representable
+- External column `bestFit=true` metadata without a positive, exactly representable
   width remains rejected with a repair diagnostic.

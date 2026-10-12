@@ -1665,10 +1665,12 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   format for unformatted cells in the inclusive column range;
   explicit cell formats override them. Reverse preserves supported OOXML
   `<col style>` values as these attributes. Column ranges must not overlap.
-- External `bestFit="1"` is supported only with an explicit, exactly
-  representable width; reverse emits `autoFitWidthPixels`. A marker without a
-  width, false/noncanonical values, or a width outside the supported pixel
-  range is rejected rather than guessed.
+- External `bestFit` accepts OOXML boolean spellings `1`/`true` and
+  `0`/`false`. True is supported only with an explicit, exactly
+  representable width and reverses to `autoFitWidthPixels`; false is
+  semantically equivalent to no marker and folds into `widthPixels`. A true
+  marker without a width, invalid boolean values, duplicate attributes, or a
+  width outside the supported pixel range is rejected rather than guessed.
 - External `<col>` ranges are expanded and re-coalesced only when adjacent
   columns have identical supported properties. Widths that cannot be mapped
   exactly to the writer's integer-pixel representation and unsupported

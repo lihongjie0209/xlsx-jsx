@@ -20141,7 +20141,7 @@ fn external_column_width_and_hidden_state_survive_recompile() {
 }
 
 #[test]
-fn reverse_rejects_column_metadata_outside_the_lossless_subset() {
+fn reverse_folds_false_external_bestfit_into_fixed_column_width() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("unsupported-column.xlsx");
     let mut workbook = rust_xlsxwriter::Workbook::new();
@@ -20157,12 +20157,82 @@ fn reverse_rejects_column_metadata_outside_the_lossless_subset() {
         xml.replace("customWidth=\"1\"", "customWidth=\"1\" bestFit=\"0\"")
     });
 
-    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
-    command.args(["reverse"]).arg(input);
-    command
+    let reversed = directory.path().join("false-bestfit.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("widthPixels={60}"), "{source}");
+    assert!(!source.contains("autoFitWidthPixels"), "{source}");
+
+    let rebuilt = directory.path().join("false-bestfit-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    assert!(!xml.contains("bestFit="), "{xml}");
+}
+
+#[test]
+fn reverse_accepts_xml_true_spelling_for_external_bestfit() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("true-bestfit.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .set_column_autofit_width(0, 120)
+        .expect("autofit column is valid");
+    worksheet.write_string(0, 0, "value").expect("cell writes");
+    workbook.save(&input).expect("workbook saves");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace("bestFit=\"1\"", "bestFit=\"true\"")
+    });
+
+    let reversed = directory.path().join("true-bestfit.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(source.contains("autoFitWidthPixels={120}"), "{source}");
+}
+
+#[test]
+fn reverse_rejects_duplicate_bestfit_attributes_with_repair() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("duplicate-bestfit.xlsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .set_column_autofit_width(0, 120)
+        .expect("autofit column is valid");
+    worksheet.write_string(0, 0, "value").expect("cell writes");
+    workbook.save(&input).expect("workbook saves");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace("bestFit=\"1\"", "bestFit=\"1\" bestFit=\"true\"")
+    });
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(input)
         .assert()
         .failure()
-        .stderr(predicate::str::contains("noncanonical bestFit value"))
+        .stderr(predicate::str::contains("repeats `bestFit`"))
         .stderr(predicate::str::contains("suggestion:"));
 }
 
