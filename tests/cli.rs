@@ -4422,6 +4422,124 @@ fn secondary_axis_titles_require_a_secondary_series_and_literal_text() {
 }
 
 #[test]
+fn chart_title_formula_is_validated_and_compiled_as_a_reference() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("chart-title-formula.tsx");
+    let output = directory.path().join("chart-title-formula.xlsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Row, Cell, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" titleFormula="Data!$A$1"><Series values="Data!B2:B4" /></Chart><Row><Cell>Revenue</Cell></Row></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .assert()
+        .success();
+
+    let rebuilt = directory.path().join("chart-title-formula-rebuilt.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&output)
+        .arg("-o")
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(rebuilt).expect("reverse source reads");
+    assert!(source.contains("titleFormula=\"Data!$A$1\""), "{source}");
+}
+
+#[test]
+fn reverse_external_formula_backed_chart_title_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-formula-title.xlsx");
+    let output_path = directory.path().join("external-formula-title.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook
+        .add_worksheet()
+        .set_name("Data")
+        .expect("sheet name is valid");
+    worksheet
+        .write_string(0, 0, "Revenue")
+        .expect("title cell writes");
+    worksheet.write_string(1, 0, "Q1").expect("category writes");
+    worksheet.write_number(1, 1, 10).expect("value writes");
+    worksheet.write_string(2, 0, "Q2").expect("category writes");
+    worksheet.write_number(2, 1, 20).expect("value writes");
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart.title().set_name("Data!$A$1");
+    chart
+        .add_series()
+        .set_categories("Data!$A$2:$A$3")
+        .set_values("Data!$B$2:$B$3");
+    worksheet.insert_chart(3, 3, &chart).expect("chart inserts");
+    workbook
+        .save(&workbook_path)
+        .expect("external workbook saves");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(output_path).expect("reverse source exists");
+    assert!(source.contains("titleFormula=\"Data!$A$1\""), "{source}");
+}
+
+#[test]
+fn chart_title_formula_rejects_static_title_and_unknown_sheet() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-chart-title-formula.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" title="Static" titleFormula="Missing!A1"><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("mutually exclusive"));
+
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" titleFormula="Missing!A1"><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source updates");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "refers to missing worksheet `Missing`",
+        ));
+
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" titleFormula="Data!A1:A2"><Series values="Data!B2:B4" /></Chart></Worksheet></Workbook>;"#,
+    )
+    .expect("source updates");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("single-cell A1 reference"));
+}
+
+#[test]
 fn secondary_bar_axis_titles_map_by_position_not_handle_order() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("secondary-bar-axis-titles.xlsx");

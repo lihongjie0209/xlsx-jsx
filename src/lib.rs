@@ -2418,6 +2418,7 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "y2AxisHidden",
             "showLegend",
             "autoTitleDeleted",
+            "titleFormula",
             "titleOverlay",
             "titleLayout",
             "xAxisTitleLayout",
@@ -2894,6 +2895,10 @@ fn chart_has_secondary_series(chart: &Node) -> bool {
     })
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Chart-level title rules are validated together with existing title styling constraints."
+)]
 fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_title_font_properties(chart)?;
     validate_chart_legend_font_properties(chart)?;
@@ -2904,6 +2909,50 @@ fn validate_chart_text_properties(chart: &Node) -> Result<()> {
     validate_chart_axis_title_fill_colors(chart)?;
     validate_chart_axis_title_lines(chart)?;
     validate_chart_axis_label_fonts(chart)?;
+    if chart.props.contains_key("title") && chart.props.contains_key("titleFormula") {
+        return Err(Error::Compile(
+            "Chart.title and Chart.titleFormula are mutually exclusive; keep the static title or use the cell reference, not both".into(),
+        ));
+    }
+    if let Some(value) = chart.props.get("titleFormula") {
+        let Some(formula) = value.as_str() else {
+            return Err(Error::Compile("Chart.titleFormula must be a sheet-qualified single-cell A1 reference without a leading `=`; for example `Data!$A$1`".into()));
+        };
+        if !valid_chart_source_reference(formula, false)
+            || formula
+                .split_once('!')
+                .is_none_or(|(_, reference)| reference.contains(':'))
+        {
+            return Err(Error::Compile(format!(
+                "Chart.titleFormula `{formula}` must be a sheet-qualified single-cell A1 reference without a leading `=`; for example `Data!$A$1`"
+            )));
+        }
+        for property in [
+            "titleFontSize",
+            "titleFontBold",
+            "titleFontItalic",
+            "titleFontUnderline",
+            "titleFontRotation",
+            "titleFontColor",
+            "titleFontName",
+            "titleFontPitchFamily",
+            "titleFontCharset",
+            "titleFillColor",
+            "titleFillTransparency",
+            "titleLineColor",
+            "titleLineWidth",
+            "titleLineDash",
+            "titleLineTransparency",
+            "titleLayout",
+            "titleOverlay",
+        ] {
+            if chart.props.contains_key(property) {
+                return Err(Error::Compile(format!(
+                    "Chart.{property} is not supported with Chart.titleFormula; remove the formatting/layout property or use a static title"
+                )));
+            }
+        }
+    }
     if chart.props.contains_key("titleLayout") && !chart.props.contains_key("title") {
         return Err(Error::Compile(
             "Chart.titleLayout requires Chart.title; add a static title or remove titleLayout"
@@ -2932,10 +2981,10 @@ fn validate_chart_text_properties(chart: &Node) -> Result<()> {
         ));
     }
     if chart.props.get("autoTitleDeleted").and_then(Value::as_bool) == Some(true)
-        && chart.props.contains_key("title")
+        && (chart.props.contains_key("title") || chart.props.contains_key("titleFormula"))
     {
         return Err(Error::Compile(
-            "Chart.autoTitleDeleted cannot be combined with Chart.title; remove title or set autoTitleDeleted={false}".into(),
+            "Chart.autoTitleDeleted cannot be combined with Chart.title or Chart.titleFormula; remove title or titleFormula, or set autoTitleDeleted={false}".into(),
         ));
     }
     for property in [
@@ -2972,6 +3021,16 @@ fn validate_chart_text_properties(chart: &Node) -> Result<()> {
                 )));
             }
         }
+    }
+    if let Some(formula) = chart.props.get("titleFormula").and_then(Value::as_str)
+        && (!valid_chart_source_reference(formula, false)
+            || formula
+                .split_once('!')
+                .is_none_or(|(_, reference)| reference.contains(':')))
+    {
+        return Err(Error::Compile(format!(
+            "Chart.titleFormula `{formula}` must be a sheet-qualified single-cell A1 reference without a leading `=`; for example `Data!$A$1`"
+        )));
     }
     Ok(())
 }
@@ -7301,6 +7360,19 @@ fn validate_chart_sheet_references(
                 .map_err(|error| Error::Compile(error.to_string()))?;
             if chart.r#type != "Chart" {
                 continue;
+            }
+            if let Some(formula) = chart.props.get("titleFormula").and_then(Value::as_str)
+                && let Some(referenced_sheet) = chart_source_sheet_name(formula)
+                && !worksheet_names.contains(&referenced_sheet.to_lowercase())
+            {
+                return Err(Error::Compile(format!(
+                    "Chart.titleFormula `{formula}` on Worksheet `{}` refers to missing worksheet `{referenced_sheet}`; add that sheet or correct the reference",
+                    sheet
+                        .props
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("?")
+                )));
             }
             for series_value in &chart.children {
                 let series: Node = serde_json::from_value(series_value.clone())

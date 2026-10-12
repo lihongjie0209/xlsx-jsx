@@ -371,9 +371,15 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   pinned writer interprets sheet-qualified A1-looking strings as formulas,
   `Series.title` rejects strings matching that syntax. Reverse preserves literal
   titles separately from cell-reference names.
-- `Chart.title?: string` is a static chart title (1–255 valid XML characters).
-  External titles are reversible only when they are one unformatted rich-text
-  run; formulas and multiple runs fail with guidance. `titleFontSize?: number`
+- `Chart.title?: string` is a static chart title (1–255 valid XML characters),
+  mutually exclusive with `titleFormula`. `Chart.titleFormula?: string` is a
+  sheet-qualified single-cell A1 reference (for example `Data!$A$1`, without
+  a leading `=`) used as a live chart-title source. Its worksheet must exist.
+  Formula titles are mutually exclusive with static titles and automatic-title
+  deletion, and this initial reversible subset does not include title formatting,
+  layout, or overlay properties. External static titles are reversible only
+  when they are one unformatted rich-text run; unsupported formula-title
+  structures fail with guidance. `titleFontSize?: number`
   sets that run's font size in points (1–4000) and reverses the explicit
   DrawingML hundredths-of-a-point size. `titleFontBold?: boolean`,
   `titleFontItalic?: boolean`, and `titleFontColor?: "#RRGGBB"` model explicit
