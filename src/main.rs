@@ -1005,6 +1005,40 @@ fn compile_table(
     Ok(())
 }
 
+fn apply_sparkline_options(mut sparkline: XlsxSparkline, component: &Node) -> XlsxSparkline {
+    for (property, apply) in [
+        (
+            "showHighPoint",
+            XlsxSparkline::show_high_point as fn(XlsxSparkline, bool) -> XlsxSparkline,
+        ),
+        ("showLowPoint", XlsxSparkline::show_low_point),
+        ("showFirstPoint", XlsxSparkline::show_first_point),
+        ("showLastPoint", XlsxSparkline::show_last_point),
+        ("showNegativePoints", XlsxSparkline::show_negative_points),
+        ("showMarkers", XlsxSparkline::show_markers),
+        ("showAxis", XlsxSparkline::show_axis),
+        ("showHiddenData", XlsxSparkline::show_hidden_data),
+        ("rightToLeft", XlsxSparkline::set_right_to_left),
+    ] {
+        if let Some(value) = component.props.get(property).and_then(Value::as_bool) {
+            sparkline = apply(sparkline, value);
+        }
+    }
+    if let Some(value) = component
+        .props
+        .get("showEmptyCellsAs")
+        .and_then(Value::as_str)
+    {
+        sparkline = sparkline.show_empty_cells_as(match value {
+            "gap" => ChartEmptyCells::Gaps,
+            "zero" => ChartEmptyCells::Zero,
+            "span" => ChartEmptyCells::Connected,
+            _ => unreachable!("validated Sparkline.showEmptyCellsAs"),
+        });
+    }
+    sparkline
+}
+
 fn build_table_columns(
     sheet: &Node,
     node: &Node,
@@ -1189,6 +1223,7 @@ fn compile_sparkline(
             _ => unreachable!("validated Sparkline.sparklineType"),
         });
     }
+    sparkline = apply_sparkline_options(sparkline, component);
     worksheet
         .add_sparkline(row, column, &sparkline)
         .map(|_| ())
@@ -1223,6 +1258,7 @@ fn compile_sparkline_group(
     if component.props.get("dataRowOrder").and_then(Value::as_bool) == Some(false) {
         sparkline = sparkline.set_column_order(true);
     }
+    sparkline = apply_sparkline_options(sparkline, component);
     worksheet.add_sparkline_group(first_row, first_col, last_row, last_col, &sparkline)
         .map(|_| ())
         .map_err(|error| Error::Compile(format!(
@@ -6318,6 +6354,28 @@ fn render_sparklines(output: &mut String, sparklines: &[WorksheetSparkline]) {
         );
         if sparkline.sparkline_type != "line" {
             let _ = write!(output, " sparklineType={:?}", sparkline.sparkline_type);
+        }
+        for (enabled, property) in [
+            (sparkline.options.show_high_point, "showHighPoint"),
+            (sparkline.options.show_low_point, "showLowPoint"),
+            (sparkline.options.show_first_point, "showFirstPoint"),
+            (sparkline.options.show_last_point, "showLastPoint"),
+            (sparkline.options.show_negative_points, "showNegativePoints"),
+            (sparkline.options.show_markers, "showMarkers"),
+            (sparkline.options.show_axis, "showAxis"),
+            (sparkline.options.show_hidden_data, "showHiddenData"),
+            (sparkline.options.right_to_left, "rightToLeft"),
+        ] {
+            if enabled {
+                let _ = write!(output, " {property}={{true}}");
+            }
+        }
+        if sparkline.options.show_empty_cells_as != "gap" {
+            let _ = write!(
+                output,
+                " showEmptyCellsAs={:?}",
+                sparkline.options.show_empty_cells_as
+            );
         }
         output.push_str(" />\n");
     }
@@ -25306,6 +25364,43 @@ struct WorksheetSparkline {
     cell: String,
     range: String,
     sparkline_type: &'static str,
+    options: SparklineOptions,
+}
+
+#[derive(Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "These independent x14 Sparkline flags map one-to-one to writer attributes and must be retained separately."
+)]
+struct SparklineOptions {
+    show_high_point: bool,
+    show_low_point: bool,
+    show_first_point: bool,
+    show_last_point: bool,
+    show_negative_points: bool,
+    show_markers: bool,
+    show_axis: bool,
+    show_hidden_data: bool,
+    right_to_left: bool,
+    show_empty_cells_as: &'static str,
+}
+
+impl Default for SparklineOptions {
+    fn default() -> Self {
+        Self {
+            show_high_point: false,
+            show_low_point: false,
+            show_first_point: false,
+            show_last_point: false,
+            show_negative_points: false,
+            show_markers: false,
+            show_axis: false,
+            show_hidden_data: false,
+            right_to_left: false,
+            // OOXML defaults to zero when displayEmptyCellsAs is absent.
+            show_empty_cells_as: "zero",
+        }
+    }
 }
 
 struct WorksheetNoteParts {
@@ -27519,6 +27614,7 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
     let mut in_sparkline_group = false;
     let mut in_sparkline = false;
     let mut current_type = "line";
+    let mut current_options = SparklineOptions::default();
     let mut current_formula = None;
     let mut current_cell = None;
     let mut text_element = None;
@@ -27612,6 +27708,7 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         in_sparkline_group = true;
                         group_sparkline_count = sparklines.len();
                         current_type = "line";
+                        current_options = SparklineOptions::default();
                         group_colors.clear();
                         for attribute in event.attributes() {
                             let attribute = attribute.map_err(|error| Error::Reverse(format!(
@@ -27631,7 +27728,58 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                                         }
                                     }
                                 }
-                                b"displayEmptyCellsAs" if attribute.value.as_ref() == b"gap" => {}
+                                b"displayEmptyCellsAs" => {
+                                    current_options.show_empty_cells_as = match attribute
+                                        .value
+                                        .as_ref()
+                                    {
+                                        b"gap" => "gap",
+                                        b"zero" => "zero",
+                                        b"span" => "span",
+                                        other => {
+                                            return Err(Error::Reverse(format!(
+                                                "worksheet `{part}` sparkline empty-cell mode `{}` is unsupported; use gap, zero, or span",
+                                                String::from_utf8_lossy(other)
+                                            )));
+                                        }
+                                    };
+                                }
+                                b"high" => {
+                                    current_options.show_high_point =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
+                                }
+                                b"low" => {
+                                    current_options.show_low_point =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
+                                }
+                                b"first" => {
+                                    current_options.show_first_point =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
+                                }
+                                b"last" => {
+                                    current_options.show_last_point =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
+                                }
+                                b"negative" => {
+                                    current_options.show_negative_points =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
+                                }
+                                b"markers" => {
+                                    current_options.show_markers =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
+                                }
+                                b"displayXAxis" => {
+                                    current_options.show_axis =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
+                                }
+                                b"displayHidden" => {
+                                    current_options.show_hidden_data =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
+                                }
+                                b"rightToLeft" => {
+                                    current_options.right_to_left =
+                                        parse_sparkline_bool_attribute(&attribute, part)?;
+                                }
                                 other => {
                                     return Err(Error::Reverse(format!(
                                         "worksheet `{part}` sparkline group has unsupported `{}` metadata; remove custom sparkline options or add matching DSL support",
@@ -27775,6 +27923,7 @@ fn parse_sparklines(xml: &str, part: &str) -> xlsx_jsx::Result<Vec<WorksheetSpar
                         cell: canonical_cell,
                         range: formula,
                         sparkline_type: current_type,
+                        options: current_options,
                     });
                     in_sparkline = false;
                 }
@@ -27869,6 +28018,21 @@ fn default_sparkline_color(
                 actual_key == key && actual_value.as_bytes() == *value
             })
         }))
+}
+
+fn parse_sparkline_bool_attribute(
+    attribute: &quick_xml::events::attributes::Attribute<'_>,
+    part: &str,
+) -> xlsx_jsx::Result<bool> {
+    match attribute.value.as_ref() {
+        b"1" => Ok(true),
+        b"0" => Ok(false),
+        value => Err(Error::Reverse(format!(
+            "worksheet `{part}` sparkline boolean `{}` has invalid value `{}`; use 0 or 1",
+            String::from_utf8_lossy(attribute.key.as_ref()),
+            String::from_utf8_lossy(value)
+        ))),
+    }
 }
 
 #[expect(

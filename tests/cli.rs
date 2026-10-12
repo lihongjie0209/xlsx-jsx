@@ -41,6 +41,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("fontFamily"))
         .stdout(predicate::str::contains("altText"))
         .stdout(predicate::str::contains("sparklineType"))
+        .stdout(predicate::str::contains("sparklineGroup"))
+        .stdout(predicate::str::contains("showEmptyCellsAs"))
         .stdout(predicate::str::contains("\"const\": \"Note\""))
         .stdout(predicate::str::contains("moveAndSizeAfter"))
         .stdout(predicate::str::contains("\"customLabels\""))
@@ -157,6 +159,15 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
     let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
     command.args(["validate", "examples/basic.tsx"]);
     command.assert().success().stdout("valid\n");
+}
+
+#[test]
+fn agent_json_spec_is_valid_json_and_describes_sparkline_options() {
+    let schema: serde_json::Value = serde_json::from_str(include_str!("../spec/ir-v1.schema.json"))
+        .expect("the published IR JSON schema must be valid JSON");
+    let group = &schema["$defs"]["sparklineGroup"]["properties"]["props"]["properties"];
+    assert_eq!(group["showMarkers"]["type"], "boolean");
+    assert_eq!(group["showEmptyCellsAs"]["enum"][2], "span");
 }
 
 #[test]
@@ -21422,6 +21433,10 @@ fn invalid_dsl_has_reason_and_repair_suggestion() {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "The external writer fixture, reverse assertions, and rebuilt-XML assertions form one end-to-end parity test."
+)]
 fn reverses_external_sparkline_without_a_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let workbook_path = directory.path().join("external-sparkline.xlsx");
@@ -21441,7 +21456,17 @@ fn reverses_external_sparkline_without_a_manifest() {
     worksheet.write_number(2, 0, 9.0).unwrap();
     let sparkline = XlsxSparkline::new()
         .set_range(("Revenue & Growth", 0, 0, 0, 2))
-        .set_type(SparklineType::Column);
+        .set_type(SparklineType::Column)
+        .show_markers(true)
+        .show_axis(true)
+        .show_high_point(true)
+        .show_low_point(true)
+        .show_first_point(true)
+        .show_last_point(true)
+        .show_negative_points(true)
+        .show_hidden_data(true)
+        .set_right_to_left(true)
+        .show_empty_cells_as(rust_xlsxwriter::ChartEmptyCells::Connected);
     worksheet.add_sparkline(1, 3, &sparkline).unwrap();
     let win_loss = XlsxSparkline::new()
         .set_range(("Revenue & Growth", 0, 0, 0, 2))
@@ -21474,7 +21499,7 @@ fn reverses_external_sparkline_without_a_manifest() {
     let source = std::fs::read_to_string(&source_path).unwrap();
     assert!(
         source.contains(
-            "<Sparkline cell=\"D2\" range=\"'Revenue & Growth'!A1:C1\" sparklineType=\"column\" />"
+            "<Sparkline cell=\"D2\" range=\"'Revenue & Growth'!A1:C1\" sparklineType=\"column\" showHighPoint={true} showLowPoint={true} showFirstPoint={true} showLastPoint={true} showNegativePoints={true} showMarkers={true} showAxis={true} showHiddenData={true} rightToLeft={true} showEmptyCellsAs=\"span\" />"
         ),
         "{source}"
     );
@@ -21509,6 +21534,23 @@ fn reverses_external_sparkline_without_a_manifest() {
         rebuilt_xml.contains("<xm:f>'Revenue &amp; Growth'!A1:C1</xm:f>"),
         "{rebuilt_xml}"
     );
+    for option in [
+        "markers=\"1\"",
+        "high=\"1\"",
+        "low=\"1\"",
+        "first=\"1\"",
+        "last=\"1\"",
+        "negative=\"1\"",
+        "displayXAxis=\"1\"",
+        "displayHidden=\"1\"",
+        "rightToLeft=\"1\"",
+        "displayEmptyCellsAs=\"span\"",
+    ] {
+        assert!(
+            rebuilt_xml.contains(option),
+            "missing {option} in {rebuilt_xml}"
+        );
+    }
 }
 
 #[test]
@@ -21520,7 +21562,7 @@ fn builds_and_reverses_sparkline_group_without_a_manifest() {
     let rebuilt_path = directory.path().join("sparkline-group-rebuilt.xlsx");
     std::fs::write(
         &input,
-        r#"import { Workbook, Worksheet, SparklineGroup } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><SparklineGroup cells="F2:F4" range="Data!A2:D4" sparklineType="column" /></Worksheet></Workbook>;"#,
+        r#"import { Workbook, Worksheet, SparklineGroup } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><SparklineGroup cells="F2:F4" range="Data!A2:D4" sparklineType="column" showMarkers={true} showAxis={true} rightToLeft={true} showEmptyCellsAs="span" /></Worksheet></Workbook>;"#,
     )
     .unwrap();
 
@@ -21535,6 +21577,13 @@ fn builds_and_reverses_sparkline_group_without_a_manifest() {
     let generated = read_zip_part_for_test(&workbook_path, "xl/worksheets/sheet1.xml");
     assert!(
         generated.contains("<x14:sparklineGroup type=\"column\""),
+        "{generated}"
+    );
+    assert!(generated.contains("markers=\"1\""), "{generated}");
+    assert!(generated.contains("displayXAxis=\"1\""), "{generated}");
+    assert!(generated.contains("rightToLeft=\"1\""), "{generated}");
+    assert!(
+        generated.contains("displayEmptyCellsAs=\"span\""),
         "{generated}"
     );
     for source_row in ["A2:D2", "A3:D3", "A4:D4"] {
@@ -21555,6 +21604,10 @@ fn builds_and_reverses_sparkline_group_without_a_manifest() {
     let reversed = std::fs::read_to_string(&reversed_path).unwrap();
     assert!(reversed.contains("<Sparkline cell=\"F2\""), "{reversed}");
     assert!(reversed.contains("<Sparkline cell=\"F4\""), "{reversed}");
+    assert!(reversed.contains("showMarkers={true}"), "{reversed}");
+    assert!(reversed.contains("showAxis={true}"), "{reversed}");
+    assert!(reversed.contains("rightToLeft={true}"), "{reversed}");
+    assert!(reversed.contains("showEmptyCellsAs=\"span\""), "{reversed}");
 
     Command::cargo_bin("xlsx-jsx")
         .unwrap()
@@ -21593,6 +21646,27 @@ fn rejects_sparkline_group_with_mismatched_destination_length() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("destination length"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn rejects_sparkline_options_with_invalid_values_and_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-sparkline-option.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, Sparkline } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Sparkline cell="F2" range="Data!A2:D2" showMarkers="yes" /></Worksheet></Workbook>;"#,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Sparkline.showMarkers must be a boolean",
+        ))
         .stderr(predicate::str::contains("suggestion:"));
 }
 

@@ -522,7 +522,17 @@
           "properties": {
             "cell": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
             "range": { "type": "string", "minLength": 3, "maxLength": 255 },
-            "sparklineType": { "enum": ["line", "column", "winLoss"] }
+            "sparklineType": { "enum": ["line", "column", "winLoss"] },
+            "showHighPoint": { "type": "boolean" },
+            "showLowPoint": { "type": "boolean" },
+            "showFirstPoint": { "type": "boolean" },
+            "showLastPoint": { "type": "boolean" },
+            "showNegativePoints": { "type": "boolean" },
+            "showMarkers": { "type": "boolean" },
+            "showAxis": { "type": "boolean" },
+            "showHiddenData": { "type": "boolean" },
+            "rightToLeft": { "type": "boolean" },
+            "showEmptyCellsAs": { "enum": ["gap", "zero", "span"] }
           },
           "additionalProperties": false
         },
@@ -542,7 +552,17 @@
             "cells": { "type": "string", "pattern": "^\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}:\\$?[A-Za-z]{1,3}\\$?[1-9][0-9]{0,6}$" },
             "range": { "type": "string", "minLength": 5, "maxLength": 255 },
             "sparklineType": { "enum": ["line", "column", "winLoss"] },
-            "dataRowOrder": { "type": "boolean" }
+            "dataRowOrder": { "type": "boolean" },
+            "showHighPoint": { "type": "boolean" },
+            "showLowPoint": { "type": "boolean" },
+            "showFirstPoint": { "type": "boolean" },
+            "showLastPoint": { "type": "boolean" },
+            "showNegativePoints": { "type": "boolean" },
+            "showMarkers": { "type": "boolean" },
+            "showAxis": { "type": "boolean" },
+            "showHiddenData": { "type": "boolean" },
+            "rightToLeft": { "type": "boolean" },
+            "showEmptyCellsAs": { "enum": ["gap", "zero", "span"] }
           },
           "additionalProperties": false
         },
@@ -1143,12 +1163,12 @@
           "then": { "properties": { "props": { "required": ["valueAxisDisplayUnit"] } } }
         },
         { "if": { "properties": { "props": { "required": ["secondaryValueAxisDisplayUnitLabel"] } }, "required": ["props"] }, "then": { "properties": { "props": { "required": ["secondaryValueAxisDisplayUnit"] } } } },
-        { "if": { "properties": { "props": { "required": ["secondaryValueAxisDisplayUnit"] } }, "required": ["props"] }, "then": { "properties": { "props": { "properties": { "type": { "enum": ["area", "areaStacked", "areaPercentStacked", "column", "columnStacked", "columnPercentStacked", "line", "lineStacked", "linePercentStacked"] } } } } },
+        { "if": { "properties": { "props": { "required": ["secondaryValueAxisDisplayUnit"] } }, "required": ["props"] }, "then": { "properties": { "props": { "properties": { "type": { "enum": ["area", "areaStacked", "areaPercentStacked", "column", "columnStacked", "columnPercentStacked", "line", "lineStacked", "linePercentStacked"] } } } } } },
         { "if": { "properties": { "props": { "required": ["x2AxisDisplayUnitLabel"] } }, "required": ["props"] }, "then": { "properties": { "props": { "required": ["x2AxisDisplayUnit"] } } } },
         { "if": { "properties": { "props": { "required": ["y2AxisDisplayUnitLabel"] } }, "required": ["props"] }, "then": { "properties": { "props": { "required": ["y2AxisDisplayUnit"] } } } },
         {
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["pie", "doughnut"] } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["secondaryValueAxisDisplayUnit"] }, { "required": ["secondaryValueAxisDisplayUnitLabel"] }, { "required": ["x2AxisDisplayUnit"] }, { "required": ["x2AxisDisplayUnitLabel"] }, { "required": ["y2AxisDisplayUnit"] }, { "required": ["y2AxisDisplayUnitLabel"] }] } } }
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["secondaryValueAxisDisplayUnit"] }, { "required": ["secondaryValueAxisDisplayUnitLabel"] }, { "required": ["x2AxisDisplayUnit"] }, { "required": ["x2AxisDisplayUnitLabel"] }, { "required": ["y2AxisDisplayUnit"] }, { "required": ["y2AxisDisplayUnitLabel"] }] } } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["bar", "barStacked", "barPercentStacked"] } }, "required": ["type"] } }, "required": ["props"] },
@@ -1311,8 +1331,8 @@
           "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }, { "required": ["xAxisLogBase"] }, { "required": ["xAxisReversed"] }, { "required": ["yAxisReversed"] }, { "required": ["xAxisDisplayUnit"] }, { "required": ["xAxisDisplayUnitLabel"] }, { "required": ["yAxisDisplayUnit"] }, { "required": ["yAxisDisplayUnitLabel"] }, { "required": ["x2AxisReversed"] }, { "required": ["y2AxisReversed"] }] } } } }
         },
         {
-          "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },
-          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["x2AxisDisplayUnit"] }, { "required": ["x2AxisDisplayUnitLabel"] }, { "required": ["y2AxisDisplayUnit"] }, { "required": ["y2AxisDisplayUnitLabel"] }] } } }
+          "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] } },
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["x2AxisDisplayUnit"] }, { "required": ["x2AxisDisplayUnitLabel"] }, { "required": ["y2AxisDisplayUnit"] }, { "required": ["y2AxisDisplayUnitLabel"] }] } } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["pie", "doughnut"] } } }, "required": ["type"] } }, "required": ["props"] },

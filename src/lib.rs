@@ -7368,6 +7368,10 @@ fn validate_image_layouts(
     Ok(())
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "Sparkline property and source-range validation is intentionally kept in one component contract check."
+)]
 fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<String> {
     if !sparkline.children.is_empty() {
         return Err(Error::Compile(format!(
@@ -7375,7 +7379,26 @@ fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<Stri
             declaration_index + 1
         )));
     }
-    reject_unknown_props(sparkline, &["cell", "range", "sparklineType"], "Sparkline")?;
+    reject_unknown_props(
+        sparkline,
+        &[
+            "cell",
+            "range",
+            "sparklineType",
+            "showHighPoint",
+            "showLowPoint",
+            "showFirstPoint",
+            "showLastPoint",
+            "showNegativePoints",
+            "showMarkers",
+            "showAxis",
+            "showHiddenData",
+            "rightToLeft",
+            "showEmptyCellsAs",
+        ],
+        "Sparkline",
+    )?;
+    validate_sparkline_options(sparkline, "Sparkline")?;
     let cell = sparkline
         .props
         .get("cell")
@@ -7457,6 +7480,10 @@ fn validate_sparkline(sparkline: &Node, declaration_index: usize) -> Result<Stri
     Ok(format_a1_cell(row, column))
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "SparklineGroup property, geometry, and destination validation share one contract pass."
+)]
 fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Vec<String>> {
     if !group.children.is_empty() {
         return Err(Error::Compile(format!(
@@ -7466,9 +7493,25 @@ fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Ve
     }
     reject_unknown_props(
         group,
-        &["cells", "range", "sparklineType", "dataRowOrder"],
+        &[
+            "cells",
+            "range",
+            "sparklineType",
+            "dataRowOrder",
+            "showHighPoint",
+            "showLowPoint",
+            "showFirstPoint",
+            "showLastPoint",
+            "showNegativePoints",
+            "showMarkers",
+            "showAxis",
+            "showHiddenData",
+            "rightToLeft",
+            "showEmptyCellsAs",
+        ],
         "SparklineGroup",
     )?;
+    validate_sparkline_options(group, "SparklineGroup")?;
     let cells = group
         .props
         .get("cells")
@@ -7556,6 +7599,40 @@ fn validate_sparkline_group(group: &Node, declaration_index: usize) -> Result<Ve
         }
     }
     Ok(result)
+}
+
+fn validate_sparkline_options(component: &Node, name: &str) -> Result<()> {
+    for property in [
+        "showHighPoint",
+        "showLowPoint",
+        "showFirstPoint",
+        "showLastPoint",
+        "showNegativePoints",
+        "showMarkers",
+        "showAxis",
+        "showHiddenData",
+        "rightToLeft",
+    ] {
+        if component
+            .props
+            .get(property)
+            .is_some_and(|value| !value.is_boolean())
+        {
+            return Err(Error::Compile(format!(
+                "{name}.{property} must be a boolean; use true or false"
+            )));
+        }
+    }
+    if let Some(value) = component.props.get("showEmptyCellsAs")
+        && !value
+            .as_str()
+            .is_some_and(|value| matches!(value, "gap" | "zero" | "span"))
+    {
+        return Err(Error::Compile(format!(
+            "{name}.showEmptyCellsAs must be gap, zero, or span; choose one of those values"
+        )));
+    }
+    Ok(())
 }
 
 fn sparkline_range_sheet_name(range: &str) -> Option<String> {
