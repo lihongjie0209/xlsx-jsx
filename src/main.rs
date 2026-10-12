@@ -28845,28 +28845,6 @@ fn write_color_string_prop(output: &mut String, property: &str, color: &Spreadsh
 }
 
 impl CellFontStyle {
-    fn has_theme_color(&self) -> bool {
-        matches!(self.font_color, Some(SpreadsheetColor::Theme { .. }))
-            || matches!(self.fill_color, Some(SpreadsheetColor::Theme { .. }))
-            || matches!(
-                self.fill_foreground_color,
-                Some(SpreadsheetColor::Theme { .. })
-            )
-            || matches!(
-                self.fill_background_color,
-                Some(SpreadsheetColor::Theme { .. })
-            )
-            || self
-                .borders
-                .edges
-                .iter()
-                .any(|edge| matches!(edge.color, Some(SpreadsheetColor::Theme { .. })))
-            || matches!(
-                self.borders.diagonal.color,
-                Some(SpreadsheetColor::Theme { .. })
-            )
-    }
-
     fn has_conditional_dxf_style(&self) -> bool {
         self.bold
             || self.italic
@@ -31033,7 +31011,7 @@ fn parse_optional_conditional_dxf(
     })?;
     if !rule.format.supports_conditional_dxf() {
         return Err(Error::Reverse(format!(
-            "worksheet `{part}` {family} rule uses a differential style outside supported font emphasis/decoration/script/RGB font/fill; simplify the dxf or add matching JSX support"
+            "worksheet `{part}` {family} rule uses a differential style outside supported font emphasis/decoration/script/theme-or-RGB font/fill; simplify the dxf or add matching JSX support"
         )));
     }
     Ok(())
@@ -31269,7 +31247,7 @@ fn parse_conditional_formats(
                                 )))?;
                                 if !rule.format.supports_conditional_dxf() {
                                     return Err(Error::Reverse(format!(
-                                        "worksheet `{part}` top10 rule uses a differential style outside bold/italic/RGB font/fill; simplify the dxf or add matching JSX support"
+                                        "worksheet `{part}` top10 rule uses a differential style outside bold/italic/theme-or-RGB font/fill; simplify the dxf or add matching JSX support"
                                     )));
                                 }
                             }
@@ -31405,7 +31383,7 @@ fn parse_conditional_formats(
                             )))?;
                             if !rule.format.supports_conditional_dxf() {
                                 return Err(Error::Reverse(format!(
-                                    "worksheet `{part}` cellIs rule uses a differential style outside bold/italic/RGB font/fill (fontColor={:?}, fillColor={:?}, bold={}, italic={}); simplify the dxf or add matching JSX support",
+                                    "worksheet `{part}` cellIs rule uses a differential style outside bold/italic/theme-or-RGB font/fill (fontColor={:?}, fillColor={:?}, bold={}, italic={}); simplify the dxf or add matching JSX support",
                                     rule.format.font_color,
                                     rule.format.fill_color,
                                     rule.format.bold,
@@ -31428,7 +31406,7 @@ fn parse_conditional_formats(
                             )))?;
                             if !rule.format.supports_conditional_dxf() {
                                 return Err(Error::Reverse(format!(
-                                    "worksheet `{part}` formula rule uses a differential style outside bold/italic/RGB font/fill (fontColor={:?}, fillColor={:?}, bold={}, italic={}); simplify the dxf or add matching JSX support",
+                                    "worksheet `{part}` formula rule uses a differential style outside bold/italic/theme-or-RGB font/fill (fontColor={:?}, fillColor={:?}, bold={}, italic={}); simplify the dxf or add matching JSX support",
                                     rule.format.font_color,
                                     rule.format.fill_color,
                                     rule.format.bold,
@@ -31463,7 +31441,7 @@ fn parse_conditional_formats(
                             )))?;
                             if !rule.format.supports_conditional_dxf() {
                                 return Err(Error::Reverse(format!(
-                                    "worksheet `{part}` text rule uses a differential style outside bold/italic/RGB font/fill; simplify the dxf or add matching JSX support"
+                                    "worksheet `{part}` text rule uses a differential style outside bold/italic/theme-or-RGB font/fill; simplify the dxf or add matching JSX support"
                                 )));
                             }
                         }
@@ -38793,9 +38771,9 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                             style.support = StyleSupport::Unsupported;
                         }
                         foreground_seen = true;
-                        match parse_fill_rgb(&event, reader.decoder()) {
+                        match parse_spreadsheet_color(&event, reader.decoder()) {
                             Some(color) => {
-                                style.fill_foreground_color = Some(SpreadsheetColor::Rgb(color));
+                                style.fill_foreground_color = Some(color);
                             }
                             None => style.support = StyleSupport::Unsupported,
                         }
@@ -38806,10 +38784,9 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         }
                         background_seen = true;
                         if !is_default_fill_background(&event, reader.decoder()) {
-                            match parse_fill_rgb(&event, reader.decoder()) {
+                            match parse_spreadsheet_color(&event, reader.decoder()) {
                                 Some(color) => {
-                                    style.fill_background_color =
-                                        Some(SpreadsheetColor::Rgb(color));
+                                    style.fill_background_color = Some(color);
                                 }
                                 _ => style.support = StyleSupport::Unsupported,
                             }
@@ -38835,9 +38812,6 @@ fn parse_differential_styles_xml(xml: &str) -> xlsx_jsx::Result<Vec<CellFontStyl
                         {
                             style.support = StyleSupport::Unsupported;
                         }
-                    }
-                    if style.has_theme_color() {
-                        style.support = StyleSupport::Unsupported;
                     }
                     let has_supported_style = style.bold
                         || style.italic
@@ -39689,30 +39663,6 @@ fn is_supported_fill_pattern(pattern: &str) -> bool {
             | "gray125"
             | "gray0625"
     )
-}
-
-fn parse_fill_rgb(event: &BytesStart<'_>, decoder: quick_xml::encoding::Decoder) -> Option<String> {
-    let mut rgb = None;
-    for attribute in event.attributes().with_checks(false) {
-        let attribute = attribute.ok()?;
-        if attribute.key.local_name().as_ref() != b"rgb" || rgb.is_some() {
-            return None;
-        }
-        rgb = Some(
-            attribute
-                .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
-                .ok()?
-                .into_owned(),
-        );
-    }
-    let rgb = rgb?;
-    if rgb.len() != 8
-        || !rgb.bytes().all(|byte| byte.is_ascii_hexdigit())
-        || !rgb[..2].eq_ignore_ascii_case("FF")
-    {
-        return None;
-    }
-    Some(format!("#{}", &rgb[2..]).to_ascii_uppercase())
 }
 
 fn parse_spreadsheet_color(

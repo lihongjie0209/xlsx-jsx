@@ -9957,7 +9957,7 @@ fn validate_table_column_format_property(
         | "borderBottomColor"
         | "borderLeftColor"
         | "fillForegroundColor"
-        | "fillBackgroundColor" => validate_rgb_color(value, key, index, 0),
+        | "fillBackgroundColor" => validate_style_color(value, key, index, 0),
         "borderTop" | "borderRight" | "borderBottom" | "borderLeft" => {
             let Some(style) = value.as_str() else {
                 return Err(Error::Compile(format!(
@@ -11295,7 +11295,7 @@ fn validate_conditional_differential_style(format: &Node, require_style: bool) -
         has_style = true;
     }
     if let Some(color) = format.props.get("fontColor") {
-        validate_rgb_color(color, "fontColor", 0, 0)?;
+        validate_style_color(color, "fontColor", 0, 0)?;
         has_style = true;
     }
     for suffix in ["Top", "Right", "Bottom", "Left"] {
@@ -11315,7 +11315,7 @@ fn validate_conditional_differential_style(format: &Node, require_style: bool) -
             has_style = true;
         }
         if let Some(value) = format.props.get(&color_key) {
-            validate_rgb_color(value, &color_key, 0, 0)?;
+            validate_style_color(value, &color_key, 0, 0)?;
             if format
                 .props
                 .get(&style_key)
@@ -11340,7 +11340,7 @@ fn validate_conditional_differential_style(format: &Node, require_style: bool) -
 fn validate_conditional_fill_properties(format: &Node) -> Result<bool> {
     for property in ["fillColor", "fillForegroundColor", "fillBackgroundColor"] {
         if let Some(color) = format.props.get(property) {
-            validate_rgb_color(color, property, 0, 0)?;
+            validate_style_color(color, property, 0, 0)?;
         }
     }
     if let Some(value) = format.props.get("fillPattern")

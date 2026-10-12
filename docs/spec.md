@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.80
+Version: 1.81
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -1250,7 +1250,7 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `fontFamily`, `fontCharset`, and `fontColor`,
   `fillColor`, or differential/ordinary pattern-fill properties `fillPattern`,
   `fillForegroundColor`, and `fillBackgroundColor`, `numberFormat`, the four
-  edge borders and their RGB colors, and `borderDiagonalType`; `format` applies a differential style to data
+  edge borders and their RGB/theme colors, and `borderDiagonalType`; `format` applies a differential style to data
   cells and is preserved as table-column metadata. `headerFormat` styles the
   worksheet header cell and reverses canonically as ordinary `Cell` formatting.
   `headerFormat` accepts the same supported formatting properties as `Cell`,
@@ -1263,7 +1263,10 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   external table styles. `fontScheme` maps to the differential font's explicit
   `none`, `minor` (body), or `major` (headings) theme scheme. `fontName` is a
   literal typeface of 1–255 XML-valid characters, `fontSize` is 1–409 points,
-  `fontFamily` is 0–5, and `fontCharset` is an unsigned byte. Other
+  `fontFamily` is 0–5, and `fontCharset` is an unsigned byte. Theme colors
+  use `{ theme: 0..9, shade: 0..5 }`; the pinned writer emits the discrete
+  theme variants in DXFs, and reverse preserves theme index and shade from
+  external table DXFs. Other
   table-specific format properties remain rejected until the differential-
   style reader can preserve them losslessly.
   Differential styles cannot encode
@@ -1462,15 +1465,18 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   at least one supported differential-format style. Conditional rule styles
   support `bold={true}`, `italic={true}`, `strikethrough={true}`,
   `underline="single|double|singleAccounting|doubleAccounting"`,
-  `script="superscript|subscript"`, `fontColor="#RRGGBB"`, and
-  `fillColor="#RRGGBB"` or `fillPattern` with optional opaque-RGB
-  `fillForegroundColor` / `fillBackgroundColor`, `numberFormat`, and `borderTop`, `borderRight`,
-  `borderBottom`, `borderLeft` with matching optional `border*Color` RGB values.
+  `script="superscript|subscript"`, `fontColor` as RGB `#RRGGBB` or
+  `{ theme: 0..9, shade: 0..5 }`, and `fillColor` in the same color form or
+  `fillPattern` with optional RGB/theme `fillForegroundColor` /
+  `fillBackgroundColor`, `numberFormat`, and `borderTop`, `borderRight`,
+  `borderBottom`, `borderLeft` with matching optional `border*Color` RGB/theme values.
   Number formats use the same 1–255 XML-valid character contract as cell and
   table formats. Border values use supported OOXML edge styles (not `none`);
   an edge color requires a matching non-`none` edge style. The pinned writer
   omits a script-only differential font, so `script` must be paired with a
   font property such as emphasis, underline, or font color.
+  These theme-color forms apply only to differential styles; color-scale and
+  data-bar colors remain opaque RGB.
 - `type="formula"` applies a boolean Excel formula rule. It requires exact
   `formula1` text and one or more of the same supported differential-style
   properties; `formula2`, operator,
@@ -1770,8 +1776,8 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   when needed to preserve a non-theme font without a literal `fontName`.
   `fontName` independently selects a literal name and upstream also clears the
   scheme when it is set; an explicit `fontScheme` takes precedence if both are
-  supplied. Applies to cell, row/column, and rich-text run formats; differential
-  table/conditional formats do not expose it in v1.
+  supplied. Applies to cell, row/column, and rich-text run formats; TableColumn
+  data formats also support it, while conditional differential styles do not.
 - `fontSize?: number` sets the font size in points, from 1 through 409 inclusive.
   Fractional sizes are preserved. Reverse emits the numeric size and rejects
   values outside this range. Size-only styles retain the standard Calibri theme
@@ -1792,15 +1798,15 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `dotted`, `thick`, `double`, `hair`, `mediumDashed`, `dashDot`,
   `mediumDashDot`, `dashDotDot`, `mediumDashDotDot`, or `slantDashDot`.
   Optional `borderTopColor`, `borderRightColor`, `borderBottomColor`, and
-  `borderLeftColor` set opaque RGB `#RRGGBB` colors and require the matching
-  edge style. Reverse preserves each edge independently; theme/indexed/automatic
+  `borderLeftColor` set RGB `#RRGGBB` or supported theme colors and require the
+  matching edge style. Reverse preserves each edge independently; indexed/automatic
   custom colors and additional border metadata are rejected, while implicit
   automatic edge colors use the default and are omitted.
-- `borderDiagonal?: borderStyle`, `borderDiagonalColor?: "#RRGGBB"`, and
+- `borderDiagonal?: borderStyle`, `borderDiagonalColor?: Color`, and
   `borderDiagonalType?: "up" | "down" | "upDown"` represent the diagonal
-  edge, its opaque RGB color, and direction. The color requires a non-`none`
+  edge, its RGB or supported theme color, and direction. The color requires a non-`none`
   diagonal style. Reverse preserves the direction flags and diagonal edge;
-  theme/indexed/automatic custom colors remain rejected.
+  indexed/automatic custom colors remain rejected.
 - Workbooks using the 1904 date system are rejected: the writer currently only
   emits the 1900 system, and silently changing the epoch would shift date values.
 - Font metadata other than the literal name, size, family, charset, emphasis,

@@ -17622,6 +17622,75 @@ fn external_table_column_pattern_fill_round_trips() {
 }
 
 #[test]
+fn external_conditional_dxf_theme_colors_round_trip_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("conditional-theme-colors.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_number(0, 0, 15)
+        .expect("sample number writes");
+    let rule = rust_xlsxwriter::ConditionalFormatCell::new()
+        .set_rule(rust_xlsxwriter::ConditionalFormatCellRule::EqualTo(15))
+        .set_format(
+            rust_xlsxwriter::Format::new()
+                .set_font_color(rust_xlsxwriter::Color::Theme(4, 2))
+                .set_background_color(rust_xlsxwriter::Color::Theme(5, 1))
+                .set_border_top(rust_xlsxwriter::FormatBorder::Thin)
+                .set_border_top_color(rust_xlsxwriter::Color::Theme(6, 3)),
+        );
+    worksheet
+        .add_conditional_format(0, 0, 9, 0, &rule)
+        .expect("conditional format writes");
+    workbook.save(&input).expect("external workbook writes");
+
+    let reversed = directory.path().join("conditional-theme-colors.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(
+        source.contains(r"fontColor={{theme: 4, shade: 2}}"),
+        "{source}"
+    );
+    assert!(
+        source.contains(r"fillColor={{theme: 5, shade: 1}}"),
+        "{source}"
+    );
+    assert!(
+        source.contains(r"borderTopColor={{theme: 6, shade: 3}}"),
+        "{source}"
+    );
+
+    let rebuilt = directory
+        .path()
+        .join("conditional-theme-colors-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second = directory.path().join("conditional-theme-colors-second.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&second)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read_to_string(second).unwrap(), source);
+}
+
+#[test]
 fn external_conditional_pattern_fill_round_trips() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("conditional-pattern-fill.xlsx");
@@ -17687,6 +17756,84 @@ fn external_conditional_pattern_fill_round_trips() {
         std::fs::read_to_string(second).expect("second reverse output exists"),
         source
     );
+}
+
+#[test]
+fn external_table_column_theme_colors_round_trip_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("table-theme-colors.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_string(0, 0, "Amount")
+        .expect("header writes");
+    worksheet.write_number(1, 0, 12.5).expect("cell writes");
+    let format = rust_xlsxwriter::Format::new()
+        .set_font_color(rust_xlsxwriter::Color::Theme(4, 2))
+        .set_pattern(rust_xlsxwriter::FormatPattern::DarkTrellis)
+        .set_foreground_color(rust_xlsxwriter::Color::Theme(5, 1))
+        .set_background_color(rust_xlsxwriter::Color::Theme(0, 3))
+        .set_border_top(rust_xlsxwriter::FormatBorder::Thin)
+        .set_border_top_color(rust_xlsxwriter::Color::Theme(6, 3));
+    let columns = [rust_xlsxwriter::TableColumn::new()
+        .set_header("Amount")
+        .set_format(format)];
+    let table = rust_xlsxwriter::Table::new()
+        .set_name("Amounts")
+        .set_columns(&columns);
+    worksheet.add_table(0, 0, 1, 0, &table).expect("table adds");
+    workbook.save(&input).expect("external workbook writes");
+
+    let reversed = directory.path().join("table-theme-colors.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse source exists");
+    assert!(
+        source.contains(r#""fontColor":{"theme":4,"shade":2}"#),
+        "{source}"
+    );
+    assert!(
+        source.contains(r#""fillPattern":"darkTrellis""#),
+        "{source}"
+    );
+    assert!(
+        source.contains(r#""fillForegroundColor":{"theme":5,"shade":1}"#),
+        "{source}"
+    );
+    assert!(
+        source.contains(r#""fillBackgroundColor":{"theme":0,"shade":3}"#),
+        "{source}"
+    );
+    assert!(
+        source.contains(r#""borderTopColor":{"theme":6,"shade":3}"#),
+        "{source}"
+    );
+
+    let rebuilt = directory.path().join("table-theme-colors-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt)
+        .assert()
+        .success();
+    let second = directory.path().join("table-theme-colors-second.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&rebuilt)
+        .args(["-o"])
+        .arg(&second)
+        .assert()
+        .success();
+    assert_eq!(std::fs::read_to_string(second).unwrap(), source);
 }
 
 #[test]
@@ -19876,6 +20023,29 @@ export default <Workbook><Worksheet name="Sheet1">
         .stderr(predicate::str::contains(
             "context, leftToRight, or rightToLeft",
         ))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
+fn data_bar_rejects_theme_color_outside_differential_styles() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("data-bar-theme-color-invalid.tsx");
+    std::fs::write(
+        &input,
+        r#"import { Workbook, Worksheet, ConditionalFormat } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Sheet1">
+  <ConditionalFormat range="A1:A10" type="dataBar" fillColor={{theme:4,shade:2}} />
+</Worksheet></Workbook>;
+"#,
+    )
+    .expect("invalid DSL source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("must be a `#RRGGBB` RGB string"))
         .stderr(predicate::str::contains("suggestion:"));
 }
 
