@@ -2149,11 +2149,15 @@ fn configure_chart_series_point_colors(
     chart_series: &mut rust_xlsxwriter::ChartSeries,
     series: &Node,
 ) {
-    let Some(colors) = series.props.get("pointColors").and_then(Value::as_object) else {
+    let colors = series.props.get("pointColors").and_then(Value::as_object);
+    let lines = series.props.get("pointLines").and_then(Value::as_object);
+    if colors.is_none() && lines.is_none() {
         return;
-    };
+    }
     let Some(max_index) = colors
-        .keys()
+        .into_iter()
+        .flat_map(serde_json::Map::keys)
+        .chain(lines.into_iter().flat_map(serde_json::Map::keys))
         .filter_map(|key| key.parse::<usize>().ok())
         .max()
     else {
@@ -2164,22 +2168,48 @@ fn configure_chart_series_point_colors(
         .props
         .get("pointColorTransparencies")
         .and_then(Value::as_object);
-    for (index, color) in colors {
-        let index = index.parse::<usize>().expect("validated point color index");
-        let color = color.as_str().expect("validated point color");
-        let mut fill = ChartSolidFill::new();
-        fill.set_color(color);
-        if let Some(transparency) = transparencies
-            .and_then(|values| values.get(&index.to_string()))
-            .and_then(Value::as_u64)
-        {
-            fill.set_transparency(
-                u8::try_from(transparency).expect("validated point color transparency"),
-            );
+    for (index, point) in points.iter_mut().enumerate() {
+        let color = colors.and_then(|values| values.get(&index.to_string()));
+        let line = lines.and_then(|values| values.get(&index.to_string()));
+        if color.is_none() && line.is_none() {
+            continue;
         }
         let mut format = ChartFormat::new();
-        format.set_solid_fill(&fill);
-        points[index] = ChartPoint::new().set_format(&mut format);
+        if let Some(color) = color.and_then(Value::as_str) {
+            let mut fill = ChartSolidFill::new();
+            fill.set_color(color);
+            if let Some(transparency) = transparencies
+                .and_then(|values| values.get(&index.to_string()))
+                .and_then(Value::as_u64)
+            {
+                fill.set_transparency(
+                    u8::try_from(transparency).expect("validated point color transparency"),
+                );
+            }
+            format.set_solid_fill(&fill);
+        }
+        if let Some(properties) = line.and_then(Value::as_object) {
+            let mut chart_line = ChartLine::new();
+            if let Some(color) = properties.get("color").and_then(Value::as_str) {
+                chart_line.set_color(color);
+            }
+            if let Some(width) = properties.get("width").and_then(Value::as_f64) {
+                chart_line.set_width(width);
+            }
+            if let Some(dash) = properties.get("dash").and_then(Value::as_str) {
+                chart_line.set_dash_type(chart_line_dash_type(dash));
+            }
+            if let Some(transparency) = properties.get("transparency").and_then(Value::as_u64) {
+                chart_line.set_transparency(
+                    u8::try_from(transparency).expect("validated point line transparency"),
+                );
+            }
+            if let Some(hidden) = properties.get("hidden").and_then(Value::as_bool) {
+                chart_line.set_hidden(hidden);
+            }
+            format.set_line(&chart_line);
+        }
+        *point = ChartPoint::new().set_format(&mut format);
     }
     chart_series.set_points(&points);
 }
@@ -7047,6 +7077,16 @@ fn render_chart(output: &mut String, chart: &WorksheetChart) {
                     output.push_str(", ");
                 }
                 let _ = write!(output, "{point}: {transparency}");
+            }
+            output.push_str("}}");
+        }
+        if !series.point_lines.is_empty() {
+            output.push_str(" pointLines={{");
+            for (entry_index, (point, properties)) in series.point_lines.iter().enumerate() {
+                if entry_index > 0 {
+                    output.push_str(", ");
+                }
+                let _ = write!(output, "{point}: {}", Value::Object(properties.clone()));
             }
             output.push_str("}}");
         }
@@ -13765,6 +13805,9 @@ fn parse_chart_xml(
     let mut point_index: Option<usize> = None;
     let mut point_color: Option<String> = None;
     let mut point_transparency: Option<u32> = None;
+    let mut point_line_style = WorksheetChartGridlineStyle::default();
+    let mut point_line_seen = false;
+    let mut point_line_hidden = false;
     let mut formula_target: Option<&'static str> = None;
     let mut title_source_open = false;
     let mut category_source_open = false;
@@ -15076,7 +15119,15 @@ fn parse_chart_xml(
                 if stack.iter().any(|ancestor| ancestor == "dPt")
                     && !matches!(
                         tag.as_str(),
-                        "idx" | "spPr" | "solidFill" | "srgbClr" | "alpha" | "marker"
+                        "idx"
+                            | "spPr"
+                            | "solidFill"
+                            | "srgbClr"
+                            | "alpha"
+                            | "marker"
+                            | "ln"
+                            | "noFill"
+                            | "prstDash"
                     )
                 {
                     return Err(Error::Reverse(format!(
@@ -15150,7 +15201,10 @@ fn parse_chart_xml(
                 }
                 if stack.iter().any(|ancestor| ancestor == "marker")
                     && stack.iter().any(|ancestor| ancestor == "dPt")
-                    && !matches!(tag.as_str(), "spPr" | "solidFill" | "srgbClr")
+                    && !matches!(
+                        tag.as_str(),
+                        "spPr" | "solidFill" | "srgbClr" | "alpha" | "ln" | "noFill" | "prstDash"
+                    )
                 {
                     return Err(Error::Reverse(format!(
                         "chart part `{part}` has custom per-point marker formatting; retain only the point's RGB fill"
@@ -15489,6 +15543,9 @@ fn parse_chart_xml(
                         point_index = None;
                         point_color = None;
                         point_transparency = None;
+                        point_line_style = WorksheetChartGridlineStyle::default();
+                        point_line_seen = false;
+                        point_line_hidden = false;
                     }
                     "idx" if stack.last().is_some_and(|parent| parent == "dPt") => {
                         let raw =
@@ -17424,6 +17481,7 @@ fn parse_chart_xml(
                         line_transparency: None,
                         point_colors: BTreeMap::new(),
                         point_color_transparencies: BTreeMap::new(),
+                        point_lines: BTreeMap::new(),
                         custom_labels: BTreeMap::new(),
                         point_labels: BTreeMap::new(),
                         pending_custom_label_index: None,
@@ -18832,6 +18890,8 @@ fn parse_chart_xml(
                             && !stack.iter().any(|item| item == "trendlineLbl");
                         let in_marker_line = stack.iter().any(|item| item == "marker")
                             && !stack.iter().any(|item| item == "dPt");
+                        let in_point_line = stack.iter().any(|item| item == "dPt")
+                            && stack.iter().any(|item| item == "spPr");
                         let in_error_bars = stack.iter().any(|ancestor| ancestor == "errBars");
                         let in_gridlines = stack.iter().any(|ancestor| {
                             matches!(ancestor.as_str(), "majorGridlines" | "minorGridlines")
@@ -18854,6 +18914,7 @@ fn parse_chart_xml(
                                 && !in_error_bars
                                 && !in_trendline_line
                                 && !in_marker_line
+                                && !in_point_line
                                 && !in_drop_lines
                                 && !in_title_shape
                                 && !in_chart_area_shape
@@ -18996,6 +19057,26 @@ fn parse_chart_xml(
                                 if let Some(width) = width {
                                     style.width = Some(width);
                                 }
+                            }
+                        } else if in_point_line {
+                            if std::mem::replace(&mut point_line_seen, true) {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats point outline; keep one a:ln line per data point"
+                                )));
+                            }
+                            let width = line_width
+                                .map(|value| {
+                                    value.parse::<u32>().ok().filter(|width| {
+                                        *width > 0 && *width <= 20_116_800 && *width % 3175 == 0
+                                    })
+                                    .map(|width| f64::from(width) / 12700.0)
+                                    .ok_or_else(|| Error::Reverse(format!(
+                                        "chart part `{part}` has a point-outline width that cannot be represented exactly; use 0.25–1584 pt in quarter-point increments"
+                                    )))
+                                })
+                                .transpose()?;
+                            if width.is_some() {
+                                point_line_style.width = width;
                             }
                         } else if in_marker_line {
                             let current = series.last_mut().ok_or_else(|| Error::Reverse(format!(
@@ -19240,6 +19321,25 @@ fn parse_chart_xml(
                     }
                     "alpha"
                         if stack.last().is_some_and(|parent| parent == "srgbClr")
+                            && stack.iter().any(|item| item == "dPt")
+                            && stack.iter().any(|item| item == "ln") =>
+                    {
+                        let alpha = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "point outline alpha",
+                        )?
+                        .parse::<u32>()
+                        .ok()
+                        .filter(|alpha| *alpha <= 100_000 && alpha % 1000 == 0)
+                        .ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` has point outline alpha not exactly representable by whole-percent transparency; use increments of 1%"
+                        )))?;
+                        point_line_style.transparency = Some(100 - alpha / 1000);
+                    }
+                    "alpha"
+                        if stack.last().is_some_and(|parent| parent == "srgbClr")
                             && stack.iter().any(|item| item == "spPr")
                             && !stack.iter().any(|item| item == "ln")
                             && (stack.iter().any(|item| item == "legend")
@@ -19372,6 +19472,32 @@ fn parse_chart_xml(
                         {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` repeats data-label fill transparency; keep one alpha value"
+                            )));
+                        }
+                    }
+                    "srgbClr"
+                        if stack.last().is_some_and(|parent| parent == "solidFill")
+                            && stack.iter().any(|item| item == "dPt")
+                            && stack.iter().any(|item| item == "ln") =>
+                    {
+                        let color = chart_element_val_attribute(
+                            &event,
+                            part,
+                            reader.decoder(),
+                            "point outline color",
+                        )?;
+                        if color.len() != 6 || !color.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a non-RGB point outline color; use an opaque six-digit RGB color"
+                            )));
+                        }
+                        if point_line_style
+                            .color
+                            .replace(format!("#{color}").to_ascii_uppercase())
+                            .is_some()
+                        {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats point outline color; keep one RGB color"
                             )));
                         }
                     }
@@ -19916,7 +20042,14 @@ fn parse_chart_xml(
                                 )));
                             }
                         };
-                        if stack.iter().any(|item| item == "trendlineLbl")
+                        if stack.iter().any(|item| item == "dPt") {
+                            if point_line_style.dash.replace(dash).is_some() {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats point outline dash; keep one preset dash"
+                                )));
+                            }
+                            point_line_seen = true;
+                        } else if stack.iter().any(|item| item == "trendlineLbl")
                             && stack.iter().any(|item| item == "spPr")
                         {
                             let trendline = series
@@ -20169,13 +20302,25 @@ fn parse_chart_xml(
                         let supported_line_context = stack.iter().any(|ancestor| ancestor == "ser")
                             || (stack.iter().any(|ancestor| ancestor == "trendline")
                                 && stack.iter().any(|ancestor| ancestor == "spPr")
-                                && !stack.iter().any(|ancestor| ancestor == "trendlineLbl"));
+                                && !stack.iter().any(|ancestor| ancestor == "trendlineLbl"))
+                            || (stack.iter().any(|ancestor| ancestor == "dPt")
+                                && stack.iter().any(|ancestor| ancestor == "spPr"));
                         if stack.last().is_none_or(|ancestor| ancestor != "ln")
                             || !supported_line_context
                         {
                             return Err(Error::Reverse(format!(
                                 "chart part `{part}` has a fill override outside a supported hidden series or trendline line; remove it or add explicit fill formatting support"
                             )));
+                        }
+                        if stack.iter().any(|ancestor| ancestor == "dPt") {
+                            if point_line_hidden {
+                                return Err(Error::Reverse(format!(
+                                    "chart part `{part}` repeats point-line noFill; retain one line override"
+                                )));
+                            }
+                            point_line_hidden = true;
+                            point_line_seen = true;
+                            continue;
                         }
                         if let Some(current) = series.last_mut() {
                             if let Some(trendline) = current.trendline.as_mut()
@@ -20748,14 +20893,40 @@ fn parse_chart_xml(
                 }
                 if tag == "dPt" {
                     let index = point_index.take().ok_or_else(|| Error::Reverse(format!("chart part `{part}` has a data point without an index; add `<c:idx val=.../>`")))?;
-                    let color = point_color.take().ok_or_else(|| Error::Reverse(format!("chart part `{part}` has unsupported point formatting; add one opaque RGB solid fill")))?;
+                    let color = point_color.take();
                     let transparency = point_transparency.take();
+                    if color.is_none() && !point_line_seen {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an empty data-point override; add an opaque RGB solid fill or a supported ChartLine outline"
+                        )));
+                    }
+                    if transparency.is_some() && color.is_none() {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has point fill transparency without an RGB fill; add a point color or remove alpha"
+                        )));
+                    }
+                    if point_line_hidden
+                        && (point_line_style.color.is_some()
+                            || point_line_style.transparency.is_some()
+                            || point_line_style.dash.is_some_and(|dash| dash != "solid"))
+                    {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` combines a hidden point outline with visible formatting; remove noFill or remove its color, non-solid dash, and transparency"
+                        )));
+                    }
+                    if point_line_seen && !point_line_hidden && point_line_style.is_empty() {
+                        return Err(Error::Reverse(format!(
+                            "chart part `{part}` has an empty point outline; specify a supported color, width, dash, or transparency, or remove a:ln"
+                        )));
+                    }
                     let current = series.last_mut().ok_or_else(|| {
                         Error::Reverse(format!(
                             "chart part `{part}` has a data point without a series"
                         ))
                     })?;
-                    if current.point_colors.insert(index, color).is_some() {
+                    if let Some(color) = color
+                        && current.point_colors.insert(index, color).is_some()
+                    {
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` repeats data-point index {index}; retain one color per point"
                         )));
@@ -20769,6 +20940,31 @@ fn parse_chart_xml(
                         return Err(Error::Reverse(format!(
                             "chart part `{part}` repeats transparency for data-point index {index}; retain one alpha value"
                         )));
+                    }
+                    if point_line_seen {
+                        let mut properties = serde_json::Map::new();
+                        if point_line_hidden {
+                            properties.insert("hidden".into(), Value::Bool(true));
+                        } else {
+                            if let Some(color) = &point_line_style.color {
+                                properties.insert("color".into(), Value::String(color.clone()));
+                            }
+                            if let Some(width) = point_line_style.width {
+                                properties.insert("width".into(), serde_json::json!(width));
+                            }
+                            if let Some(dash) = point_line_style.dash {
+                                properties.insert("dash".into(), Value::String(dash.into()));
+                            }
+                            if let Some(transparency) = point_line_style.transparency {
+                                properties
+                                    .insert("transparency".into(), serde_json::json!(transparency));
+                            }
+                        }
+                        if current.point_lines.insert(index, properties).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats point outline at index {index}; keep one ChartLine per point"
+                            )));
+                        }
                     }
                 }
                 if tag == "trendline" {
@@ -27015,6 +27211,7 @@ struct WorksheetChartSeries {
     line_transparency: Option<u32>,
     point_colors: BTreeMap<usize, String>,
     point_color_transparencies: BTreeMap<usize, u32>,
+    point_lines: BTreeMap<usize, serde_json::Map<String, Value>>,
     custom_labels: BTreeMap<usize, String>,
     point_labels: BTreeMap<usize, serde_json::Map<String, Value>>,
     pending_custom_label_index: Option<usize>,

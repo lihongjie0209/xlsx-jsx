@@ -15,6 +15,7 @@ export default <Workbook>
         categories="Data!$A$2:$A$5"
         pointColors={{1: "#336699", 3: "#F0A020"}}
         pointColorTransparencies={{1: 25}}
+        pointLines={{1: {color: "#17365D", width: 1.25, dash: "dash"}, 2: {hidden: true}}}
       />
     </Chart>
   </Worksheet>

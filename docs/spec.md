@@ -278,8 +278,17 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   original positions. `Series.pointColorTransparencies?: { [zeroBasedIndex:
   string]: integer }` adds whole-percent alpha (0–100) to a colored point; each
   key must also exist in `pointColors`. Reverse preserves explicit point indices
-  and transparency, and rejects custom point borders, patterns, gradients,
-  marker formatting, duplicate indices, and indices beyond the source range.
+  and transparency, and rejects patterns and gradients, duplicate indices, and
+  indices beyond the source range. `Series.pointLines?: Record<pointIndex,
+  PointLine>` adds a sparse `ChartLine` outline to a data point by the same
+  canonical zero-based index; it can be combined with `pointColors` at that
+  index. Each object accepts `color?: "#RRGGBB"` (opaque RGB), `width?: number`
+  (0.25–1584 points in quarter-point increments), `dash?:` the supported chart
+  line presets, `transparency?: integer` (whole percent 0–100; requires color),
+  and `hidden?: boolean`. `hidden: true` is exclusive with visible line
+  properties. Reverse preserves external point outlines without a manifest and
+  rejects other line attributes, effects, theme/indexed colors, and malformed
+  or out-of-range point indices.
 - A `Trendline` child of `Series` supports `type="linear" | "exponential" |
   "logarithmic" | "polynomial" | "power" | "movingAverage"`, optional
   `order` (2–5, required for polynomial) and `period` (2–3, required for

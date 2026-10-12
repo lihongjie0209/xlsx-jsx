@@ -5170,6 +5170,7 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
                 "lineHidden",
                 "pointColors",
                 "pointColorTransparencies",
+                "pointLines",
                 "gap",
                 "overlap",
                 "secondaryAxis",
@@ -5718,6 +5719,7 @@ fn validate_chart_series_properties(
     validate_chart_series_line(chart, series, series_index)?;
     validate_chart_series_point_colors(series)?;
     validate_chart_series_point_color_transparencies(series)?;
+    validate_chart_series_point_lines(series)?;
     validate_chart_series_trendline(chart, series, series_index)?;
     validate_chart_series_error_bars(chart, series, series_index)
 }
@@ -6333,6 +6335,143 @@ fn validate_chart_series_point_color_transparencies(series: &Node) -> Result<()>
                 "Series.pointColorTransparencies index {index} exceeds the Series.values point count; choose an index within the value range"
             )));
         }
+    }
+    Ok(())
+}
+
+fn validate_chart_series_point_lines(series: &Node) -> Result<()> {
+    const MAX_POINT_INDEX: usize = 1_048_575;
+    let Some(value) = series.props.get("pointLines") else {
+        return Ok(());
+    };
+    let Some(lines) = value.as_object() else {
+        return Err(Error::Compile(
+            "Series.pointLines must be an object keyed by zero-based point index; use `{0: {color: \"#336699\", width: 1}}`".into(),
+        ));
+    };
+    if lines.is_empty() {
+        return Err(Error::Compile(
+            "Series.pointLines cannot be empty; add a point outline or omit the property".into(),
+        ));
+    }
+    let point_count = series
+        .props
+        .get("values")
+        .and_then(Value::as_str)
+        .and_then(|formula| formula.split_once('!'))
+        .and_then(|(_, range)| parse_a1_range(range))
+        .and_then(one_dimensional_range_length);
+    for (index_text, line) in lines {
+        let index = index_text
+            .parse::<usize>()
+            .ok()
+            .filter(|index| *index <= MAX_POINT_INDEX && index.to_string() == *index_text);
+        let Some(index) = index else {
+            return Err(Error::Compile(format!(
+                "Series.pointLines key `{index_text}` must be a canonical index from 0 through 1,048,575"
+            )));
+        };
+        if point_count.is_some_and(|count| index >= count as usize) {
+            return Err(Error::Compile(format!(
+                "Series.pointLines[{index}] is outside Series.values; choose an index within the source range"
+            )));
+        }
+        let Some(properties) = line.as_object() else {
+            return Err(Error::Compile(format!(
+                "Series.pointLines[{index}] must be an object; provide ChartLine properties"
+            )));
+        };
+        validate_chart_point_line_properties(index, properties)?;
+    }
+    Ok(())
+}
+
+fn validate_chart_point_line_properties(
+    index: usize,
+    properties: &serde_json::Map<String, Value>,
+) -> Result<()> {
+    const ALLOWED: [&str; 5] = ["color", "width", "dash", "transparency", "hidden"];
+    const DASHES: [&str; 8] = [
+        "solid",
+        "roundDot",
+        "squareDot",
+        "dash",
+        "dashDot",
+        "longDash",
+        "longDashDot",
+        "longDashDotDot",
+    ];
+    if properties.is_empty() {
+        return Err(Error::Compile(format!(
+            "Series.pointLines[{index}] cannot be empty; add an outline property or remove this entry"
+        )));
+    }
+    if let Some(property) = properties
+        .keys()
+        .find(|property| !ALLOWED.contains(&property.as_str()))
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointLines[{index}] has unsupported property `{property}`; use color, width, dash, transparency, or hidden"
+        )));
+    }
+    if properties.get("hidden").and_then(Value::as_bool) == Some(true) && properties.len() != 1 {
+        return Err(Error::Compile(format!(
+            "Series.pointLines[{index}].hidden=true cannot be combined with other line settings; remove them or set hidden={{{{false}}}}"
+        )));
+    }
+    if let Some(color) = properties.get("color")
+        && !color.as_str().is_some_and(is_opaque_rgb_color)
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointLines[{index}].color must be an opaque RGB color like #336699"
+        )));
+    }
+    if let Some(width) = properties.get("width") {
+        let Some(width) = width.as_f64() else {
+            return Err(Error::Compile(format!(
+                "Series.pointLines[{index}].width must be 0.25–1584 points in quarter-point increments"
+            )));
+        };
+        if !width.is_finite()
+            || !(0.25..=1584.0).contains(&width)
+            || (width * 4.0 - (width * 4.0).round()).abs() > f64::EPSILON
+        {
+            return Err(Error::Compile(format!(
+                "Series.pointLines[{index}].width must be 0.25–1584 points in quarter-point increments"
+            )));
+        }
+    }
+    if let Some(dash) = properties.get("dash")
+        && dash.as_str().is_none_or(|dash| !DASHES.contains(&dash))
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointLines[{index}].dash must be solid, roundDot, squareDot, dash, dashDot, longDash, longDashDot, or longDashDotDot"
+        )));
+    }
+    if let Some(transparency) = properties.get("transparency")
+        && transparency.as_u64().is_none_or(|value| value > 100)
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointLines[{index}].transparency must be an integer percentage from 0 through 100"
+        )));
+    }
+    if properties.contains_key("transparency") && !properties.contains_key("color") {
+        return Err(Error::Compile(format!(
+            "Series.pointLines[{index}].transparency requires color; add an RGB color or remove transparency"
+        )));
+    }
+    if properties
+        .get("hidden")
+        .is_some_and(|hidden| !hidden.is_boolean())
+    {
+        return Err(Error::Compile(format!(
+            "Series.pointLines[{index}].hidden must be a boolean; use true or false"
+        )));
+    }
+    if properties.get("hidden").and_then(Value::as_bool) == Some(false) && properties.len() == 1 {
+        return Err(Error::Compile(format!(
+            "Series.pointLines[{index}].hidden=false has no visible effect; omit it or provide line formatting"
+        )));
     }
     Ok(())
 }

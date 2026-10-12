@@ -811,6 +811,16 @@ fn spec_exposes_chart_components_and_properties() {
 }
 
 #[test]
+fn spec_exposes_chart_point_line_formatting() {
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["spec", "--format", "json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pointLines"));
+}
+
+#[test]
 fn spec_exposes_scatter_data_label_aliases() {
     let output = Command::cargo_bin("xlsx-jsx")
         .unwrap()
@@ -8018,6 +8028,89 @@ fn reverses_sparse_external_chart_point_colors_without_shifting_indices() {
         .success();
     let source = std::fs::read_to_string(&source_path).expect("reversed JSX exists");
     assert!(source.contains("pointColors={{0: \"#FF0000\", 3: \"#336699\"}}"));
+}
+
+#[test]
+fn reverses_external_point_line_formatting_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("point-line-format.xlsx");
+    let output_path = directory.path().join("point-line-format.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    worksheet.write_string(0, 0, "X").unwrap();
+    worksheet.write_string(0, 1, "Y").unwrap();
+    worksheet.write_number(1, 0, 1).unwrap();
+    worksheet.write_number(1, 1, 10).unwrap();
+    worksheet.write_number(2, 0, 2).unwrap();
+    worksheet.write_number(2, 1, 20).unwrap();
+    let mut line = ChartLine::new();
+    line.set_color("#C00000")
+        .set_width(1.25)
+        .set_dash_type(ChartLineDashType::Dash)
+        .set_transparency(25);
+    let mut points = vec![ChartPoint::new(); 2];
+    points[1] = ChartPoint::new().set_format(&mut line);
+    let mut chart = XlsxChart::new(ChartType::ScatterStraightWithMarkers);
+    chart
+        .add_series()
+        .set_categories("Data!$A$2:$A$3")
+        .set_values("Data!$B$2:$B$3")
+        .set_points(&points);
+    worksheet.insert_chart(3, 3, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .args(["-o"])
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).unwrap();
+    assert!(source.contains("pointLines={{1:"), "{source}");
+    assert!(source.contains("\"color\":\"#C00000\""), "{source}");
+    assert!(source.contains("\"width\":1.25"), "{source}");
+    assert!(source.contains("\"dash\":\"dash\""), "{source}");
+    assert!(source.contains("\"transparency\":25"), "{source}");
+
+    let rebuilt_path = directory.path().join("point-line-format-rebuilt.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["build"])
+        .arg(&output_path)
+        .args(["-o"])
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let rebuilt = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(rebuilt.contains("<c:dPt>"), "{rebuilt}");
+    assert!(
+        rebuilt.contains("<a:srgbClr val=\"C00000\"><a:alpha val=\"75000\"/></a:srgbClr>"),
+        "{rebuilt}"
+    );
+    assert!(rebuilt.contains("<a:prstDash val=\"dash\"/>"), "{rebuilt}");
+    assert!(rebuilt.contains("w=\"15875\""), "{rebuilt}");
+}
+
+#[test]
+fn point_line_hidden_rejects_other_line_properties() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("point-line-hidden.tsx");
+    std::fs::write(
+        &input,
+        r##"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2"><Series values="Data!B2:B3" pointLines={{1: {hidden: true, color: "#C00000"}}} /></Chart></Worksheet></Workbook>;"##,
+    )
+    .unwrap();
+    Command::cargo_bin("xlsx-jsx")
+        .unwrap()
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Series.pointLines[1].hidden=true cannot be combined",
+        ));
 }
 
 #[test]
