@@ -1316,8 +1316,11 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `fontFamily` is 0–5, and `fontCharset` is an unsigned byte. Theme colors
   use `{ theme: 0..9, shade: 0..5 }`; the pinned writer emits the discrete
   theme variants in DXFs, and reverse preserves theme index and shade from
-  external table DXFs. Differential alignment preserves the supported horizontal/vertical
-  alignment and wrapping properties; text rotation, reading direction,
+  external table DXFs. Differential alignment preserves supported horizontal,
+  vertical, and wrapping properties; justify differential alignment remains
+  unsupported because its interaction with direct cell styles cannot be
+  reconstructed losslessly with the pinned writer;
+  text rotation, reading direction,
   indentation, and shrink-to-fit remain rejected because table differential
   formats are not yet modeled for those properties.
   Differential styles cannot encode
@@ -1757,12 +1760,14 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 - `bold?: boolean` and `italic?: boolean` apply font emphasis to the cell and
   work with scalar values, dates, formulas, and blanks. The reverse reader emits
   only explicitly applied `true` flags; default/false values use the unstyled form.
-- `horizontalAlign?: "left" | "center" | "right" | "distributed"` and
+- `horizontalAlign?: "left" | "center" | "right" | "justify" | "distributed"` and
   `verticalAlign?: "top" | "center" | "bottom"` control the independent axes.
   Default/General horizontal and Bottom vertical alignment are omitted when
-  reversing because they have the same effective behavior. Fill, justify,
-  center-across and other unmodeled alignment metadata are
-  rejected on reverse. `textRotation?: integer` accepts -90 through 90 degrees
+  reversing because they have the same effective behavior. `justify` is
+  preserved as OOXML `horizontal="justify"`; `shrinkToFit=true` cannot be
+  combined with it because the writer suppresses shrink-to-fit. Fill,
+  center-across and other unmodeled alignment metadata are rejected on reverse.
+  `textRotation?: integer` accepts -90 through 90 degrees
   or 270 for stacked vertical text; ordinary negative angles are preserved
   using Excel's 91–180 OOXML encoding; the default is 0 and is omitted. The OOXML value 255 (stacked vertical
   text) reverses to 270.

@@ -7251,6 +7251,7 @@ fn build_cell_format(cell: &Node) -> xlsx_jsx::Result<Format> {
             "left" => FormatAlign::Left,
             "center" => FormatAlign::Center,
             "right" => FormatAlign::Right,
+            "justify" => FormatAlign::Justify,
             "distributed" => FormatAlign::Distributed,
             _ => FormatAlign::General,
         };
@@ -12467,6 +12468,11 @@ fn parse_table_xml(
                                 if style.support == StyleSupport::Unsupported {
                                     return Err(Error::Reverse(format!(
                                         "table part `{part}` column uses a differential format outside the supported font metadata, emphasis/decoration/script, color/fill/border, number-format, horizontal/vertical alignment, and wrapText subset; simplify the format or add matching DSL and reverse support"
+                                    )));
+                                }
+                                if style.horizontal_align == Some(HorizontalAlignment::Justify) {
+                                    return Err(Error::Reverse(format!(
+                                        "table part `{part}` column uses justify differential alignment, whose interaction with direct worksheet cell formatting is not losslessly reproducible by the pinned writer; remove the table-column justify format or normalize the affected cells to the same alignment"
                                     )));
                                 }
                                 Ok(style.clone())
@@ -29840,6 +29846,7 @@ enum HorizontalAlignment {
     Left,
     Center,
     Right,
+    Justify,
     Distributed,
 }
 
@@ -29849,6 +29856,7 @@ impl HorizontalAlignment {
             Self::Left => "left",
             Self::Center => "center",
             Self::Right => "right",
+            Self::Justify => "justify",
             Self::Distributed => "distributed",
         }
     }
@@ -41155,6 +41163,7 @@ fn parse_cell_alignment(
                     "left" => Some(HorizontalAlignment::Left),
                     "center" => Some(HorizontalAlignment::Center),
                     "right" => Some(HorizontalAlignment::Right),
+                    "justify" => Some(HorizontalAlignment::Justify),
                     "distributed" => Some(HorizontalAlignment::Distributed),
                     "general" => None,
                     _ => {

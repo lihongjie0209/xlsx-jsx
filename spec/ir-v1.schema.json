@@ -2888,7 +2888,7 @@
             "columnSpan": { "type": "integer", "minimum": 1, "maximum": 16384 },
             "bold": { "type": "boolean" },
             "italic": { "type": "boolean" },
-            "horizontalAlign": { "enum": ["left", "center", "right", "distributed"] },
+            "horizontalAlign": { "enum": ["left", "center", "right", "justify", "distributed"] },
             "verticalAlign": { "enum": ["top", "center", "bottom"] },
             "indent": { "type": "integer", "minimum": 1, "maximum": 255 },
             "wrapText": { "type": "boolean" },
@@ -2956,7 +2956,7 @@
             {
               "not": {
                 "properties": {
-                  "horizontalAlign": { "const": "distributed" },
+                  "horizontalAlign": { "enum": ["distributed", "justify"] },
                   "shrinkToFit": { "const": true }
                 },
                 "required": ["horizontalAlign", "shrinkToFit"]
@@ -3078,7 +3078,7 @@
       "properties": {
         "bold": { "type": "boolean" },
         "italic": { "type": "boolean" },
-        "horizontalAlign": { "enum": ["left", "center", "right", "distributed"] },
+        "horizontalAlign": { "enum": ["left", "center", "right", "justify", "distributed"] },
         "verticalAlign": { "enum": ["top", "center", "bottom"] },
         "indent": { "type": "integer", "minimum": 1, "maximum": 255 },
         "wrapText": { "type": "boolean" },
@@ -3145,7 +3145,7 @@
         {
           "not": {
             "properties": {
-              "horizontalAlign": { "const": "distributed" },
+              "horizontalAlign": { "enum": ["distributed", "justify"] },
               "shrinkToFit": { "const": true }
             },
             "required": ["horizontalAlign", "shrinkToFit"]

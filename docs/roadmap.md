@@ -64,6 +64,10 @@ reported as complete.
 
 ## Deferred lower-frequency table differential formats
 
+- Table-column `horizontalAlign="justify"`. The writer also applies table
+  differential formatting to worksheet cells, so an external workbook with a
+  different direct cell alignment cannot be rebuilt without changing that
+  explicit cell style; external justify DXFs are rejected with repair guidance.
 - Table-column `textRotation`, `readingDirection`, `indent`, and `shrinkToFit`.
   They are less common than alignment/wrapping and require more constraints for
   lossless dxf handling.

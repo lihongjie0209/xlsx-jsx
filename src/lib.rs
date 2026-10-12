@@ -12934,7 +12934,7 @@ fn validate_cell_style(cell: &Node, row: usize, column: usize) -> Result<()> {
     for (property, allowed) in [
         (
             "horizontalAlign",
-            &["left", "center", "right", "distributed"][..],
+            &["left", "center", "right", "justify", "distributed"][..],
         ),
         ("verticalAlign", &["top", "center", "bottom"][..]),
     ] {
@@ -13061,11 +13061,15 @@ fn validate_cell_indent_and_alignment(cell: &Node, row: usize, column: usize) ->
             )));
         }
     }
-    if cell.props.get("horizontalAlign").and_then(Value::as_str) == Some("distributed")
+    if let Some(alignment) = cell
+        .props
+        .get("horizontalAlign")
+        .and_then(Value::as_str)
+        .filter(|alignment| matches!(*alignment, "distributed" | "justify"))
         && cell.props.get("shrinkToFit").and_then(Value::as_bool) == Some(true)
     {
         return Err(Error::Compile(format!(
-            "Cell.horizontalAlign=distributed and Cell.shrinkToFit at row {}, column {} cannot be combined because the XLSX writer suppresses shrink-to-fit for distributed alignment; choose one behavior",
+            "Cell.horizontalAlign={alignment} and Cell.shrinkToFit at row {}, column {} cannot be combined because the XLSX writer suppresses shrink-to-fit for this alignment; choose one behavior",
             row + 1,
             column + 1
         )));
@@ -16972,6 +16976,53 @@ mod tests {
     }
 
     #[test]
+    fn accepts_justified_cell_alignment() {
+        let input = workbook(vec![worksheet(
+            "Justified",
+            vec![serde_json::json!({
+                "type":"Row",
+                "children":[{"type":"Cell","props":{"horizontalAlign":"justify"},"children":["wrapped text"]}]
+            })],
+        )]);
+
+        assert!(input.validate().is_ok(), "{:?}", input.validate());
+    }
+
+    #[test]
+    fn rejects_justification_with_shrink_to_fit_with_repair_guidance() {
+        let input = workbook(vec![worksheet(
+            "Justified",
+            vec![serde_json::json!({
+                "type":"Row",
+                "children":[{"type":"Cell","props":{"horizontalAlign":"justify","shrinkToFit":true},"children":["wrapped text"]}]
+            })],
+        )]);
+        let error = input
+            .validate()
+            .expect_err("writer suppresses shrink-to-fit");
+
+        assert!(error.to_string().contains("horizontalAlign=justify"));
+        assert!(error.to_string().contains("suppresses shrink-to-fit"));
+    }
+
+    #[test]
+    fn rejects_justification_with_indent_because_writer_normalizes_alignment() {
+        let input = workbook(vec![worksheet(
+            "Justified",
+            vec![serde_json::json!({
+                "type":"Row",
+                "children":[{"type":"Cell","props":{"horizontalAlign":"justify","indent":1},"children":["text"]}]
+            })],
+        )]);
+        let error = input
+            .validate()
+            .expect_err("writer normalizes justified indent to left alignment");
+
+        assert!(error.to_string().contains("requires horizontalAlign"));
+        assert!(error.to_string().contains("left, right, or distributed"));
+    }
+
+    #[test]
     fn accepts_supported_cell_reading_directions() {
         let input = workbook(vec![worksheet(
             "Direction",
@@ -17736,12 +17787,12 @@ mod tests {
 
     #[test]
     fn rejects_alignment_values_outside_the_lossless_subset() {
-        for property in ["horizontalAlign", "verticalAlign"] {
+        for (property, value) in [("horizontalAlign", "fill"), ("verticalAlign", "justify")] {
             let input = workbook(vec![worksheet(
                 "Data",
                 vec![serde_json::json!({
                     "type":"Row",
-                    "children":[{"type":"Cell","props":{(property):"justify"},"children":["aligned"]}]
+                    "children":[{"type":"Cell","props":{(property):value},"children":["aligned"]}]
                 })],
             )]);
             let error = input
