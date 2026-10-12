@@ -1409,6 +1409,7 @@ fn compile_chart(
     configure_chart_scatter_axes_reversed(&mut chart, component);
     configure_chart_value_axis_display_units(&mut chart, component);
     configure_chart_scatter_axis_display_units(&mut chart, component);
+    configure_chart_secondary_axis_display_units(&mut chart, component);
     if component
         .props
         .get("showHiddenData")
@@ -2652,6 +2653,42 @@ fn configure_chart_scatter_axis_display_units(chart: &mut Chart, component: &Nod
     }
 }
 
+fn configure_chart_secondary_axis_display_units(chart: &mut Chart, component: &Node) {
+    if let Some(unit) = component
+        .props
+        .get("secondaryValueAxisDisplayUnit")
+        .and_then(Value::as_str)
+    {
+        let axis = chart.y2_axis();
+        axis.set_display_unit_type(chart_axis_display_unit_type(unit));
+        if component
+            .props
+            .get("secondaryValueAxisDisplayUnitLabel")
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
+            axis.set_display_units_visible(false);
+        }
+    }
+    for (unit_property, label_property, horizontal) in [
+        ("x2AxisDisplayUnit", "x2AxisDisplayUnitLabel", true),
+        ("y2AxisDisplayUnit", "y2AxisDisplayUnitLabel", false),
+    ] {
+        let Some(unit) = component.props.get(unit_property).and_then(Value::as_str) else {
+            continue;
+        };
+        let axis = if horizontal {
+            chart.x2_axis()
+        } else {
+            chart.y2_axis()
+        };
+        axis.set_display_unit_type(chart_axis_display_unit_type(unit));
+        if component.props.get(label_property).and_then(Value::as_bool) == Some(false) {
+            axis.set_display_units_visible(false);
+        }
+    }
+}
+
 fn chart_axis_display_unit_type(value: &str) -> ChartAxisDisplayUnitType {
     match value {
         "hundreds" => ChartAxisDisplayUnitType::Hundreds,
@@ -2664,6 +2701,21 @@ fn chart_axis_display_unit_type(value: &str) -> ChartAxisDisplayUnitType {
         "billions" => ChartAxisDisplayUnitType::Billions,
         "trillions" => ChartAxisDisplayUnitType::Trillions,
         _ => unreachable!("chart display unit was validated"),
+    }
+}
+
+fn chart_axis_display_unit_name(value: &str) -> Option<&'static str> {
+    match value {
+        "hundreds" => Some("hundreds"),
+        "thousands" => Some("thousands"),
+        "tenThousands" => Some("tenThousands"),
+        "hundredThousands" => Some("hundredThousands"),
+        "millions" => Some("millions"),
+        "tenMillions" => Some("tenMillions"),
+        "hundredMillions" => Some("hundredMillions"),
+        "billions" => Some("billions"),
+        "trillions" => Some("trillions"),
+        _ => None,
     }
 }
 
@@ -6760,6 +6812,7 @@ fn render_chart_axis_properties(chart: &WorksheetChart) -> String {
     append_chart_axis_value_properties(&mut properties, chart);
     append_chart_axis_reversal_properties(&mut properties, chart);
     append_chart_scatter_axis_display_unit_properties(&mut properties, chart);
+    append_chart_secondary_axis_display_unit_properties(&mut properties, chart);
     append_chart_axis_tick_properties(&mut properties, chart);
     append_chart_axis_label_properties(&mut properties, chart);
     for (name, layout) in [
@@ -7344,6 +7397,39 @@ fn append_chart_scatter_axis_display_unit_properties(
             chart.y_axis_display_unit,
             "yAxisDisplayUnitLabel",
             chart.y_axis_display_unit_label,
+        ),
+    ] {
+        if let Some(unit) = unit {
+            let _ = write!(properties, " {unit_name}=\"{unit}\"");
+            if label == Some(false) {
+                let _ = write!(properties, " {label_name}={{false}}");
+            }
+        }
+    }
+}
+
+fn append_chart_secondary_axis_display_unit_properties(
+    properties: &mut String,
+    chart: &WorksheetChart,
+) {
+    if let Some(unit) = chart.secondary_value_axis_display_unit {
+        let _ = write!(properties, " secondaryValueAxisDisplayUnit=\"{unit}\"");
+        if chart.secondary_value_axis_display_unit_label == Some(false) {
+            properties.push_str(" secondaryValueAxisDisplayUnitLabel={false}");
+        }
+    }
+    for (unit_name, unit, label_name, label) in [
+        (
+            "x2AxisDisplayUnit",
+            chart.x2_axis_display_unit,
+            "x2AxisDisplayUnitLabel",
+            chart.x2_axis_display_unit_label,
+        ),
+        (
+            "y2AxisDisplayUnit",
+            chart.y2_axis_display_unit,
+            "y2AxisDisplayUnitLabel",
+            chart.y2_axis_display_unit_label,
         ),
     ] {
         if let Some(unit) = unit {
@@ -10276,6 +10362,12 @@ struct ParsedSecondaryChartGroups {
     y2_axis_title: Option<String>,
     x2_axis_label_font: WorksheetChartAxisFont,
     y2_axis_label_font: WorksheetChartAxisFont,
+    secondary_value_axis_display_unit: Option<&'static str>,
+    secondary_value_axis_display_unit_label: Option<bool>,
+    x2_axis_display_unit: Option<&'static str>,
+    x2_axis_display_unit_label: Option<bool>,
+    y2_axis_display_unit: Option<&'static str>,
+    y2_axis_display_unit_label: Option<bool>,
     secondary_gridlines: [Option<bool>; 4],
     secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4],
     secondary_value_axis_min: Option<f64>,
@@ -10291,6 +10383,10 @@ struct ParsedSecondaryChartGroups {
 }
 
 #[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "Independent OOXML element-presence flags are needed to validate and round-trip default versus explicit secondary-axis state."
+)]
 struct ParsedChartAxisInfo {
     kind: Option<String>,
     id: Option<u32>,
@@ -10301,6 +10397,11 @@ struct ParsedChartAxisInfo {
     gridlines: [ParsedAxisGridline; 2],
     tags: Vec<(String, BTreeMap<String, String>)>,
     label_font: WorksheetChartAxisFont,
+    display_unit: Option<&'static str>,
+    display_unit_label: Option<bool>,
+    display_units_seen: bool,
+    display_unit_layout_seen: bool,
+    display_unit_label_custom: bool,
 }
 
 #[derive(Default, PartialEq, Eq)]
@@ -10614,6 +10715,54 @@ fn parse_secondary_chart_groups(
                         &attributes,
                         part,
                     )?;
+                    if tag == "dispUnits" {
+                        if stack.last().is_none_or(|parent| parent != "valAx") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has secondary dispUnits outside a numeric value axis; move the display unit to a value axis or remove it"
+                            )));
+                        }
+                        if axes[index].display_units_seen {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats secondary dispUnits; keep one built-in display unit per value axis"
+                            )));
+                        }
+                        axes[index].display_units_seen = true;
+                    } else if tag == "builtInUnit" {
+                        if stack.last().is_none_or(|parent| parent != "dispUnits") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a misplaced secondary builtInUnit; place it inside dispUnits"
+                            )));
+                        }
+                        let raw = attributes.get("val").ok_or_else(|| Error::Reverse(format!(
+                            "chart part `{part}` secondary builtInUnit has no val; restore a supported built-in display unit"
+                        )))?;
+                        axes[index].display_unit = chart_axis_display_unit_name(raw);
+                        if axes[index].display_unit.is_none() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has unsupported secondary builtInUnit `{raw}`; use hundreds through trillions"
+                            )));
+                        }
+                    } else if tag == "dispUnitsLbl" {
+                        if stack.last().is_none_or(|parent| parent != "dispUnits") {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` has a misplaced secondary display-unit label; keep it inside dispUnits"
+                            )));
+                        }
+                        if axes[index].display_unit_label.replace(true).is_some() {
+                            return Err(Error::Reverse(format!(
+                                "chart part `{part}` repeats a secondary display-unit label; keep one default label"
+                            )));
+                        }
+                    } else if stack.iter().any(|ancestor| ancestor == "dispUnitsLbl") {
+                        if tag == "layout" {
+                            if !attributes.is_empty() || axes[index].display_unit_layout_seen {
+                                axes[index].display_unit_label_custom = true;
+                            }
+                            axes[index].display_unit_layout_seen = true;
+                        } else {
+                            axes[index].display_unit_label_custom = true;
+                        }
+                    }
                     if tag == "delete" {
                         axes[index].deleted = attributes
                             .get("val")
@@ -10780,6 +10929,12 @@ fn parse_secondary_chart_groups(
     let mut y2_axis_title = None;
     let mut x2_axis_label_font = WorksheetChartAxisFont::default();
     let mut y2_axis_label_font = WorksheetChartAxisFont::default();
+    let mut secondary_value_axis_display_unit = None;
+    let mut secondary_value_axis_display_unit_label = None;
+    let mut x2_axis_display_unit = None;
+    let mut x2_axis_display_unit_label = None;
+    let mut y2_axis_display_unit = None;
+    let mut y2_axis_display_unit_label = None;
     let mut secondary_gridlines = [None; 4];
     let mut secondary_gridline_styles: [Option<WorksheetChartGridlineStyle>; 4] =
         std::array::from_fn(|_| None);
@@ -11021,6 +11176,43 @@ fn parse_secondary_chart_groups(
                 }
             }
         };
+        if let Some(unit) = parsed_axis.display_unit {
+            if parsed_axis.kind.as_deref() != Some("valAx") {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` puts display units on a secondary category axis; move the units to a numeric value axis"
+                )));
+            }
+            if secondary_is_bar {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has secondary display units on a horizontal bar chart, which the pinned writer cannot reproduce on its value axis; use a column, line, area, or scatter chart"
+                )));
+            }
+            let hidden_label = (parsed_axis.display_unit_label != Some(true)).then_some(false);
+            if secondary_is_scatter {
+                let (unit_target, label_target) = if is_secondary_y_value_axis {
+                    (&mut y2_axis_display_unit, &mut y2_axis_display_unit_label)
+                } else {
+                    (&mut x2_axis_display_unit, &mut x2_axis_display_unit_label)
+                };
+                if unit_target.replace(unit).is_some() {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has multiple secondary scatter display units for one direction; retain one per X/Y value axis"
+                    )));
+                }
+                *label_target = hidden_label;
+            } else if secondary_value_axis_count == 1 {
+                if secondary_value_axis_display_unit.replace(unit).is_some() {
+                    return Err(Error::Reverse(format!(
+                        "chart part `{part}` has duplicate secondary value-axis display units; retain one built-in unit"
+                    )));
+                }
+                secondary_value_axis_display_unit_label = hidden_label;
+            } else {
+                return Err(Error::Reverse(format!(
+                    "chart part `{part}` has ambiguous secondary display units; use distinguishable scatter X/Y value axes"
+                )));
+            }
+        }
         if let Some((_, attributes)) = parsed_axis.tags.iter().find(|(tag, _)| tag == "logBase") {
             if parsed_axis.kind.as_deref() != Some("valAx") {
                 return Err(Error::Reverse(format!(
@@ -11169,6 +11361,12 @@ fn parse_secondary_chart_groups(
         y2_axis_title,
         x2_axis_label_font,
         y2_axis_label_font,
+        secondary_value_axis_display_unit,
+        secondary_value_axis_display_unit_label,
+        x2_axis_display_unit,
+        x2_axis_display_unit_label,
+        y2_axis_display_unit,
+        y2_axis_display_unit_label,
         secondary_gridlines,
         secondary_gridline_styles,
         secondary_value_axis_min,
@@ -11192,6 +11390,11 @@ fn validate_secondary_axis_defaults(
     axis: &ParsedChartAxisInfo,
     part: &str,
 ) -> xlsx_jsx::Result<()> {
+    if axis.display_unit_label_custom {
+        return Err(Error::Reverse(format!(
+            "chart part `{part}` has custom display-unit label layout; use the writer's default label placement or remove custom label content"
+        )));
+    }
     let allowed_tags = [
         "catAx",
         "dateAx",
@@ -11209,6 +11412,9 @@ fn validate_secondary_axis_defaults(
         "lblAlgn",
         "lblOffset",
         "numFmt",
+        "dispUnits",
+        "builtInUnit",
+        "dispUnitsLbl",
         "crossBetween",
         "min",
         "max",
@@ -11258,7 +11464,8 @@ fn validate_secondary_axis_defaults(
         let allowed_attributes: &[&str] = match tag.as_str() {
             "axId" | "crossAx" | "orientation" | "delete" | "axPos" | "tickLblPos" | "crosses"
             | "auto" | "lblAlgn" | "lblOffset" | "crossBetween" | "min" | "max" | "majorUnit"
-            | "minorUnit" | "logBase" | "crossesAt" | "srgbClr" | "alpha" | "prstDash" => &["val"],
+            | "minorUnit" | "logBase" | "crossesAt" | "srgbClr" | "alpha" | "prstDash"
+            | "builtInUnit" => &["val"],
             "numFmt" => &["formatCode", "sourceLinked"],
             "bodyPr" => &["rot", "vert"],
             "rPr" | "defRPr" | "endParaRPr" => &["lang", "b", "i", "u", "sz", "baseline"],
@@ -11322,6 +11529,9 @@ fn validate_secondary_axis_defaults(
                             .get("formatCode")
                             .is_some_and(|value| matches!(value.as_str(), "General" | "0%")))
             }
+            "builtInUnit" => attributes
+                .get("val")
+                .is_some_and(|value| chart_axis_display_unit_name(value).is_some()),
             "min" | "max" => attributes
                 .get("val")
                 .and_then(|value| value.parse::<f64>().ok())
@@ -11394,6 +11604,26 @@ fn validate_secondary_axis_defaults(
         return Err(Error::Reverse(format!(
             "chart part `{part}` repeats an element on a secondary axis; keep one declaration for each supported default axis property"
         )));
+    }
+    let has_display_unit_tags = ["dispUnits", "builtInUnit", "dispUnitsLbl"]
+        .iter()
+        .any(|tag| tag_counts.contains_key(tag));
+    if has_display_unit_tags {
+        let structure_valid = axis.display_units_seen
+            && axis.display_unit.is_some()
+            && tag_counts.get("dispUnits").copied() == Some(1)
+            && tag_counts.get("builtInUnit").copied() == Some(1)
+            && (axis.display_unit_label == Some(true)
+                && axis.display_unit_layout_seen
+                && tag_counts.get("layout").copied() == Some(1)
+                || axis.display_unit_label.is_none()
+                    && !axis.display_unit_layout_seen
+                    && !tag_counts.contains_key("layout"));
+        if !structure_valid {
+            return Err(Error::Reverse(format!(
+                "chart part `{part}` has malformed secondary display units; restore one built-in unit and an optional writer-default label layout"
+            )));
+        }
     }
     let required_tags = [
         "axId",
@@ -19864,6 +20094,13 @@ fn parse_chart_xml(
         y_axis_label_font,
         x2_axis_label_font: secondary_chart_groups.x2_axis_label_font,
         y2_axis_label_font: secondary_chart_groups.y2_axis_label_font,
+        secondary_value_axis_display_unit: secondary_chart_groups.secondary_value_axis_display_unit,
+        secondary_value_axis_display_unit_label: secondary_chart_groups
+            .secondary_value_axis_display_unit_label,
+        x2_axis_display_unit: secondary_chart_groups.x2_axis_display_unit,
+        x2_axis_display_unit_label: secondary_chart_groups.x2_axis_display_unit_label,
+        y2_axis_display_unit: secondary_chart_groups.y2_axis_display_unit,
+        y2_axis_display_unit_label: secondary_chart_groups.y2_axis_display_unit_label,
         title_overlay,
         chart_area_fill_color,
         chart_area_fill_transparency,
@@ -24325,6 +24562,12 @@ struct WorksheetChart {
     y_axis_label_font: WorksheetChartAxisFont,
     x2_axis_label_font: WorksheetChartAxisFont,
     y2_axis_label_font: WorksheetChartAxisFont,
+    secondary_value_axis_display_unit: Option<&'static str>,
+    secondary_value_axis_display_unit_label: Option<bool>,
+    x2_axis_display_unit: Option<&'static str>,
+    x2_axis_display_unit_label: Option<bool>,
+    y2_axis_display_unit: Option<&'static str>,
+    y2_axis_display_unit_label: Option<bool>,
     title_overlay: bool,
     chart_area_fill_color: Option<String>,
     chart_area_fill_transparency: Option<u8>,

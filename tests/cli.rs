@@ -48,6 +48,8 @@ fn spec_is_agent_readable_and_validate_does_not_write_output() {
         .stdout(predicate::str::contains("y2AxisTitle"))
         .stdout(predicate::str::contains("x2AxisLabelFontSize"))
         .stdout(predicate::str::contains("y2AxisLabelFontRotation"))
+        .stdout(predicate::str::contains("secondaryValueAxisDisplayUnit"))
+        .stdout(predicate::str::contains("x2AxisDisplayUnit"))
         .stdout(predicate::str::contains("x2AxisMajorGridlines"))
         .stdout(predicate::str::contains("strikethrough"))
         .stdout(predicate::str::contains("script"))
@@ -8577,6 +8579,147 @@ fn secondary_bar_axis_label_fonts_follow_writer_handles_after_axis_swap() {
     assert!(source.contains("x2AxisLabelFontBold={true}"), "{source}");
     assert!(source.contains("y2AxisLabelFontSize={8}"), "{source}");
     assert!(source.contains("y2AxisLabelFontItalic={true}"), "{source}");
+}
+
+#[test]
+fn reverses_secondary_value_axis_display_units_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory.path().join("external-secondary-axis-units.xlsx");
+    let output_path = directory.path().join("external-secondary-axis-units.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Line);
+    chart
+        .add_series()
+        .set_values("Data!B2:B4")
+        .set_categories("Data!A2:A4");
+    chart
+        .add_series()
+        .set_values("Data!C2:C4")
+        .set_categories("Data!A2:A4")
+        .set_secondary_axis(true);
+    chart
+        .y2_axis()
+        .set_display_unit_type(ChartAxisDisplayUnitType::Millions)
+        .set_display_units_visible(false);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(
+        source.contains("secondaryValueAxisDisplayUnit=\"millions\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("secondaryValueAxisDisplayUnitLabel={false}"),
+        "{source}"
+    );
+
+    let rebuilt_path = directory.path().join("rebuilt-secondary-axis-units.xlsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&output_path)
+        .arg("--output")
+        .arg(&rebuilt_path)
+        .assert()
+        .success();
+    let xml = read_zip_part_for_test(&rebuilt_path, "xl/charts/chart1.xml");
+    assert!(xml.contains("<c:builtInUnit val=\"millions\""), "{xml}");
+    assert!(!xml.contains("<c:dispUnitsLbl>"), "{xml}");
+}
+
+#[test]
+fn reverses_independent_secondary_scatter_axis_display_units_without_a_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let workbook_path = directory
+        .path()
+        .join("external-secondary-scatter-units.xlsx");
+    let output_path = directory
+        .path()
+        .join("external-secondary-scatter-units.tsx");
+    let mut workbook = XlsxWorkbook::new();
+    let worksheet = workbook.add_worksheet().set_name("Data").unwrap();
+    let mut chart = XlsxChart::new(ChartType::Scatter);
+    chart
+        .add_series()
+        .set_categories("Data!A2:A4")
+        .set_values("Data!B2:B4");
+    chart
+        .add_series()
+        .set_categories("Data!C2:C4")
+        .set_values("Data!D2:D4")
+        .set_secondary_axis(true);
+    chart
+        .x2_axis()
+        .set_display_unit_type(ChartAxisDisplayUnitType::Thousands);
+    chart
+        .y2_axis()
+        .set_display_unit_type(ChartAxisDisplayUnitType::Millions);
+    worksheet.insert_chart(0, 5, &chart).unwrap();
+    workbook.save(&workbook_path).unwrap();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+    let source = std::fs::read_to_string(&output_path).expect("reversed source reads");
+    assert!(
+        source.contains("x2AxisDisplayUnit=\"thousands\""),
+        "{source}"
+    );
+    assert!(
+        source.contains("y2AxisDisplayUnit=\"millions\""),
+        "{source}"
+    );
+}
+
+#[test]
+fn secondary_display_unit_labels_require_units_and_matching_secondary_axes() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("secondary-display-units-invalid.tsx");
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" secondaryValueAxisDisplayUnitLabel={false}><Series values="Data!B2:B4" categories="Data!A2:A4" /><Series values="Data!C2:C4" categories="Data!A2:A4" secondaryAxis={true} /></Chart></Worksheet></Workbook>;"#).expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "requires secondaryValueAxisDisplayUnit",
+        ));
+
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" x2AxisDisplayUnit="thousands"><Series values="Data!B2:B4" categories="Data!A2:A4" /><Series values="Data!C2:C4" categories="Data!A2:A4" secondaryAxis={true} /></Chart></Worksheet></Workbook>;"#).expect("source rewrites");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "supported only for secondary scatter value axes",
+        ));
+
+    std::fs::write(&input, r#"import { Workbook, Worksheet, Chart, Series } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data"><Chart type="line" cell="D2" secondaryValueAxisDisplayUnit="thousands"><Series values="Data!B2:B4" categories="Data!A2:A4" /></Chart></Worksheet></Workbook>;"#).expect("source rewrites");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("add a secondary series"));
 }
 
 #[test]

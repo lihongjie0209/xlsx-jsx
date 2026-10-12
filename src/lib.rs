@@ -2053,6 +2053,12 @@ fn validate_chart(chart: &Node, index: usize) -> Result<()> {
             "secondaryValueAxisMinorUnit",
             "secondaryValueAxisLogBase",
             "secondaryValueAxisReversed",
+            "secondaryValueAxisDisplayUnit",
+            "secondaryValueAxisDisplayUnitLabel",
+            "x2AxisDisplayUnit",
+            "x2AxisDisplayUnitLabel",
+            "y2AxisDisplayUnit",
+            "y2AxisDisplayUnitLabel",
             "xAxisMajorUnit",
             "xAxisMinorUnit",
             "xAxisMin",
@@ -3005,6 +3011,7 @@ fn validate_chart_presentation(chart: &Node, chart_type: &str) -> Result<()> {
     validate_chart_category_axis_tick_position(chart, chart_type)?;
     validate_chart_axis_hidden(chart, chart_type)?;
     validate_chart_axis_units(chart, chart_type)?;
+    validate_chart_secondary_display_units(chart, chart_type)?;
     validate_chart_gridlines(chart, chart_type)?;
     validate_chart_legend(chart)
 }
@@ -3750,6 +3757,71 @@ fn validate_chart_value_axis_display_units(chart: &Node, chart_type: &str) -> Re
             if !chart_type.starts_with("scatter") {
                 return Err(Error::Compile(format!(
                     "Chart.{unit_property} is supported only for scatter charts; omit it or use a scatter chart with two numeric axes"
+                )));
+            }
+            if !unit.as_str().is_some_and(is_chart_value_axis_display_unit) {
+                return Err(Error::Compile(format!(
+                    "Chart.{unit_property} must be a built-in unit: hundreds, thousands, tenThousands, hundredThousands, millions, tenMillions, hundredMillions, billions, or trillions"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_chart_secondary_display_units(chart: &Node, chart_type: &str) -> Result<()> {
+    let secondary_unit = chart.props.get("secondaryValueAxisDisplayUnit");
+    let secondary_label = chart.props.get("secondaryValueAxisDisplayUnitLabel");
+    if let Some(label) = secondary_label {
+        if !label.is_boolean() {
+            return Err(Error::Compile(
+                "Chart.secondaryValueAxisDisplayUnitLabel must be a boolean; use true or false"
+                    .into(),
+            ));
+        }
+        if secondary_unit.is_none() {
+            return Err(Error::Compile(
+                "Chart.secondaryValueAxisDisplayUnitLabel requires secondaryValueAxisDisplayUnit; add a built-in unit or remove the label property".into(),
+            ));
+        }
+    }
+    if let Some(unit) = secondary_unit {
+        if !(chart_type.starts_with("area")
+            || chart_type.starts_with("column")
+            || chart_type.starts_with("line"))
+        {
+            return Err(Error::Compile(
+                "Chart.secondaryValueAxisDisplayUnit is supported only on secondary area, column, and line value axes; use x2AxisDisplayUnit/y2AxisDisplayUnit for scatter or remove it".into(),
+            ));
+        }
+        if !unit.as_str().is_some_and(is_chart_value_axis_display_unit) {
+            return Err(Error::Compile(
+                "Chart.secondaryValueAxisDisplayUnit must be a built-in unit: hundreds, thousands, tenThousands, hundredThousands, millions, tenMillions, hundredMillions, billions, or trillions".into(),
+            ));
+        }
+    }
+    for (unit_property, label_property) in [
+        ("x2AxisDisplayUnit", "x2AxisDisplayUnitLabel"),
+        ("y2AxisDisplayUnit", "y2AxisDisplayUnitLabel"),
+    ] {
+        let unit = chart.props.get(unit_property);
+        let label = chart.props.get(label_property);
+        if let Some(label) = label {
+            if !label.is_boolean() {
+                return Err(Error::Compile(format!(
+                    "Chart.{label_property} must be a boolean; use true or false"
+                )));
+            }
+            if unit.is_none() {
+                return Err(Error::Compile(format!(
+                    "Chart.{label_property} requires {unit_property}; add a built-in unit or remove the label property"
+                )));
+            }
+        }
+        if let Some(unit) = unit {
+            if !chart_type.starts_with("scatter") {
+                return Err(Error::Compile(format!(
+                    "Chart.{unit_property} is supported only for secondary scatter value axes; use secondaryValueAxisDisplayUnit for area, column, or line charts"
                 )));
             }
             if !unit.as_str().is_some_and(is_chart_value_axis_display_unit) {
@@ -4771,6 +4843,12 @@ fn validate_chart_series(chart: &Node) -> Result<()> {
             "secondaryValueAxisMinorUnit",
             "secondaryValueAxisLogBase",
             "secondaryValueAxisReversed",
+            "secondaryValueAxisDisplayUnit",
+            "secondaryValueAxisDisplayUnitLabel",
+            "x2AxisDisplayUnit",
+            "x2AxisDisplayUnitLabel",
+            "y2AxisDisplayUnit",
+            "y2AxisDisplayUnitLabel",
         ]
         .iter()
         .any(|property| chart.props.contains_key(*property))

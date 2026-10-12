@@ -116,6 +116,16 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
   axis pair's IDs and physical position, including horizontal-bar axis swaps.
   Unsupported text-property metadata and schema-invalid charset values remain
   rejected.
+  `Chart.secondaryValueAxisDisplayUnit` scales the secondary value-axis labels
+  on area, column, and line charts; scatter charts instead use independent
+  `x2AxisDisplayUnit` and `y2AxisDisplayUnit` properties for their secondary X
+  and Y value axes. These properties accept the same built-in units as primary
+  display-unit properties. Matching `*DisplayUnitLabel?: boolean` properties
+  control visibility and require a unit; omission means visible. Horizontal
+  bar charts are rejected because the pinned writer serializes secondary scale
+  settings on a category axis. Reverse resolves secondary axes through chart
+  group IDs and physical orientation; custom display-unit labels/layouts remain
+  unsupported and fail with repair guidance.
   `Chart.x2AxisMajorGridlines`, `x2AxisMinorGridlines`, `y2AxisMajorGridlines`,
   and `y2AxisMinorGridlines` control gridlines on the secondary horizontal and
   vertical axes. Each accepts a boolean or the same `{color, width, dash,
@@ -521,8 +531,11 @@ and a worksheet anchor. Chart components must appear before worksheet rows.
 - `Chart.xAxisDisplayUnit?: "hundreds" | "thousands" | "tenThousands" |
   "hundredThousands" | "millions" | "tenMillions" | "hundredMillions" |
   "billions" | "trillions"` and `Chart.yAxisDisplayUnit` independently scale
-  the horizontal X and vertical Y value-axis labels on scatter charts.
-  `xAxisDisplayUnitLabel?: boolean` / `yAxisDisplayUnitLabel?: boolean` control
+  the horizontal X and vertical Y value-axis labels on scatter charts;
+  `x2AxisDisplayUnit` / `y2AxisDisplayUnit` independently scale the matching
+  secondary scatter axes. `xAxisDisplayUnitLabel?: boolean` /
+  `yAxisDisplayUnitLabel?: boolean` and `x2AxisDisplayUnitLabel?: boolean` /
+  `y2AxisDisplayUnitLabel?: boolean` control
   each built-in label's visibility, require their matching unit, and default to
   visible. These X/Y properties are scatter-only. Reverse maps them by axis
   direction (top/bottom is X, left/right is Y), folds visible-label defaults,

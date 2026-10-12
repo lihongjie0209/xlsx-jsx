@@ -583,6 +583,12 @@
             "secondaryValueAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "secondaryValueAxisLogBase": { "type": "integer", "minimum": 2, "maximum": 1000 },
             "secondaryValueAxisReversed": { "type": "boolean" },
+            "secondaryValueAxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
+            "secondaryValueAxisDisplayUnitLabel": { "type": "boolean" },
+            "x2AxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
+            "x2AxisDisplayUnitLabel": { "type": "boolean" },
+            "y2AxisDisplayUnit": { "enum": ["hundreds", "thousands", "tenThousands", "hundredThousands", "millions", "tenMillions", "hundredMillions", "billions", "trillions"] },
+            "y2AxisDisplayUnitLabel": { "type": "boolean" },
             "xAxisMajorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "xAxisMinorUnit": { "type": "number", "exclusiveMinimum": 0 },
             "yAxisMin": { "type": "number" },
@@ -1083,11 +1089,19 @@
           "if": { "properties": { "props": { "required": ["valueAxisDisplayUnitLabel"] } }, "required": ["props"] },
           "then": { "properties": { "props": { "required": ["valueAxisDisplayUnit"] } } }
         },
+        { "if": { "properties": { "props": { "required": ["secondaryValueAxisDisplayUnitLabel"] } }, "required": ["props"] }, "then": { "properties": { "props": { "required": ["secondaryValueAxisDisplayUnit"] } } } },
+        { "if": { "properties": { "props": { "required": ["secondaryValueAxisDisplayUnit"] } }, "required": ["props"] }, "then": { "properties": { "props": { "properties": { "type": { "enum": ["area", "areaStacked", "areaPercentStacked", "column", "columnStacked", "columnPercentStacked", "line", "lineStacked", "linePercentStacked"] } } } } },
+        { "if": { "properties": { "props": { "required": ["x2AxisDisplayUnitLabel"] } }, "required": ["props"] }, "then": { "properties": { "props": { "required": ["x2AxisDisplayUnit"] } } } },
+        { "if": { "properties": { "props": { "required": ["y2AxisDisplayUnitLabel"] } }, "required": ["props"] }, "then": { "properties": { "props": { "required": ["y2AxisDisplayUnit"] } } } },
+        {
+          "if": { "properties": { "props": { "properties": { "type": { "enum": ["pie", "doughnut"] } }, "required": ["type"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["secondaryValueAxisDisplayUnit"] }, { "required": ["secondaryValueAxisDisplayUnitLabel"] }, { "required": ["x2AxisDisplayUnit"] }, { "required": ["x2AxisDisplayUnitLabel"] }, { "required": ["y2AxisDisplayUnit"] }, { "required": ["y2AxisDisplayUnitLabel"] }] } } }
+        },
         {
           "if": { "properties": { "props": { "properties": { "type": { "enum": ["bar", "barStacked", "barPercentStacked"] } }, "required": ["type"] } }, "required": ["props"] },
           "then": {
             "properties": {
-              "props": { "not": { "anyOf": [{ "required": ["secondaryValueAxisMin"] }, { "required": ["secondaryValueAxisMax"] }, { "required": ["secondaryValueAxisMajorUnit"] }, { "required": ["secondaryValueAxisMinorUnit"] }, { "required": ["secondaryValueAxisLogBase"] }, { "required": ["secondaryValueAxisReversed"] }] } }
+              "props": { "not": { "anyOf": [{ "required": ["secondaryValueAxisMin"] }, { "required": ["secondaryValueAxisMax"] }, { "required": ["secondaryValueAxisMajorUnit"] }, { "required": ["secondaryValueAxisMinorUnit"] }, { "required": ["secondaryValueAxisLogBase"] }, { "required": ["secondaryValueAxisReversed"] }, { "required": ["secondaryValueAxisDisplayUnit"] }, { "required": ["secondaryValueAxisDisplayUnitLabel"] }] } }
             }
           }
         },
@@ -1183,6 +1197,8 @@
                     { "required": ["verticalAxisHidden"] },
                     { "required": ["valueAxisDisplayUnit"] },
                     { "required": ["valueAxisDisplayUnitLabel"] },
+                    { "required": ["secondaryValueAxisDisplayUnit"] },
+                    { "required": ["secondaryValueAxisDisplayUnitLabel"] },
                     { "required": ["horizontalAxisMajorGridlines"] },
                     { "required": ["horizontalAxisMinorGridlines"] },
                     { "required": ["verticalAxisMajorGridlines"] },
@@ -1228,6 +1244,10 @@
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } } }, "required": ["type"] } }, "required": ["props"] },
           "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["xAxisMin"] }, { "required": ["xAxisMax"] }, { "required": ["xAxisMajorUnit"] }, { "required": ["xAxisMinorUnit"] }, { "required": ["xAxisLogBase"] }, { "required": ["xAxisReversed"] }, { "required": ["yAxisReversed"] }, { "required": ["xAxisDisplayUnit"] }, { "required": ["xAxisDisplayUnitLabel"] }, { "required": ["yAxisDisplayUnit"] }, { "required": ["yAxisDisplayUnitLabel"] }] } } } }
+        },
+        {
+          "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["scatter", "scatterWithLines", "scatterWithLinesAndMarkers", "scatterWithSmoothLines", "scatterWithSmoothLinesAndMarkers"] } }, "required": ["type"] } }, "required": ["props"] },
+          "then": { "properties": { "props": { "not": { "anyOf": [{ "required": ["x2AxisDisplayUnit"] }, { "required": ["x2AxisDisplayUnitLabel"] }, { "required": ["y2AxisDisplayUnit"] }, { "required": ["y2AxisDisplayUnitLabel"] }] } } }
         },
         {
           "if": { "properties": { "props": { "properties": { "type": { "not": { "enum": ["pie", "doughnut"] } } }, "required": ["type"] } }, "required": ["props"] },
