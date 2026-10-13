@@ -763,12 +763,11 @@ fn render_table_filter_criteria(filters: &[WorksheetFilterColumn]) -> String {
                 if and { " and=\"1\"" } else { "" }
             );
             for condition in &custom.conditions {
-                let operator = condition
-                    .operator
-                    .as_deref()
+                let (operator, value) = custom_filter_ooxml(condition);
+                let operator = operator
                     .map(|value| format!(" operator=\"{value}\""))
                     .unwrap_or_default();
-                let value = quick_xml::escape::escape(&condition.value);
+                let value = quick_xml::escape::escape(&value);
                 let _ = write!(xml, "<customFilter{operator} val=\"{value}\"/>");
             }
             xml.push_str("</customFilters>");
@@ -786,6 +785,19 @@ fn render_table_filter_criteria(filters: &[WorksheetFilterColumn]) -> String {
         xml.push_str("</filterColumn>");
     }
     xml
+}
+
+fn custom_filter_ooxml(condition: &WorksheetCustomFilterCondition) -> (Option<String>, String) {
+    let value = condition.value.as_str();
+    match condition.operator.as_deref() {
+        Some("beginsWith") => (None, format!("{value}*")),
+        Some("doesNotBeginWith") => (Some("notEqual".to_owned()), format!("{value}*")),
+        Some("endsWith") => (None, format!("*{value}")),
+        Some("doesNotEndWith") => (Some("notEqual".to_owned()), format!("*{value}")),
+        Some("contains") => (None, format!("*{value}*")),
+        Some("doesNotContain") => (Some("notEqual".to_owned()), format!("*{value}*")),
+        operator => (operator.map(str::to_owned), value.to_owned()),
+    }
 }
 
 fn preapply_image_cell_dimensions(
@@ -6538,6 +6550,12 @@ fn compile_custom_filter(filter: &Value) -> xlsx_jsx::Result<FilterCondition> {
             Some("greaterThan") => FilterCriteria::GreaterThan,
             Some("lessThanOrEqual") => FilterCriteria::LessThanOrEqualTo,
             Some("greaterThanOrEqual") => FilterCriteria::GreaterThanOrEqualTo,
+            Some("beginsWith") => FilterCriteria::BeginsWith,
+            Some("doesNotBeginWith") => FilterCriteria::DoesNotBeginWith,
+            Some("endsWith") => FilterCriteria::EndsWith,
+            Some("doesNotEndWith") => FilterCriteria::DoesNotEndWith,
+            Some("contains") => FilterCriteria::Contains,
+            Some("doesNotContain") => FilterCriteria::DoesNotContain,
             Some(other) => {
                 return Err(Error::Compile(format!(
                     "unsupported custom filter operator `{other}`"
@@ -31675,11 +31693,12 @@ impl AutoFilterAuditState {
                         "greaterThan",
                         "lessThanOrEqual",
                         "greaterThanOrEqual",
+                        "equal",
                     ]
                     .contains(&attribute_value.as_str())
                     {
                         return Err(Error::Reverse(format!(
-                            "worksheet `{part}` customFilter operator `{attribute_value}` is unsupported; repair it to an OOXML comparison operator"
+                            "worksheet `{part}` customFilter operator `{attribute_value}` is unsupported; repair it to an OOXML comparison operator or omit it for a supported text-match wildcard pattern"
                         )));
                     }
                     operator = Some(attribute_value);
@@ -31697,6 +31716,7 @@ impl AutoFilterAuditState {
                 "worksheet `{part}` customFilter is missing val; repair the custom condition"
             ))
         })?;
+        let (operator, value) = Self::decode_custom_filter_pattern(operator, value, part)?;
         let filters = self
             .current
             .as_mut()
@@ -31706,6 +31726,52 @@ impl AutoFilterAuditState {
             .conditions
             .push(WorksheetCustomFilterCondition { operator, value });
         Ok(())
+    }
+
+    fn decode_custom_filter_pattern(
+        operator: Option<String>,
+        value: String,
+        part: &str,
+    ) -> xlsx_jsx::Result<(Option<String>, String)> {
+        let operator = operator.filter(|operator| operator != "equal");
+        if !matches!(operator.as_deref(), None | Some("notEqual")) {
+            return Ok((operator, value));
+        }
+        let starts_with = value.ends_with('*') && !value.starts_with('*');
+        let ends_with = value.starts_with('*') && !value.ends_with('*');
+        let contains = value.starts_with('*') && value.ends_with('*') && value.len() > 2;
+        let (text_operator, text) = if contains {
+            ("contains", &value[1..value.len() - 1])
+        } else if starts_with {
+            ("beginsWith", &value[..value.len() - 1])
+        } else if ends_with {
+            ("endsWith", &value[1..])
+        } else if value.contains('*') || value.contains('?') || value.contains('~') {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` customFilter value `{value}` is an ambiguous wildcard pattern; use a single leading/trailing `*` for contains/endsWith/beginsWith or remove wildcard metadata"
+            )));
+        } else {
+            return Ok((operator, value));
+        };
+        if text.is_empty()
+            || text
+                .chars()
+                .any(|character| matches!(character, '*' | '?' | '~'))
+        {
+            return Err(Error::Reverse(format!(
+                "worksheet `{part}` customFilter value `{value}` is not a canonical text-match pattern; use a non-empty literal surrounded by at most the supported wildcard markers"
+            )));
+        }
+        let text_operator = if operator.as_deref() == Some("notEqual") {
+            match text_operator {
+                "beginsWith" => "doesNotBeginWith",
+                "endsWith" => "doesNotEndWith",
+                _ => "doesNotContain",
+            }
+        } else {
+            text_operator
+        };
+        Ok((Some(text_operator.to_owned()), text.to_owned()))
     }
 
     fn end(

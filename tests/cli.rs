@@ -23877,6 +23877,225 @@ fn external_blank_and_custom_autofilters_survive_reverse_and_recompile() {
 }
 
 #[test]
+fn external_text_match_autofilters_reverse_and_recompile_losslessly() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("text-match-filter.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_row(0, 0, ["Region"])
+        .expect("header writes");
+    worksheet
+        .write_row(1, 0, ["North Zone"])
+        .expect("data writes");
+    worksheet.autofilter(0, 0, 1, 0).expect("autofilter adds");
+    let filter = rust_xlsxwriter::FilterCondition::new()
+        .add_custom_filter(rust_xlsxwriter::FilterCriteria::BeginsWith, "North")
+        .add_custom_filter(rust_xlsxwriter::FilterCriteria::DoesNotContain, "Test")
+        .add_custom_boolean_or();
+    worksheet
+        .filter_column(0, &filter)
+        .expect("text criteria are accepted");
+    workbook.save(&input).expect("workbook writes");
+
+    let reversed = directory.path().join("text-match-filter.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains(
+        "autoFilterColumns={[{\"column\":0,\"customFilters\":{\"logic\":\"or\",\"conditions\":[{\"operator\":\"beginsWith\",\"value\":\"North\"},{\"operator\":\"doesNotContain\",\"value\":\"Test\"}]}}]}"
+    ), "{source}");
+
+    let rebuilt = directory.path().join("text-match-filter-roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    assert!(xml.contains(
+        "<customFilters><customFilter val=\"North*\"/><customFilter operator=\"notEqual\" val=\"*Test*\"/></customFilters>"
+    ), "{xml}");
+}
+
+#[test]
+fn external_autofilter_round_trips_each_text_match_operator() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("all-text-match-filters.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_row(
+            0,
+            0,
+            [
+                "Begins",
+                "NotBegins",
+                "Ends",
+                "NotEnds",
+                "Contains",
+                "NotContains",
+            ],
+        )
+        .expect("headers write");
+    worksheet
+        .write_row(1, 0, ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"])
+        .expect("data writes");
+    worksheet.autofilter(0, 0, 1, 5).expect("autofilter adds");
+    let filters = [
+        (rust_xlsxwriter::FilterCriteria::BeginsWith, "Al"),
+        (rust_xlsxwriter::FilterCriteria::DoesNotBeginWith, "Be"),
+        (rust_xlsxwriter::FilterCriteria::EndsWith, "ma"),
+        (rust_xlsxwriter::FilterCriteria::DoesNotEndWith, "ta"),
+        (rust_xlsxwriter::FilterCriteria::Contains, "ps"),
+        (rust_xlsxwriter::FilterCriteria::DoesNotContain, "et"),
+    ];
+    for (column, (criteria, value)) in filters.into_iter().enumerate() {
+        let condition = rust_xlsxwriter::FilterCondition::new().add_custom_filter(criteria, value);
+        worksheet
+            .filter_column(
+                u16::try_from(column).expect("column index fits"),
+                &condition,
+            )
+            .expect("text filter applies");
+    }
+    workbook.save(&input).expect("workbook writes");
+
+    let reversed = directory.path().join("all-text-match-filters.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    for operator in [
+        "beginsWith",
+        "doesNotBeginWith",
+        "endsWith",
+        "doesNotEndWith",
+        "contains",
+        "doesNotContain",
+    ] {
+        assert!(
+            source.contains(operator),
+            "missing `{operator}` in {source}"
+        );
+    }
+
+    let rebuilt = directory
+        .path()
+        .join("all-text-match-filters-roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    for pattern in ["Al*", "Be*", "*ma", "*ta", "*ps*", "*et*"] {
+        assert!(
+            xml.contains(pattern),
+            "missing wildcard pattern `{pattern}` in {xml}"
+        );
+    }
+}
+
+#[test]
+fn external_table_text_filters_reverse_and_recompile_losslessly() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("table-text-filter.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_column(0, 0, ["Region", "North Zone"])
+        .expect("table values write");
+    let columns = [rust_xlsxwriter::TableColumn::new().set_header("Region")];
+    worksheet
+        .add_table(
+            0,
+            0,
+            1,
+            0,
+            &rust_xlsxwriter::Table::new()
+                .set_name("RegionTable")
+                .set_columns(&columns),
+        )
+        .expect("table adds");
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/tables/table1.xml", |xml| {
+        xml.replace(
+            "<autoFilter ref=\"A1:A2\"/>",
+            "<autoFilter ref=\"A1:A2\"><filterColumn colId=\"0\"><customFilters><customFilter val=\"*North*\"/></customFilters></filterColumn></autoFilter>",
+        )
+    });
+
+    let reversed = directory.path().join("table-text-filter.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains(
+        "autoFilterColumns={[{\"column\":0,\"customFilters\":{\"logic\":\"or\",\"conditions\":[{\"operator\":\"contains\",\"value\":\"North\"}]}}]}"
+    ), "{source}");
+
+    let rebuilt = directory.path().join("table-text-filter-roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/tables/table1.xml");
+    assert!(
+        xml.contains("<customFilters><customFilter val=\"*North*\"/></customFilters>"),
+        "{xml}"
+    );
+}
+
+#[test]
+fn reverse_rejects_ambiguous_external_autofilter_wildcards() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("ambiguous-filter.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    let worksheet = workbook.add_worksheet();
+    worksheet
+        .write_row(0, 0, ["Region", "North Zone"])
+        .expect("values write");
+    worksheet.autofilter(0, 0, 1, 0).expect("autofilter adds");
+    workbook.save(&input).expect("workbook writes");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<autoFilter ref=\"A1:A2\"/>",
+            "<autoFilter ref=\"A1:A2\"><filterColumn colId=\"0\"><customFilters><customFilter val=\"N*orth\"/></customFilters></filterColumn></autoFilter>",
+        )
+    });
+
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["reverse"]).arg(input);
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("ambiguous wildcard pattern"))
+        .stderr(predicate::str::contains("beginsWith"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
 fn reverse_rejects_indent_with_incompatible_external_alignment() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("incompatible-indent.xlsx");

@@ -156,6 +156,8 @@ cargo build --locked
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/autofilter.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/autofilter-custom.tsx" -o "${TEMP_DIR}/autofilter-custom.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/autofilter-custom.xlsx"
+"${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/autofilter-text-match.tsx" -o "${TEMP_DIR}/autofilter-text-match.xlsx"
+"${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/autofilter-text-match.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/freeze-panes.tsx" -o "${TEMP_DIR}/freeze-panes.xlsx"
 "${DOTNET}" run --project "${VALIDATOR_PROJECT}" --no-restore -- "${TEMP_DIR}/freeze-panes.xlsx"
 "${PROJECT_ROOT}/target/debug/xlsx-jsx" build "${PROJECT_ROOT}/examples/merged-cells.tsx" -o "${TEMP_DIR}/merged-cells.xlsx"

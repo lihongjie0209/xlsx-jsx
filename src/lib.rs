@@ -1933,11 +1933,34 @@ fn validate_custom_filter_condition(condition: &Value, index: usize) -> Result<(
             "greaterThan",
             "lessThanOrEqual",
             "greaterThanOrEqual",
+            "beginsWith",
+            "doesNotBeginWith",
+            "endsWith",
+            "doesNotEndWith",
+            "contains",
+            "doesNotContain",
         ]
         .contains(&operator)
         {
             return Err(Error::Compile(format!(
-                "Worksheet.autoFilterColumns custom operator `{operator}` is unsupported; use lessThan, notEqual, greaterThan, lessThanOrEqual, greaterThanOrEqual, or omit operator for equality"
+                "Worksheet.autoFilterColumns custom operator `{operator}` is unsupported; use lessThan, notEqual, greaterThan, lessThanOrEqual, greaterThanOrEqual, beginsWith, doesNotBeginWith, endsWith, doesNotEndWith, contains, doesNotContain, or omit operator for equality"
+            )));
+        }
+        if matches!(
+            operator,
+            "beginsWith"
+                | "doesNotBeginWith"
+                | "endsWith"
+                | "doesNotEndWith"
+                | "contains"
+                | "doesNotContain"
+        ) && (value.is_empty()
+            || value
+                .chars()
+                .any(|character| matches!(character, '*' | '?' | '~')))
+        {
+            return Err(Error::Compile(format!(
+                "Worksheet.autoFilterColumns[{index}].customFilters text-match value must be non-empty and cannot contain Excel wildcard characters; remove `*`, `?`, or `~` from the search text"
             )));
         }
     }
@@ -16064,6 +16087,39 @@ mod tests {
             "children":[]
         })]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_text_match_autofilter_criteria() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet",
+            "props":{"name":"Filter","autoFilter":"A1:B20","autoFilterColumns":[
+                {"column":0,"customFilters":{"logic":"or","conditions":[
+                    {"operator":"beginsWith","value":"North"},
+                    {"operator":"doesNotContain","value":"Test"}
+                ]}}
+            ]},
+            "children":[]
+        })]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_text_match_autofilter_values_with_wildcards() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet",
+            "props":{"name":"Filter","autoFilter":"A1:B20","autoFilterColumns":[
+                {"column":0,"customFilters":{"logic":"or","conditions":[
+                    {"operator":"contains","value":"North*"}
+                ]}}
+            ]},
+            "children":[]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("wildcards make text filters ambiguous");
+        assert!(error.to_string().contains("wildcard characters"));
+        assert!(error.to_string().contains("remove `*`, `?`, or `~`"));
     }
 
     #[test]

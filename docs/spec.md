@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.88
+Version: 1.89
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -1294,13 +1294,17 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `bandedColumns?`, `firstColumn?`, and `lastColumn?` control the matching
   table flags and default to true, true, false, false, and false. Table ranges
   must not overlap each other, worksheet auto-filters, or merged cells.
-  `autoFilterColumns?: FilterColumn[]` adds list-value or custom comparison
-  criteria to the table's filter dropdowns, using zero-based column indices
+  `autoFilterColumns?: FilterColumn[]` adds list-value, custom comparison, or
+  text-match criteria to the table's filter dropdowns, using zero-based column indices
   relative to the table's first column and the same criterion shape as
   `Worksheet.autoFilterColumns`. Criteria require `autoFilter` to be enabled
   and must be within the table width. List filters preserve selected strings
   and optional blank inclusion; custom filters allow one or two comparisons
-  combined with `and` or `or`. Date grouping, top-10, dynamic, color/icon, and
+  combined with `and` or `or`. Text conditions also accept `beginsWith`,
+  `doesNotBeginWith`, `endsWith`, `doesNotEndWith`, `contains`, and
+  `doesNotContain`. Text-match values must be non-empty and cannot contain
+  Excel wildcard characters (`*`, `?`, `~`), which keeps the serialized pattern
+  reversible. Date grouping, top-10, dynamic, color/icon, and
   other unmodeled filter kinds remain rejected. The pinned writer has no Table
   filter-criteria API, so compilation writes modeled criteria into generated
   table XML; reverse reads external table criteria without a manifest.
@@ -1449,10 +1453,12 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   `column` is zero-based relative to the first column in `autoFilter`; indices
   must be unique and inside the range width. List criteria use `values` as an
   ORed string list and may include blanks with `includeBlanks`. Custom criteria
-  support one or two conditions and OOXML operators `lessThan`, `notEqual`,
-  `greaterThan`, `lessThanOrEqual`, and `greaterThanOrEqual`; omitted `operator`
-  means equality. `value` preserves the exact OOXML text, including wildcard
-  patterns emitted by string-match filters. Custom filters require explicit
+  support one or two conditions and OOXML comparison operators `lessThan`,
+  `notEqual`, `greaterThan`, `lessThanOrEqual`, and `greaterThanOrEqual`, plus
+  the string operators `beginsWith`, `doesNotBeginWith`, `endsWith`,
+  `doesNotEndWith`, `contains`, and `doesNotContain`; omitted `operator` means
+  equality. The string operators map to OOXML wildcard patterns and reverse
+  back to the semantic operator/value pair. Custom filters require explicit
   `logic`. A single condition uses `or`, while two conditions preserve either
   `and` or `or`. A filter entry
   must select exactly one of list criteria or `customFilters`. Filter criteria

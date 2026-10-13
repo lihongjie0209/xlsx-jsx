@@ -29,6 +29,10 @@ reported as complete.
 
 ## Recently delivered
 
+- Worksheet and table AutoFilters now support losslessly reversible text
+  begins/ends/contains criteria and their negations, in addition to list and
+  comparison filters.
+
 - Worksheet row/column heading visibility now round-trips through
   `showRowColHeaders`; hidden on-screen headings are distinct from gridlines
   and printed headings.
