@@ -60,6 +60,10 @@ impl Error {
                 "A referenced local file could not be read.",
                 "Check the file path and permissions.",
             ),
+            Self::Reverse(message) if message.contains("not a readable XLSX ZIP package") => (
+                "The input is not a readable XLSX package, so workbook features could not be inspected.",
+                "Save or export the source as a valid `.xlsx` file, then retry; do not rename a CSV or other format to `.xlsx`.",
+            ),
             Self::Reverse(message) if message.contains("cell formatting") => (
                 "The source workbook has styles that the current lossless DSL cannot represent.",
                 "Remove cell/row formatting before reverse, or add style components with both writer and external-reader support.",

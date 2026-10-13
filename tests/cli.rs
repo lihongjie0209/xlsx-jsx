@@ -26533,3 +26533,27 @@ fn rejects_sparkline_references_to_missing_worksheets() {
         ))
         .stderr(predicate::str::contains("add that Worksheet"));
 }
+
+#[test]
+fn reverse_reports_non_zip_input_with_package_repair_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("not-a-workbook.xlsx");
+    std::fs::write(&input, b"this is not an XLSX package").expect("invalid input writes");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not a readable XLSX ZIP package"))
+        .stderr(predicate::str::contains(
+            "Save or export the source as a valid `.xlsx` file",
+        ))
+        .stderr(predicate::str::contains("could not be inspected"))
+        .stderr(predicate::str::contains("Remove unsupported workbook features").not());
+    assert!(
+        !directory.path().join("not-a-workbook.tsx").exists(),
+        "reverse failure must not leave a partial JSX output"
+    );
+}

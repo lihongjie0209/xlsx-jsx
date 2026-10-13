@@ -31,7 +31,9 @@ disables persistent caching.
 Errors include an explanation, a repair suggestion, and a pointer to the matching
 DSL contract. Reverse diagnostics distinguish unsupported formula cache cases;
 for example, scalar `formulaResult` applies to ordinary formulas, not legacy
-array-formula cached values.
+array-formula cached values. Inputs that are not readable XLSX ZIP packages are
+diagnosed as package-format errors with a save/export-as-`.xlsx` repair action,
+not as unsupported workbook features.
 
 ## Feature matrix
 
@@ -167,3 +169,5 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 
 The Open XML integration script validates generated workbooks with
 `DocumentFormat.OpenXml` for Microsoft 365.
+It honors `CARGO_TARGET_DIR` so local validation can build in an isolated
+target directory without modifying the default `target/`.

@@ -29,6 +29,11 @@ reported as complete.
 
 ## Recently delivered
 
+- Reverse diagnostics now distinguish a non-readable XLSX ZIP package from an
+  unsupported workbook feature and recommend saving/exporting to `.xlsx`.
+  `scripts/openxml-test.sh` also honors `CARGO_TARGET_DIR` so local validation can
+  use an isolated incremental build target.
+
 - Worksheet and table AutoFilters now support losslessly reversible text
   begins/ends/contains criteria and their negations, in addition to list and
   comparison filters.

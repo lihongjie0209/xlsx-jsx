@@ -2024,6 +2024,10 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 ## Reverse contract
 
 Reverse must work on external XLSX files without a private embedded manifest.
+Before inspecting workbook features, `reverse` requires a readable XLSX ZIP
+package. If the input is not a valid ZIP package, the diagnostic must identify
+the package error and recommend exporting or saving the source as `.xlsx`, not
+suggest removing workbook features.
 The v1 lossless subset is worksheets, any-value, list and formula-based data
 validations (whole, decimal, date, time, textLength, and custom), positional rows/cells, worksheet visibility,
 active tab and reading direction, row height/hidden/outline state, collapsed

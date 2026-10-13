@@ -11825,7 +11825,9 @@ fn audit_reverse_subset(
         path: path.to_path_buf(),
         source,
     })?;
-    let mut archive = ZipArchive::new(file).map_err(|error| Error::Reverse(error.to_string()))?;
+    let mut archive = ZipArchive::new(file).map_err(|error| {
+        Error::Reverse(format!("input is not a readable XLSX ZIP package: {error}"))
+    })?;
     validate_custom_properties_package(&mut archive)?;
     let workbook_xml = read_zip_part(&mut archive, "xl/workbook.xml")?;
     let relationships_xml = read_zip_part(&mut archive, "xl/_rels/workbook.xml.rels")?;
