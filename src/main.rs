@@ -15121,8 +15121,7 @@ fn validate_secondary_axis_defaults(
             "ln" => attributes.get("w").is_none_or(|width| {
                 width
                     .parse::<u32>()
-                    .ok()
-                    .is_some_and(|width| width > 0 && width <= 20_116_800 && width % 3175 == 0)
+                    .is_ok_and(|width| width > 0 && width <= 20_116_800 && width % 3175 == 0)
             }),
             "srgbClr" => attributes.get("val").is_some_and(|color| {
                 color.len() == 6 && color.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -15145,7 +15144,7 @@ fn validate_secondary_axis_defaults(
                 )
             }),
             "bodyPr" => attributes.iter().all(|(key, value)| match key.as_str() {
-                "rot" => value.parse::<i32>().ok().is_some_and(|raw| {
+                "rot" => value.parse::<i32>().is_ok_and(|raw| {
                     raw % 60000 == 0 && (-90..=90).contains(&(raw / 60000))
                         || matches!(raw, 16_200_000 | 16_260_000)
                 }),
@@ -41325,7 +41324,7 @@ fn parse_border_color(
         {
             Some(BorderColor::Value(SpreadsheetColor::Rgb(format!(
                 "#{}",
-                &value[2..].to_ascii_uppercase()
+                value[2..].to_ascii_uppercase()
             ))))
         }
         ("theme", value) => {
