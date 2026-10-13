@@ -108,6 +108,10 @@ impl Error {
                 "The source workbook contains an Excel data-table formula, which the current DSL cannot represent.",
                 "Replace the data-table formula with ordinary formulas before reversing, or keep and use the original workbook unchanged.",
             ),
+            Self::Reverse(message) if message.contains("defaultColWidth") => (
+                "The source worksheet's default column width is outside the exact pixel widths supported by the pinned writer.",
+                "Set the default to 56, 64, 72, 80, 96, 104, or 120 pixels, or restore Excel's 8.43-character default; the reverse reader does not round widths.",
+            ),
             Self::Reverse(_) => (
                 "The XLSX file uses content outside the lossless v1 reverse subset.",
                 "Remove unsupported workbook features or convert values to supported scalar cells.",
@@ -161,6 +165,18 @@ mod tests {
 
         assert!(diagnostic.contains("Excel data-table formula"));
         assert!(diagnostic.contains("Replace the data-table formula with ordinary formulas"));
+        assert!(!diagnostic.contains("Remove unsupported workbook features"));
+    }
+
+    #[test]
+    fn unsupported_default_column_width_diagnostic_lists_exact_choices() {
+        let diagnostic = Error::Reverse(
+            "worksheet `xl/worksheets/sheet1.xml` defaultColWidth `12.25` is not exactly representable by the supported 56/64/72/80/96/104/120-pixel defaults; use one of those widths or restore Excel's 8.43-character default".into(),
+        )
+        .render_diagnostic();
+
+        assert!(diagnostic.contains("outside the exact pixel widths supported"));
+        assert!(diagnostic.contains("56, 64, 72, 80, 96, 104, or 120 pixels"));
         assert!(!diagnostic.contains("Remove unsupported workbook features"));
     }
 }

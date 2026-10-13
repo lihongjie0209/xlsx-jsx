@@ -1157,6 +1157,7 @@ fn validate_worksheet_view_and_page_breaks(sheet: &Node, name: &str) -> Result<(
 }
 
 fn validate_worksheet_properties(sheet: &Node) -> Result<()> {
+    validate_default_column_width(sheet)?;
     reject_unknown_props(
         sheet,
         &[
@@ -1168,6 +1169,7 @@ fn validate_worksheet_properties(sheet: &Node) -> Result<()> {
             "codeName",
             "visibility",
             "defaultRowHeightPixels",
+            "defaultColumnWidthPixels",
             "autoFit",
             "hideUnusedRows",
             "showGridlines",
@@ -1208,6 +1210,27 @@ fn validate_worksheet_properties(sheet: &Node) -> Result<()> {
         ],
         "Worksheet",
     )
+}
+
+fn validate_default_column_width(sheet: &Node) -> Result<()> {
+    let Some(value) = sheet.props.get("defaultColumnWidthPixels") else {
+        return Ok(());
+    };
+    let supported = [56, 64, 72, 80, 96, 104, 120];
+    if value
+        .as_u64()
+        .is_none_or(|pixels| !supported.contains(&pixels))
+    {
+        return Err(Error::Compile(format!(
+            "Worksheet.defaultColumnWidthPixels on `{}` must be one of 56, 64, 72, 80, 96, 104, or 120 pixels; choose a width supported by rust_xlsxwriter's default-format metrics",
+            sheet
+                .props
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("<unnamed>")
+        )));
+    }
+    Ok(())
 }
 
 fn validate_worksheet_code_name(
@@ -14404,6 +14427,30 @@ mod tests {
             "type":"Worksheet","props":{"name":"Rows","defaultRowHeightPixels":24},"children":[]
         })]);
         assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn accepts_a_writer_supported_default_column_width() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Columns","defaultColumnWidthPixels":80},"children":[]
+        })]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_unsupported_default_column_width_with_supported_values() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Columns","defaultColumnWidthPixels":88},"children":[]
+        })]);
+        let error = input
+            .validate()
+            .expect_err("unsupported default widths must be rejected");
+        assert!(error.to_string().contains("defaultColumnWidthPixels"));
+        assert!(
+            error
+                .to_string()
+                .contains("56, 64, 72, 80, 96, 104, or 120")
+        );
     }
 
     #[test]

@@ -1137,6 +1137,15 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
   when they map exactly to an integer pixel height (OOXML points ÷ 0.75) within
   Excel's 409-point limit, and rejects contradictory or fractional-pixel
   layouts rather than rounding.
+- `defaultColumnWidthPixels?: integer` sets the default width of every column
+  before explicit `Column` ranges override it. It uses the pinned writer's
+  supported default-format widths: 56, 64, 72, 80, 96, 104, or 120 pixels;
+  64 pixels is the default and is omitted by reverse. This setting composes
+  with row-height defaults and explicit column widths. External
+  `sheetFormatPr@defaultColWidth` values are preserved only when they exactly
+  match one of the pinned writer's emitted widths; other character-unit widths
+  are rejected rather than rounded to a different default. Picture anchors use
+  the selected default width when calculating cell geometry.
 - `autoFit?: boolean` asks the compiler to calculate worksheet column widths
   from written cell contents using the pinned `rust_xlsxwriter` autofit
   algorithm, which approximates Excel using default Calibri 11 character

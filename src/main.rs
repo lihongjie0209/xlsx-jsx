@@ -350,6 +350,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         worksheet
             .set_name(name)
             .map_err(|error| Error::Compile(error.to_string()))?;
+        apply_default_column_width(worksheet, &sheet)?;
         if let Some(code_name) = sheet.props.get("codeName").and_then(Value::as_str) {
             worksheet
                 .set_vba_name(code_name)
@@ -628,6 +629,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     let column_autofit_targets = collect_column_autofit_targets(ir);
     let column_width_targets = collect_column_width_targets(ir);
     let row_height_targets = collect_row_height_targets(ir);
+    let default_column_width_targets = collect_default_column_width_targets(ir);
     if !x14_icon_normalization.is_empty()
         || !table_dxf_targets.is_empty()
         || !table_filter_targets.is_empty()
@@ -635,6 +637,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         || strip_autofit_flags
         || !column_width_targets.is_empty()
         || !row_height_targets.is_empty()
+        || !default_column_width_targets.is_empty()
     {
         normalize_generated_xlsx(
             path,
@@ -646,6 +649,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             &column_autofit_targets,
             &column_width_targets,
             &row_height_targets,
+            &default_column_width_targets,
         )?;
     }
     Ok(())
@@ -938,6 +942,90 @@ fn patch_row_height_targets(
             "patched worksheet `{part}` is not UTF-8 XML: {error}"
         ))
     })
+}
+
+fn patch_default_column_width(xml: &str, part: &str, width: &str) -> xlsx_jsx::Result<String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut writer = XmlWriter::new(Vec::new());
+    let mut seen = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Empty(ref start)) if start.local_name().as_ref() == b"sheetFormatPr" => {
+                if seen {
+                    return Err(Error::Compile(format!(
+                        "generated worksheet `{part}` has duplicate sheetFormatPr elements"
+                    )));
+                }
+                seen = true;
+                let patched =
+                    rewrite_default_column_width_event(start, reader.decoder(), part, width)?;
+                writer.write_event(Event::Empty(patched)).map_err(|error| {
+                    Error::Compile(format!(
+                        "cannot patch default column width in `{part}`: {error}"
+                    ))
+                })?;
+            }
+            Ok(Event::Start(ref start)) if start.local_name().as_ref() == b"sheetFormatPr" => {
+                return Err(Error::Compile(format!(
+                    "generated worksheet `{part}` uses a non-empty sheetFormatPr element; expected a self-closing element"
+                )));
+            }
+            Ok(Event::Eof) => break,
+            Ok(event) => writer.write_event(event.into_owned()).map_err(|error| {
+                Error::Compile(format!("cannot patch worksheet `{part}`: {error}"))
+            })?,
+            Err(error) => {
+                return Err(Error::Compile(format!(
+                    "cannot parse generated worksheet `{part}` while patching default column width: {error}"
+                )));
+            }
+        }
+    }
+    if !seen {
+        return Err(Error::Compile(format!(
+            "generated worksheet `{part}` is missing sheetFormatPr; cannot preserve its default column width"
+        )));
+    }
+    String::from_utf8(writer.into_inner()).map_err(|error| {
+        Error::Compile(format!(
+            "patched worksheet `{part}` is not UTF-8 XML: {error}"
+        ))
+    })
+}
+
+fn rewrite_default_column_width_event(
+    start: &BytesStart<'_>,
+    decoder: quick_xml::encoding::Decoder,
+    part: &str,
+    width: &str,
+) -> xlsx_jsx::Result<BytesStart<'static>> {
+    let mut output = BytesStart::new("sheetFormatPr");
+    let mut width_seen = false;
+    for attribute in start.attributes().with_checks(false) {
+        let attribute = attribute.map_err(|error| {
+            Error::Compile(format!("malformed sheetFormatPr in `{part}`: {error}"))
+        })?;
+        let key = attribute.key.as_ref().to_vec();
+        let value = attribute
+            .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+            .map_err(|error| Error::Compile(format!("invalid sheetFormatPr in `{part}`: {error}")))?
+            .into_owned();
+        if key.as_slice() == b"defaultColWidth" {
+            if width_seen {
+                return Err(Error::Compile(format!(
+                    "generated worksheet `{part}` repeats defaultColWidth; repair its sheetFormatPr"
+                )));
+            }
+            width_seen = true;
+            output.push_attribute(("defaultColWidth", width));
+        } else {
+            output.push_attribute((std::str::from_utf8(&key).unwrap_or(""), value.as_str()));
+        }
+    }
+    if !width_seen {
+        output.push_attribute(("defaultColWidth", width));
+    }
+    Ok(output)
 }
 
 fn rewrite_row_height_event(
@@ -1571,7 +1659,21 @@ fn collect_column_width_targets(ir: &IrEnvelope) -> HashMap<String, BTreeMap<u16
             let Some(props) = child.get("props").and_then(Value::as_object) else {
                 continue;
             };
-            let Some(width) = props.get("width").and_then(Value::as_f64) else {
+            let width_chars = props.get("width").and_then(Value::as_f64);
+            let width_pixels = props
+                .get("widthPixels")
+                .or_else(|| props.get("autoFitWidthPixels"))
+                .and_then(Value::as_u64)
+                .and_then(|pixels| u32::try_from(pixels).ok());
+            let Some(width) = width_chars.map_or_else(
+                || {
+                    width_pixels.map(|pixels| {
+                        let serialized = (f64::from(pixels) * 256.0 / 7.0).floor() / 256.0;
+                        serialized.to_string()
+                    })
+                },
+                |width| Some(width.to_string()),
+            ) else {
                 continue;
             };
             let min = props.get("min").and_then(Value::as_u64).unwrap_or(1);
@@ -1580,7 +1682,7 @@ fn collect_column_width_targets(ir: &IrEnvelope) -> HashMap<String, BTreeMap<u16
             let values = targets.entry(part).or_insert_with(BTreeMap::new);
             for column in min..=max {
                 if let Ok(index) = u16::try_from(column - 1) {
-                    values.insert(index, width.to_string());
+                    values.insert(index, width.clone());
                 }
             }
         }
@@ -1621,6 +1723,42 @@ fn collect_row_height_targets(ir: &IrEnvelope) -> HashMap<String, BTreeMap<u32, 
             }
             row_index = row_index.saturating_add(1);
         }
+    }
+    targets
+}
+
+fn collect_default_column_width_targets(ir: &IrEnvelope) -> HashMap<String, String> {
+    let mut targets = HashMap::new();
+    let mut worksheet_index = 0_usize;
+    for sheet in &ir.workbook.children {
+        let Some(object) = sheet.as_object() else {
+            continue;
+        };
+        if object.get("type").and_then(Value::as_str) != Some("Worksheet") {
+            continue;
+        }
+        worksheet_index += 1;
+        let Some(width) = object
+            .get("props")
+            .and_then(Value::as_object)
+            .and_then(|props| props.get("defaultColumnWidthPixels"))
+            .and_then(Value::as_u64)
+        else {
+            continue;
+        };
+        if width == 64 {
+            continue;
+        }
+        let Ok(width) = u32::try_from(width) else {
+            continue;
+        };
+        // Excel's default Calibri 11 column metric is seven pixels per
+        // character plus five pixels of cell padding.
+        let width_chars = (f64::from(width) - 5.0) / 7.0;
+        targets.insert(
+            format!("xl/worksheets/sheet{worksheet_index}.xml"),
+            width_chars.to_string(),
+        );
     }
     targets
 }
@@ -1678,6 +1816,7 @@ fn normalize_generated_xlsx(
     column_autofit_targets: &HashMap<String, BTreeSet<u16>>,
     column_width_targets: &HashMap<String, BTreeMap<u16, String>>,
     row_height_targets: &HashMap<String, BTreeMap<u32, String>>,
+    default_column_width_targets: &HashMap<String, String>,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -1711,6 +1850,7 @@ fn normalize_generated_xlsx(
         column_autofit_targets,
         column_width_targets,
         row_height_targets,
+        default_column_width_targets,
     );
     if let Err(error) = rewrite_result {
         let _ = std::fs::remove_file(&temporary_path);
@@ -1751,6 +1891,7 @@ fn rewrite_generated_xlsx(
     column_autofit_targets: &HashMap<String, BTreeSet<u16>>,
     column_width_targets: &HashMap<String, BTreeMap<u16, String>>,
     row_height_targets: &HashMap<String, BTreeMap<u32, String>>,
+    default_column_width_targets: &HashMap<String, String>,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -1815,6 +1956,11 @@ fn rewrite_generated_xlsx(
             };
             let xml = if let Some(targets) = row_height_targets.get(&name) {
                 patch_row_height_targets(&xml, &name, targets)?
+            } else {
+                xml
+            };
+            let xml = if let Some(width) = default_column_width_targets.get(&name) {
+                patch_default_column_width(&xml, &name, width)?
             } else {
                 xml
             };
@@ -5889,6 +6035,38 @@ fn apply_default_row_height(
     Ok(())
 }
 
+fn apply_default_column_width(
+    worksheet: &mut rust_xlsxwriter::Worksheet,
+    sheet: &Node,
+) -> xlsx_jsx::Result<()> {
+    let Some(width) = sheet
+        .props
+        .get("defaultColumnWidthPixels")
+        .and_then(Value::as_u64)
+    else {
+        return Ok(());
+    };
+    let width = u32::try_from(width).map_err(|error| {
+        Error::Compile(format!(
+            "invalid Worksheet.defaultColumnWidthPixels: {error}"
+        ))
+    })?;
+    let row_height = sheet
+        .props
+        .get("defaultRowHeightPixels")
+        .and_then(Value::as_u64)
+        .and_then(|height| u32::try_from(height).ok())
+        .unwrap_or(20);
+    worksheet
+        .set_default_format(&Format::new(), row_height, width)
+        .map_err(|error| {
+            Error::Compile(format!(
+                "cannot set Worksheet.defaultColumnWidthPixels={width}: {error}"
+            ))
+        })?;
+    Ok(())
+}
+
 fn apply_hide_unused_rows(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     sheet: &Node,
@@ -8038,6 +8216,11 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         if let Some(height) = sheet_metadata.and_then(|metadata| metadata.default_row_height_pixels)
         {
             let _ = write!(output, " defaultRowHeightPixels={{{height}}}");
+        }
+        if let Some(width) =
+            sheet_metadata.and_then(|metadata| metadata.default_column_width_pixels)
+        {
+            let _ = write!(output, " defaultColumnWidthPixels={{{width}}}");
         }
         if sheet_metadata.is_some_and(|metadata| metadata.hide_unused_rows) {
             output.push_str(" hideUnusedRows={true}");
@@ -25959,7 +26142,10 @@ fn image_column_width_pixels(
                     .and_then(xlsx_jsx::column_width_to_pixels)
             })
         })
-        .map_or(64, u64::from)
+        .map_or_else(
+            || u64::from(metadata.default_column_width_pixels.unwrap_or(64)),
+            u64::from,
+        )
 }
 
 fn image_column_prefix_pixels(
@@ -25967,7 +26153,8 @@ fn image_column_prefix_pixels(
     column: u32,
     move_and_size: bool,
 ) -> u64 {
-    let mut pixels = u64::from(column) * 64;
+    let default_width = u64::from(metadata.default_column_width_pixels.unwrap_or(64));
+    let mut pixels = u64::from(column) * default_width;
     for (index, properties) in metadata
         .columns
         .range(..u16::try_from(column).unwrap_or(u16::MAX))
@@ -25984,9 +26171,9 @@ fn image_column_prefix_pixels(
                         .and_then(|width| width.parse::<f64>().ok())
                         .and_then(xlsx_jsx::column_width_to_pixels)
                 })
-                .map_or(64, u64::from)
+                .map_or(default_width, u64::from)
         };
-        pixels = pixels - 64 + actual;
+        pixels = pixels - default_width + actual;
         let _ = index;
     }
     pixels
@@ -29343,6 +29530,19 @@ fn generate_recompiled_note_shapes(
 ) -> xlsx_jsx::Result<HashMap<String, ParsedVmlNote>> {
     let mut workbook = Workbook::new();
     let worksheet = workbook.add_worksheet();
+    if let Some(width) = metadata.default_column_width_pixels {
+        worksheet
+            .set_default_format(
+                &Format::new(),
+                metadata.default_row_height_pixels.unwrap_or(20),
+                width,
+            )
+            .map_err(|error| {
+                Error::Reverse(format!(
+                    "cannot preserve note default column width: {error}"
+                ))
+            })?;
+    }
     if let Some(height) = metadata.default_row_height_pixels {
         worksheet.set_default_row_height_pixels(height);
     }
@@ -30296,6 +30496,7 @@ struct WorksheetMetadata {
     tab_color: Option<SpreadsheetColor>,
     code_name: Option<String>,
     default_row_height_pixels: Option<u32>,
+    default_column_width_pixels: Option<u32>,
     hide_unused_rows: bool,
     hide_screen_gridlines: bool,
     right_to_left: Option<()>,
@@ -35129,6 +35330,7 @@ fn audit_worksheet_element_metadata(
         part,
         decoder,
         &mut metadata.default_row_height_pixels,
+        &mut metadata.default_column_width_pixels,
         &mut metadata.hide_unused_rows,
         &mut metadata.print,
     )?;
@@ -37876,12 +38078,31 @@ fn parse_xml_bool(value: &str, part: &str, attribute: &str) -> xlsx_jsx::Result<
     }
 }
 
+fn parse_default_column_width_pixels(value: &str) -> Option<u32> {
+    let width_chars = value.parse::<f64>().ok()?;
+    if !width_chars.is_finite() {
+        return None;
+    }
+    if width_chars.to_bits() == 8.43_f64.to_bits() {
+        return Some(64);
+    }
+    [56_u32, 72, 80, 96, 104, 120].into_iter().find(|&pixels| {
+        let canonical_chars = (f64::from(pixels) - 5.0) / 7.0;
+        canonical_chars.to_bits() == width_chars.to_bits()
+    })
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Worksheet layout audit keeps row, column, and print metadata updates in one ordered dispatcher."
+)]
 fn audit_page_layout_metadata(
     event: &BytesStart<'_>,
     tag: &str,
     part: &str,
     decoder: quick_xml::encoding::Decoder,
     default_row_height_pixels: &mut Option<u32>,
+    default_column_width_pixels: &mut Option<u32>,
     hide_unused_rows: &mut bool,
     print: &mut WorksheetPrintMetadata,
 ) -> xlsx_jsx::Result<()> {
@@ -37891,6 +38112,7 @@ fn audit_page_layout_metadata(
             part,
             decoder,
             default_row_height_pixels,
+            default_column_width_pixels,
             hide_unused_rows,
         ),
         "pageMargins" => audit_page_margins(
@@ -38036,14 +38258,16 @@ fn audit_sheet_format(
     part: &str,
     decoder: quick_xml::encoding::Decoder,
     default_row_height_pixels: &mut Option<u32>,
+    default_column_width_pixels: &mut Option<u32>,
     hide_unused_rows: &mut bool,
 ) -> xlsx_jsx::Result<()> {
     let mut custom_height = None;
     let mut zero_height_seen = false;
+    let mut default_column_width_seen = false;
     for attribute in event.attributes().with_checks(false) {
         let attribute = attribute.map_err(|error| Error::Reverse(error.to_string()))?;
         let key = attribute.key.local_name();
-        let accepted_default = match key.as_ref() {
+        match key.as_ref() {
             b"dyDescent" => {
                 let value = attribute
                     .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
@@ -38057,7 +38281,6 @@ fn audit_sheet_format(
                         "worksheet `{part}` has unsupported sheetFormatPr dyDescent metadata; only the ignorable x14ac default 0.25 is representable"
                     )));
                 }
-                None
             }
             b"defaultRowHeight" => {
                 let value = attribute
@@ -38081,15 +38304,29 @@ fn audit_sheet_format(
                 #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                 let pixels = rounded as u32;
                 *default_row_height_pixels = (pixels != 20).then_some(pixels);
-                None
             }
-            b"defaultColWidth" => Some("8.43"),
+            b"defaultColWidth" => {
+                if default_column_width_seen {
+                    return Err(Error::Reverse(format!(
+                        "worksheet `{part}` sheetFormatPr repeats `defaultColWidth`; remove the duplicate attribute"
+                    )));
+                }
+                default_column_width_seen = true;
+                let value = attribute
+                    .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
+                    .map_err(|error| Error::Reverse(error.to_string()))?;
+                let width = parse_default_column_width_pixels(&value).ok_or_else(|| {
+                    Error::Reverse(format!(
+                        "worksheet `{part}` defaultColWidth `{value}` is not exactly representable by the supported 56/64/72/80/96/104/120-pixel defaults; use one of those widths or restore Excel's 8.43-character default"
+                    ))
+                })?;
+                *default_column_width_pixels = (width != 64).then_some(width);
+            }
             b"customHeight" => {
                 let value = attribute
                     .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
                     .map_err(|error| Error::Reverse(error.to_string()))?;
                 custom_height = Some(parse_xml_bool(&value, part, "sheetFormatPr.customHeight")?);
-                None
             }
             b"zeroHeight" => {
                 if zero_height_seen {
@@ -38102,18 +38339,8 @@ fn audit_sheet_format(
                     .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
                     .map_err(|error| Error::Reverse(error.to_string()))?;
                 *hide_unused_rows = parse_xml_bool(&value, part, "sheetFormatPr.zeroHeight")?;
-                None
             }
-            _ => None,
-        };
-        if accepted_default.is_some_and(|default| {
-            attribute
-                .decoded_and_normalized_value(XmlVersion::Implicit1_0, decoder)
-                .is_ok_and(|value| value != default)
-        }) {
-            return Err(Error::Reverse(format!(
-                "worksheet `{part}` has a non-default row/column layout setting that v1 cannot preserve; restore defaults or add worksheet layout support"
-            )));
+            _ => {}
         }
     }
     if custom_height == Some(false) {
@@ -41907,6 +42134,19 @@ fn builtin_number_format(id: usize) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_column_width_parser_accepts_only_exact_writer_widths() {
+        for pixels in [56_u32, 72, 80, 96, 104, 120] {
+            let characters = (f64::from(pixels) - 5.0) / 7.0;
+            assert_eq!(
+                parse_default_column_width_pixels(&characters.to_string()),
+                Some(pixels)
+            );
+        }
+        assert_eq!(parse_default_column_width_pixels("8.43"), Some(64));
+        assert_eq!(parse_default_column_width_pixels("12.25"), None);
+    }
 
     #[test]
     fn theme_shade_parser_rejects_tints_the_writer_cannot_emit() {

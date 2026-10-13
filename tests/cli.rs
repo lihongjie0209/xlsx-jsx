@@ -15031,6 +15031,121 @@ fn external_default_row_height_round_trips_without_loss() {
 }
 
 #[test]
+fn generated_default_column_width_uses_writer_geometry_and_ooxml_metadata() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("default-column-width.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet, Row, Cell, Column, Image } from "xlsx-jsx";
+export default <Workbook><Worksheet name="Columns" defaultColumnWidthPixels={80} defaultRowHeightPixels={24}><Column min={2} max={2} widthPixels={144} /><Image cell="C2" width={144} height={40} data="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA6fptVAAAACklEQVR4nGNgAAAAAgABSK+kcQAAAABJRU5ErkJggg==" /><Row><Cell>keeps writer defaults</Cell></Row></Worksheet></Workbook>;"#,
+    )
+    .expect("JSX fixture is written");
+    let output = directory.path().join("default-column-width.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&source)
+        .args(["-o"])
+        .arg(&output);
+    command.assert().success();
+
+    let xml = read_zip_part_for_test(&output, "xl/worksheets/sheet1.xml");
+    assert!(
+        xml.contains("defaultColWidth=\"10.714285714285714\""),
+        "{xml}"
+    );
+    assert!(xml.contains("defaultRowHeight=\"18\""), "{xml}");
+
+    let reversed = directory.path().join("default-column-width-reversed.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let jsx = std::fs::read_to_string(&reversed).expect("reversed JSX exists");
+    assert!(jsx.contains("widthPixels={144}"), "{jsx}");
+    assert!(
+        jsx.contains("<Image cell={\"C2\"} width={144} height={40}"),
+        "{jsx}"
+    );
+}
+
+#[test]
+fn external_default_column_width_reverses_and_recompiles_without_manifest() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("external-default-column-width.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook
+        .add_worksheet()
+        .set_name("Columns")
+        .expect("worksheet name is valid");
+    workbook.save(&input).expect("external workbook saves");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<sheetFormatPr ",
+            "<sheetFormatPr defaultColWidth=\"10.714285714285714\" ",
+        )
+    });
+
+    let reversed = directory.path().join("external-default-column-width.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let jsx = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(jsx.contains("defaultColumnWidthPixels={80}"), "{jsx}");
+
+    let rebuilt = directory.path().join("rebuilt-default-column-width.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    assert!(
+        xml.contains("defaultColWidth=\"10.714285714285714\""),
+        "{xml}"
+    );
+}
+
+#[test]
+fn external_default_column_width_rejects_unrepresentable_character_width() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("unsupported-default-width.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook.add_worksheet();
+    workbook.save(&input).expect("external workbook saves");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "<sheetFormatPr ",
+            "<sheetFormatPr defaultColWidth=\"12.25\" ",
+        )
+    });
+
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["reverse"]).arg(input);
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not exactly representable"))
+        .stderr(predicate::str::contains("56/64/72/80/96/104/120-pixel"))
+        .stderr(predicate::str::contains(
+            "outside the exact pixel widths supported",
+        ))
+        .stderr(predicate::str::contains(
+            "56, 64, 72, 80, 96, 104, or 120 pixels",
+        ))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
 fn external_hide_unused_rows_round_trips_without_loss() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("hide-unused-rows.xlsx");

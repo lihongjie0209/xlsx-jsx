@@ -35,6 +35,9 @@ reported as complete.
 - `Row.height` now preserves fractional-point OOXML heights, including values
   that the writer's pixel conversion would round. Image anchor calculations
   continue to require whole-pixel row geometry.
+- `Worksheet.defaultColumnWidthPixels` now exposes the pinned writer's supported
+  sheet-wide default-width metrics and reverses/rebuilds external values without
+  rounding. Explicit `Column` ranges continue to override the sheet default.
 
 - External cell/row/column alignment errors now identify the specific unsupported
   OOXML alignment attribute and its value, with a direct removal/support
@@ -109,12 +112,6 @@ forward/reverse batch.
 
 ## Audited but deferred workbook behavior
 
-- Workbook default column width: `Workbook::set_default_format()` exposes this
-  only as a workbook-wide default-format operation that must run before any
-  worksheets exist, and the pinned version accepts only a finite set of pixel
-  widths. Defer until a common-workflow need justifies a workbook-level JSX
-  contract and external reverse coverage; do not approximate arbitrary external
-  `sheetFormatPr@defaultColWidth` values.
 - Chartsheet `zoomToFit`: the pinned `Worksheet::set_zoom_to_fit()` API only
   affects chartsheets, so this is lower priority than worksheet/table authoring.
 - External column `bestFit=true` metadata without a positive, exactly representable
