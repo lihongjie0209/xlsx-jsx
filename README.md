@@ -54,6 +54,7 @@ and intentionally deferred lower-frequency features.
 | Autofit worksheet columns | yes | canonical explicit widths | `Worksheet autoFit={true}` calculates approximate final widths at build time using the pinned writer's Calibri 11 metrics; the intent is not stored in OOXML. Per-column `Column.autoFitWidthPixels` preserves explicit width plus `bestFit="1"` metadata |
 | Hide unused worksheet rows | yes | yes | `hideUnusedRows` hides rows without explicit content |
 | Screen gridlines | yes | yes | `showGridlines={false}` hides on-screen worksheet gridlines; print settings are separate |
+| Worksheet row/column headings | yes | yes | `showRowColHeaders={false}` hides Excel's numbered row and lettered column headings; independent of screen gridlines and printed headings |
 | Worksheet view mode | yes | yes | `view="pageLayout"` or `view="pageBreakPreview"`; `zoom` follows the active view |
 | Worksheet active selection and scroll origin | yes | yes | `selection={{activeCell: "D3", range: "D3:F5"}}` and `topLeftCell="H6"`; frozen-pane selection applies to its active pane |
 | Manual page breaks | yes | yes | `horizontalPageBreaks={[20, 40]}` and `verticalPageBreaks={[8]}` preserve full-axis manual print breaks |

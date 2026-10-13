@@ -480,6 +480,7 @@ impl IrEnvelope {
             validate_worksheet_auto_fit(&sheet, name)?;
             validate_hide_unused_rows(&sheet, name)?;
             validate_show_gridlines(&sheet, name)?;
+            validate_show_row_col_headers(&sheet, name)?;
             validate_worksheet_zoom(&sheet, name)?;
             validate_worksheet_view_and_page_breaks(&sheet, name)?;
             validate_worksheet_reading_and_outline(&sheet, name)?;
@@ -1041,6 +1042,18 @@ fn validate_show_gridlines(sheet: &Node, name: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_show_row_col_headers(sheet: &Node, name: &str) -> Result<()> {
+    let Some(value) = sheet.props.get("showRowColHeaders") else {
+        return Ok(());
+    };
+    if !value.is_boolean() {
+        return Err(Error::Compile(format!(
+            "Worksheet.showRowColHeaders on `{name}` must be a boolean; use false to hide row and column headings or true to show them"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_print_gridlines(sheet: &Node, name: &str) -> Result<()> {
     let Some(value) = sheet.props.get("printGridlines") else {
         return Ok(());
@@ -1173,6 +1186,7 @@ fn validate_worksheet_properties(sheet: &Node) -> Result<()> {
             "autoFit",
             "hideUnusedRows",
             "showGridlines",
+            "showRowColHeaders",
             "printGridlines",
             "zoom",
             "view",
@@ -14522,6 +14536,24 @@ mod tests {
         })]);
         let error = input.validate().expect_err("property must be boolean");
         assert!(error.to_string().contains("showGridlines"));
+        assert!(error.to_string().contains("boolean"));
+    }
+
+    #[test]
+    fn accepts_boolean_row_column_heading_visibility() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Grid","showRowColHeaders":false},"children":[]
+        })]);
+        assert!(input.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_non_boolean_row_column_heading_visibility_with_repair_guidance() {
+        let input = workbook(vec![serde_json::json!({
+            "type":"Worksheet","props":{"name":"Grid","showRowColHeaders":"no"},"children":[]
+        })]);
+        let error = input.validate().expect_err("property must be boolean");
+        assert!(error.to_string().contains("showRowColHeaders"));
         assert!(error.to_string().contains("boolean"));
     }
 

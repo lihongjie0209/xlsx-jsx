@@ -29,6 +29,10 @@ reported as complete.
 
 ## Recently delivered
 
+- Worksheet row/column heading visibility now round-trips through
+  `showRowColHeaders`; hidden on-screen headings are distinct from gridlines
+  and printed headings.
+
 - Optional persistent transpilation caching for `build` and `validate` reuses
   unchanged TS/TSX/JSX modules; dependencies invalidate independently, and
   workbook evaluation/data remain uncached.

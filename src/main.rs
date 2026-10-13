@@ -640,6 +640,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
     let column_width_targets = collect_column_width_targets(ir);
     let row_height_targets = collect_row_height_targets(ir);
     let default_column_width_targets = collect_default_column_width_targets(ir);
+    let row_col_header_targets = collect_row_col_header_targets(ir);
     if !x14_icon_normalization.is_empty()
         || !table_dxf_targets.is_empty()
         || !table_filter_targets.is_empty()
@@ -648,6 +649,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
         || !column_width_targets.is_empty()
         || !row_height_targets.is_empty()
         || !default_column_width_targets.is_empty()
+        || !row_col_header_targets.is_empty()
     {
         normalize_generated_xlsx(
             path,
@@ -660,6 +662,7 @@ fn compile(ir: &IrEnvelope, path: &std::path::Path) -> xlsx_jsx::Result<()> {
             &column_width_targets,
             &row_height_targets,
             &default_column_width_targets,
+            &row_col_header_targets,
         )?;
     }
     Ok(())
@@ -994,6 +997,83 @@ fn patch_default_column_width(xml: &str, part: &str, width: &str) -> xlsx_jsx::R
     if !seen {
         return Err(Error::Compile(format!(
             "generated worksheet `{part}` is missing sheetFormatPr; cannot preserve its default column width"
+        )));
+    }
+    String::from_utf8(writer.into_inner()).map_err(|error| {
+        Error::Compile(format!(
+            "patched worksheet `{part}` is not UTF-8 XML: {error}"
+        ))
+    })
+}
+
+fn patch_row_col_headers(xml: &str, part: &str) -> xlsx_jsx::Result<String> {
+    let mut reader = XmlReader::from_str(xml);
+    let mut writer = XmlWriter::new(Vec::new());
+    let mut seen = false;
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(start)) if start.local_name().as_ref() == b"sheetView" => {
+                if seen {
+                    return Err(Error::Compile(format!(
+                        "generated worksheet `{part}` has duplicate sheetView elements"
+                    )));
+                }
+                seen = true;
+                let mut patched = start.into_owned();
+                if patched.attributes().with_checks(false).any(|attribute| {
+                    attribute.is_ok_and(|attribute| {
+                        attribute.key.local_name().as_ref() == b"showRowColHeaders"
+                    })
+                }) {
+                    return Err(Error::Compile(format!(
+                        "generated worksheet `{part}` unexpectedly contains showRowColHeaders; repair the pinned writer output"
+                    )));
+                }
+                patched.push_attribute(("showRowColHeaders", "0"));
+                writer.write_event(Event::Start(patched)).map_err(|error| {
+                    Error::Compile(format!(
+                        "cannot patch row/column headings in `{part}`: {error}"
+                    ))
+                })?;
+            }
+            Ok(Event::Empty(start)) if start.local_name().as_ref() == b"sheetView" => {
+                if seen {
+                    return Err(Error::Compile(format!(
+                        "generated worksheet `{part}` has duplicate sheetView elements"
+                    )));
+                }
+                seen = true;
+                let mut patched = start.into_owned();
+                if patched.attributes().with_checks(false).any(|attribute| {
+                    attribute.is_ok_and(|attribute| {
+                        attribute.key.local_name().as_ref() == b"showRowColHeaders"
+                    })
+                }) {
+                    return Err(Error::Compile(format!(
+                        "generated worksheet `{part}` unexpectedly contains showRowColHeaders; repair the pinned writer output"
+                    )));
+                }
+                patched.push_attribute(("showRowColHeaders", "0"));
+                writer.write_event(Event::Empty(patched)).map_err(|error| {
+                    Error::Compile(format!(
+                        "cannot patch row/column headings in `{part}`: {error}"
+                    ))
+                })?;
+            }
+            Ok(Event::Eof) => break,
+            Ok(event) => writer.write_event(event.into_owned()).map_err(|error| {
+                Error::Compile(format!("cannot patch worksheet `{part}`: {error}"))
+            })?,
+            Err(error) => {
+                return Err(Error::Compile(format!(
+                    "cannot parse generated worksheet `{part}` while patching row/column headings: {error}"
+                )));
+            }
+        }
+    }
+    if !seen {
+        return Err(Error::Compile(format!(
+            "generated worksheet `{part}` is missing sheetView; cannot preserve hidden row/column headings"
         )));
     }
     String::from_utf8(writer.into_inner()).map_err(|error| {
@@ -1773,6 +1853,29 @@ fn collect_default_column_width_targets(ir: &IrEnvelope) -> HashMap<String, Stri
     targets
 }
 
+fn collect_row_col_header_targets(ir: &IrEnvelope) -> BTreeSet<String> {
+    let mut targets = BTreeSet::new();
+    let mut worksheet_index = 0_usize;
+    for sheet in &ir.workbook.children {
+        let Some(object) = sheet.as_object() else {
+            continue;
+        };
+        if object.get("type").and_then(Value::as_str) != Some("Worksheet") {
+            continue;
+        }
+        worksheet_index += 1;
+        if object
+            .get("props")
+            .and_then(|props| props.get("showRowColHeaders"))
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
+            targets.insert(format!("xl/worksheets/sheet{worksheet_index}.xml"));
+        }
+    }
+    targets
+}
+
 fn reapply_column_autofit_widths(
     worksheet: &mut rust_xlsxwriter::Worksheet,
     sheet: &Node,
@@ -1827,6 +1930,7 @@ fn normalize_generated_xlsx(
     column_width_targets: &HashMap<String, BTreeMap<u16, String>>,
     row_height_targets: &HashMap<String, BTreeMap<u32, String>>,
     default_column_width_targets: &HashMap<String, String>,
+    row_col_header_targets: &BTreeSet<String>,
 ) -> xlsx_jsx::Result<()> {
     let parent = path.parent().unwrap_or_else(|| std::path::Path::new("."));
     let file_name = path
@@ -1861,6 +1965,7 @@ fn normalize_generated_xlsx(
         column_width_targets,
         row_height_targets,
         default_column_width_targets,
+        row_col_header_targets,
     );
     if let Err(error) = rewrite_result {
         let _ = std::fs::remove_file(&temporary_path);
@@ -1902,6 +2007,7 @@ fn rewrite_generated_xlsx(
     column_width_targets: &HashMap<String, BTreeMap<u16, String>>,
     row_height_targets: &HashMap<String, BTreeMap<u32, String>>,
     default_column_width_targets: &HashMap<String, String>,
+    row_col_header_targets: &BTreeSet<String>,
 ) -> xlsx_jsx::Result<()> {
     let source_file = std::fs::File::open(path).map_err(|source| Error::Resource {
         path: path.to_path_buf(),
@@ -1971,6 +2077,11 @@ fn rewrite_generated_xlsx(
             };
             let xml = if let Some(width) = default_column_width_targets.get(&name) {
                 patch_default_column_width(&xml, &name, width)?
+            } else {
+                xml
+            };
+            let xml = if row_col_header_targets.contains(&name) {
+                patch_row_col_headers(&xml, &name)?
             } else {
                 xml
             };
@@ -8237,6 +8348,9 @@ fn reverse(path: &std::path::Path) -> xlsx_jsx::Result<String> {
         }
         if sheet_metadata.is_some_and(|metadata| metadata.hide_screen_gridlines) {
             output.push_str(" showGridlines={false}");
+        }
+        if sheet_metadata.and_then(|metadata| metadata.show_row_col_headers) == Some(false) {
+            output.push_str(" showRowColHeaders={false}");
         }
         if sheet_metadata.is_some_and(|metadata| metadata.right_to_left.is_some()) {
             output.push_str(" rightToLeft={true}");
@@ -30509,6 +30623,7 @@ struct WorksheetMetadata {
     default_column_width_pixels: Option<u32>,
     hide_unused_rows: bool,
     hide_screen_gridlines: bool,
+    show_row_col_headers: Option<bool>,
     right_to_left: Option<()>,
     top_left_cell: Option<String>,
     selection: Option<WorksheetSelection>,
@@ -36527,6 +36642,7 @@ fn audit_sheet_view(
     }
     metadata.sheet_view_seen = true;
     let mut gridlines_seen = false;
+    let mut row_col_headers_seen = false;
     let mut right_to_left_seen = false;
     let mut seen = std::collections::HashSet::new();
     let mut normal_zoom = None;
@@ -36560,6 +36676,18 @@ fn audit_sheet_view(
                 gridlines_seen = true;
                 let gridlines = parse_xml_bool(&value, part, "sheetView.showGridLines")?;
                 metadata.hide_screen_gridlines = !gridlines;
+                None
+            }
+            b"showRowColHeaders" => {
+                if row_col_headers_seen {
+                    return Err(Error::Reverse(format!(
+                        "worksheet `{part}` sheetView repeats `showRowColHeaders`; remove the duplicate attribute"
+                    )));
+                }
+                row_col_headers_seen = true;
+                metadata.show_row_col_headers =
+                    (!parse_xml_bool(&value, part, "sheetView.showRowColHeaders")?)
+                        .then_some(false);
                 None
             }
             b"rightToLeft" => {
@@ -36636,6 +36764,7 @@ fn audit_sheet_view(
         if !matches!(
             key.as_ref(),
             b"showGridLines"
+                | b"showRowColHeaders"
                 | b"rightToLeft"
                 | b"tabSelected"
                 | b"topLeftCell"

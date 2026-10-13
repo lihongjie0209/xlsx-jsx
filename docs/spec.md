@@ -1,6 +1,6 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.87
+Version: 1.88
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
@@ -1179,6 +1179,13 @@ on a `Chartsheet`, it has no anchor and occupies the chart sheet canvas.
 - `showGridlines?: boolean` controls worksheet screen gridlines through
   `sheetView@showGridLines`. It defaults to true and is omitted by reverse;
   print-gridline settings remain separate.
+- `showRowColHeaders?: boolean` controls the worksheet's row/column headings
+  (the numbered row labels and lettered column labels) through
+  `sheetView@showRowColHeaders`. It defaults to true and is omitted by reverse;
+  this is independent of both screen gridlines and printed headings. False is
+  preserved in generated and external workbooks; the pinned writer does not
+  expose a setter, so the compiler patches only this schema-defined view
+  attribute after serialization.
 - `view?: "normal" | "pageLayout" | "pageBreakPreview"` selects the worksheet
   view and defaults to `normal`, which is omitted by reverse. `zoom?` is the
   zoom for the selected view: `zoomScale` stores the active zoom; normal view

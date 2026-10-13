@@ -15327,6 +15327,114 @@ fn external_screen_gridlines_round_trip_without_loss() {
 }
 
 #[test]
+fn worksheet_row_column_headers_round_trip_without_loss() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("headers.tsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet } from "xlsx-jsx"; export default <Workbook><Worksheet name="Data" showRowColHeaders={false} /></Workbook>;"#,
+    )
+    .expect("source writes");
+
+    let output = directory.path().join("headers.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&source)
+        .args(["-o"])
+        .arg(&output);
+    command.assert().success();
+    let xml = read_zip_part_for_test(&output, "xl/worksheets/sheet1.xml");
+    assert!(xml.contains("showRowColHeaders=\"0\""), "{xml}");
+
+    let reversed = directory.path().join("headers.roundtrip.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let reversed_source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(reversed_source.contains("showRowColHeaders={false}"));
+
+    let rebuilt = directory.path().join("headers.roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+    let rebuilt_xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    assert!(
+        rebuilt_xml.contains("showRowColHeaders=\"0\""),
+        "{rebuilt_xml}"
+    );
+}
+
+#[test]
+fn reverse_preserves_external_hidden_row_column_headers() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("external-headers.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook.add_worksheet();
+    workbook.save(&input).expect("external workbook saves");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "workbookViewId=\"0\"",
+            "workbookViewId=\"0\" showRowColHeaders=\"0\"",
+        )
+    });
+
+    let reversed = directory.path().join("external-headers.tsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["reverse"])
+        .arg(&input)
+        .args(["-o"])
+        .arg(&reversed);
+    command.assert().success();
+    let source = std::fs::read_to_string(&reversed).expect("reverse output exists");
+    assert!(source.contains("showRowColHeaders={false}"));
+
+    let rebuilt = directory.path().join("external-headers-roundtrip.xlsx");
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command
+        .args(["build"])
+        .arg(&reversed)
+        .args(["-o"])
+        .arg(&rebuilt);
+    command.assert().success();
+    let xml = read_zip_part_for_test(&rebuilt, "xl/worksheets/sheet1.xml");
+    assert!(xml.contains("showRowColHeaders=\"0\""), "{xml}");
+}
+
+#[test]
+fn reverse_rejects_invalid_row_column_heading_boolean_with_guidance() {
+    let directory = tempdir().expect("temporary directory is available");
+    let input = directory.path().join("invalid-heading-visibility.xlsx");
+    let mut workbook = rust_xlsxwriter::Workbook::new();
+    workbook.add_worksheet();
+    workbook.save(&input).expect("external workbook saves");
+    rewrite_part(&input, "xl/worksheets/sheet1.xml", |xml| {
+        xml.replace(
+            "workbookViewId=\"0\"",
+            "workbookViewId=\"0\" showRowColHeaders=\"maybe\"",
+        )
+    });
+
+    let mut command = Command::cargo_bin("xlsx-jsx").expect("binary is built");
+    command.args(["reverse"]).arg(input);
+    command
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("sheetView.showRowColHeaders"))
+        .stderr(predicate::str::contains("expected 0/1 or false/true"))
+        .stderr(predicate::str::contains("suggestion:"));
+}
+
+#[test]
 fn external_print_gridlines_round_trip_without_loss() {
     let directory = tempdir().expect("temporary directory is available");
     let input = directory.path().join("print-gridlines.xlsx");
