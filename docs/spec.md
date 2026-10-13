@@ -1,11 +1,23 @@
 # xlsx-jsx DSL Specification
 
-Version: 1.86
+Version: 1.87
 
 `xlsx-jsx` is a Rust CLI. It evaluates local JSX/TSX modules, normalizes the
 result into a JSON-compatible workbook IR, writes `.xlsx` files with
 `rust_xlsxwriter`, and reverses the supported subset of external workbooks with
 `calamine`. Node.js is not a runtime dependency.
+
+## CLI execution and incremental cache
+
+`build` and `validate` accept `--cache-dir <DIRECTORY>` to persist transpiled
+local `.ts`, `.tsx`, and `.jsx` modules. Each module is keyed by its canonical
+path and accepted only when its exact source text, media type, cache format,
+and compiler version match; editing one module invalidates only that module's
+transpilation. Invalid or stale entries are ignored and regenerated. Without
+`--cache-dir`, no persistent cache is read or written. JavaScript and JSON
+modules are not transpiled and are not cached. Module evaluation still runs on
+every invocation, and `--data` is always read fresh; the cache never reuses an
+IR or XLSX output. `reverse` does not use this cache.
 
 ## Component tree
 

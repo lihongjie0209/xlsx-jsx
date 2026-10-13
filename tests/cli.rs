@@ -19,6 +19,89 @@ use tempfile::tempdir;
 use zip::{ZipArchive, ZipWriter, write::SimpleFileOptions};
 
 #[test]
+fn build_reuses_module_cache_and_invalidates_changed_dependencies() {
+    let directory = tempdir().expect("temporary directory is available");
+    let entry = directory.path().join("report.tsx");
+    let dependency = directory.path().join("labels.ts");
+    let data = directory.path().join("data.json");
+    let cache = directory.path().join("cache");
+    let output = directory.path().join("report.xlsx");
+    let reverse_output = directory.path().join("report.roundtrip.tsx");
+    std::fs::write(
+        &entry,
+        r#"import { Workbook, Worksheet, Row, Cell } from "xlsx-jsx";
+import { label } from "./labels.ts";
+export default (data: { suffix: string }) => <Workbook><Worksheet name="Cache"><Row><Cell>{`${label} ${data.suffix}`}</Cell></Row></Worksheet></Workbook>;
+"#,
+    )
+    .expect("entry module writes");
+    std::fs::write(&dependency, "export const label: string = 'first value';\n")
+        .expect("dependency writes");
+    std::fs::write(&data, r#"{"suffix":"first run"}"#).expect("JSON data writes");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&entry)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--data"])
+        .arg(&data)
+        .args(["--cache-dir"])
+        .arg(&cache)
+        .assert()
+        .success();
+
+    let cached_modules = std::fs::read_dir(&cache)
+        .expect("cache directory is created")
+        .filter_map(Result::ok)
+        .count();
+    assert_eq!(cached_modules, 2, "entry and dependency are cached");
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["validate"])
+        .arg(&entry)
+        .args(["--data"])
+        .arg(&data)
+        .args(["--cache-dir"])
+        .arg(&cache)
+        .assert()
+        .success();
+
+    std::fs::write(
+        &dependency,
+        "export const label: string = 'updated value';\n",
+    )
+    .expect("dependency update writes");
+    std::fs::write(&data, r#"{"suffix":"second run"}"#).expect("JSON data updates");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&entry)
+        .args(["-o"])
+        .arg(&output)
+        .args(["--data"])
+        .arg(&data)
+        .args(["--force", "--cache-dir"])
+        .arg(&cache)
+        .assert()
+        .success();
+
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&output)
+        .args(["-o"])
+        .arg(&reverse_output)
+        .assert()
+        .success();
+    let reversed = std::fs::read_to_string(reverse_output).expect("reverse output exists");
+    assert!(reversed.contains("updated value"), "{reversed}");
+    assert!(reversed.contains("second run"), "{reversed}");
+}
+
+#[test]
 fn reverse_external_header_and_footer_images_without_manifest() {
     let directory = tempdir().expect("temporary directory is available");
     let external = directory.path().join("header-footer-images.xlsx");

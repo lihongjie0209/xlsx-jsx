@@ -29,6 +29,9 @@ reported as complete.
 
 ## Recently delivered
 
+- Optional persistent transpilation caching for `build` and `validate` reuses
+  unchanged TS/TSX/JSX modules; dependencies invalidate independently, and
+  workbook evaluation/data remain uncached.
 - `Column.width` now supports exact Excel character-unit widths alongside pixel
   widths. The pinned writer's pixel quantization is repaired in generated
   worksheet XML, and external character widths reverse without rounding.

@@ -38,7 +38,7 @@ use xlsx_jsx::{
     chart_data_label_position_is_supported, chart_data_label_separator_name,
     chart_data_label_separator_value, chart_data_table_fill_pattern_is_supported,
     collapsed_outline_ranges, format_a1_cell_reference, format_a1_range, format_print_range,
-    parse_a1_cell_reference, parse_a1_range, parse_print_range, runtime::evaluate_entry,
+    parse_a1_cell_reference, parse_a1_range, parse_print_range, runtime::evaluate_entry_with_cache,
     sparkline_style_palette,
 };
 use zip::{
@@ -107,6 +107,8 @@ enum Command {
         output: PathBuf,
         #[arg(long)]
         data: Option<PathBuf>,
+        #[arg(long, value_name = "DIR")]
+        cache_dir: Option<PathBuf>,
         #[arg(long)]
         force: bool,
     },
@@ -115,6 +117,8 @@ enum Command {
         input: PathBuf,
         #[arg(long)]
         data: Option<PathBuf>,
+        #[arg(long, value_name = "DIR")]
+        cache_dir: Option<PathBuf>,
     },
     /// Reverse a supported XLSX file to JSX.
     Reverse {
@@ -157,8 +161,12 @@ async fn run(cli: Cli) -> xlsx_jsx::Result<Option<PathBuf>> {
             print!("{spec}");
             Ok(None)
         }
-        Command::Validate { input, data } => {
-            evaluate(&input, data.as_deref()).await?;
+        Command::Validate {
+            input,
+            data,
+            cache_dir,
+        } => {
+            evaluate(&input, data.as_deref(), cache_dir.as_deref()).await?;
             println!("valid");
             Ok(None)
         }
@@ -166,11 +174,12 @@ async fn run(cli: Cli) -> xlsx_jsx::Result<Option<PathBuf>> {
             input,
             output,
             data,
+            cache_dir,
             force,
         } => {
             require_extension(&output, "xlsx")?;
             ensure_output(&output, force)?;
-            let ir = evaluate(&input, data.as_deref()).await?;
+            let ir = evaluate(&input, data.as_deref(), cache_dir.as_deref()).await?;
             compile(&ir, &output)?;
             Ok(Some(output))
         }
@@ -195,6 +204,7 @@ async fn run(cli: Cli) -> xlsx_jsx::Result<Option<PathBuf>> {
 async fn evaluate(
     input: &std::path::Path,
     data: Option<&std::path::Path>,
+    cache_dir: Option<&std::path::Path>,
 ) -> xlsx_jsx::Result<IrEnvelope> {
     let value = data
         .map(|path| {
@@ -209,7 +219,7 @@ async fn evaluate(
                 .map_err(|error| Error::Input(format!("invalid JSON data: {error}")))
         })
         .transpose()?;
-    evaluate_entry(input, value.as_ref()).await
+    evaluate_entry_with_cache(input, value.as_ref(), cache_dir).await
 }
 
 fn ensure_output(output: &std::path::Path, force: bool) -> xlsx_jsx::Result<()> {

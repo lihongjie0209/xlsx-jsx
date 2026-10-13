@@ -18,10 +18,15 @@ export default <Workbook>
 
 ```sh
 xlsx-jsx validate report.tsx
-xlsx-jsx build report.tsx -o report.xlsx
+xlsx-jsx build report.tsx -o report.xlsx --cache-dir target/xlsx-jsx-cache
 xlsx-jsx reverse report.xlsx -o report.roundtrip.tsx
 xlsx-jsx spec --format json
 ```
+
+`build` and `validate` can reuse TS/TSX/JSX transpilation across runs with
+`--cache-dir`. Changed modules are re-transpiled independently; workbook code
+still executes on every run and `--data` is never cached. Omitting the option
+disables persistent caching.
 
 Errors include an explanation, a repair suggestion, and a pointer to the matching
 DSL contract. Reverse diagnostics distinguish unsupported formula cache cases;
@@ -36,6 +41,7 @@ and intentionally deferred lower-frequency features.
 | Feature | Build | Reverse external XLSX | Status |
 |---|---:|---:|---|
 | Worksheets and positional rows/cells | yes | yes | v1 |
+| Incremental TS/TSX/JSX transpilation cache | yes | n/a | `build` and `validate --cache-dir DIR` persist per-module transpilation; source/compiler changes invalidate entries, while workbook evaluation and data inputs always run fresh |
 | Rectangular tables, totals rows, column totals, calculated columns, and formats | yes | yes | `Table` supports headered/headerless ranges, list-value and custom comparison auto-filter criteria, totals/formulas, accessibility metadata, differential formats, and header formatting; unsupported filter kinds and dxf properties are rejected |
 | Worksheet visibility | yes | yes | `visibility="hidden"` or `"veryHidden"`; first worksheet stays visible |
 | Active worksheet | yes | yes | `active={true}` selects one visible worksheet when opened; default is the first worksheet |
