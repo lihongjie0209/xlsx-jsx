@@ -112,6 +112,10 @@ forward/reverse batch.
 
 ## Audited but deferred workbook behavior
 
+- Conditional-format data-bar x14 `minLength` / `maxLength` overrides: these
+  are uncommon visual refinements, and the pinned writer has no setter; defer
+  XML repair and reverse support until a common conditional-format gap requires
+  the same implementation path.
 - Chartsheet `zoomToFit`: the pinned `Worksheet::set_zoom_to_fit()` API only
   affects chartsheets, so this is lower priority than worksheet/table authoring.
 - External column `bestFit=true` metadata without a positive, exactly representable
