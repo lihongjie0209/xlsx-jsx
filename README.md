@@ -1,8 +1,12 @@
 # xlsx-jsx
 
-Rust CLI for compiling executable JSX/TSX workbook descriptions to `.xlsx` and
-reversing the documented lossless subset of external spreadsheets back to JSX.
-The frontend runs in embedded V8; no Node.js runtime is required.
+Compile JSX/TSX workbook descriptions to `.xlsx` and reverse the supported
+lossless subset of external spreadsheets back to JSX. This Rust CLI executes
+the frontend in embedded V8; no Node.js runtime is required.
+
+[Latest release](https://github.com/lihongjie0209/xlsx-jsx/releases/latest) ·
+[DSL specification](docs/spec.md) · [Development roadmap](docs/roadmap.md) ·
+[Writer coverage audit](docs/xlsxwriter-coverage.md)
 
 ```tsx
 import { Workbook, Worksheet, Row, Cell } from "xlsx-jsx";
