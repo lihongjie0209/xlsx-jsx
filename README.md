@@ -33,7 +33,9 @@ DSL contract. Reverse diagnostics distinguish unsupported formula cache cases;
 for example, scalar `formulaResult` applies to ordinary formulas, not legacy
 array-formula cached values. Inputs that are not readable XLSX ZIP packages are
 diagnosed as package-format errors with a save/export-as-`.xlsx` repair action,
-not as unsupported workbook features.
+not as unsupported workbook features. Missing or unreadable required package
+parts are reported as an incomplete/malformed workbook with a package repair
+suggestion.
 
 ## Feature matrix
 

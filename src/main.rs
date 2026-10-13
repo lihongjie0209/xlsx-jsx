@@ -12905,9 +12905,11 @@ fn read_zip_part<R: std::io::Read + std::io::Seek>(
     archive: &mut ZipArchive<R>,
     name: &str,
 ) -> xlsx_jsx::Result<String> {
-    let mut part = archive
-        .by_name(name)
-        .map_err(|error| Error::Reverse(format!("missing package part `{name}`: {error}")))?;
+    let mut part = archive.by_name(name).map_err(|error| {
+        Error::Reverse(format!(
+            "required package part `{name}` is missing or unreadable: {error}"
+        ))
+    })?;
     let mut xml = String::new();
     std::io::Read::read_to_string(&mut part, &mut xml)
         .map_err(|error| Error::Reverse(error.to_string()))?;

@@ -2028,6 +2028,10 @@ Before inspecting workbook features, `reverse` requires a readable XLSX ZIP
 package. If the input is not a valid ZIP package, the diagnostic must identify
 the package error and recommend exporting or saving the source as `.xlsx`, not
 suggest removing workbook features.
+If a required core package part such as `xl/workbook.xml` is missing, reverse
+must report an incomplete or malformed XLSX package with a package-repair
+suggestion; it must not classify the missing required part as an unsupported
+feature.
 The v1 lossless subset is worksheets, any-value, list and formula-based data
 validations (whole, decimal, date, time, textLength, and custom), positional rows/cells, worksheet visibility,
 active tab and reading direction, row height/hidden/outline state, collapsed

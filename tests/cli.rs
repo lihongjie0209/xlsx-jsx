@@ -25957,6 +25957,33 @@ fn add_part(path: &std::path::Path, part_name: &str, contents: &str) {
     std::fs::rename(rewritten, path).expect("rewritten package replaces test fixture");
 }
 
+fn remove_part(path: &std::path::Path, part_name: &str) {
+    let rewritten = path.with_extension("without-part.xlsx");
+    let input = std::fs::File::open(path).expect("source package opens");
+    let mut archive = ZipArchive::new(input).expect("source package is ZIP");
+    let output = std::fs::File::create(&rewritten).expect("package can be created");
+    let mut writer = ZipWriter::new(output);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let mut removed = false;
+    for index in 0..archive.len() {
+        let mut part = archive.by_index(index).expect("package part is readable");
+        let name = part.name().to_owned();
+        let mut bytes = Vec::new();
+        part.read_to_end(&mut bytes).expect("package part reads");
+        if name == part_name {
+            removed = true;
+            continue;
+        }
+        writer
+            .start_file(name, options)
+            .expect("package part starts");
+        writer.write_all(&bytes).expect("package part writes");
+    }
+    assert!(removed, "the requested package part existed");
+    writer.finish().expect("rewritten package closes");
+    std::fs::rename(rewritten, path).expect("rewritten package replaces test fixture");
+}
+
 #[test]
 fn invalid_dsl_has_reason_and_repair_suggestion() {
     let directory = tempdir().expect("temporary directory is available");
@@ -26555,5 +26582,48 @@ fn reverse_reports_non_zip_input_with_package_repair_guidance() {
     assert!(
         !directory.path().join("not-a-workbook.tsx").exists(),
         "reverse failure must not leave a partial JSX output"
+    );
+}
+
+#[test]
+fn reverse_reports_missing_core_part_as_malformed_package() {
+    let directory = tempdir().expect("temporary directory is available");
+    let source = directory.path().join("minimal.tsx");
+    let workbook = directory.path().join("missing-core-part.xlsx");
+    std::fs::write(
+        &source,
+        r#"import { Workbook, Worksheet } from "xlsx-jsx"; export default <Workbook><Worksheet name="Sheet1" /></Workbook>;"#,
+    )
+    .expect("source writes");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["build"])
+        .arg(&source)
+        .args(["-o"])
+        .arg(&workbook)
+        .assert()
+        .success();
+    remove_part(&workbook, "xl/workbook.xml");
+
+    let output = directory.path().join("reversed.tsx");
+    Command::cargo_bin("xlsx-jsx")
+        .expect("binary is built")
+        .args(["reverse"])
+        .arg(&workbook)
+        .args(["-o"])
+        .arg(&output)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "required package part `xl/workbook.xml` is missing",
+        ))
+        .stderr(predicate::str::contains(
+            "XLSX package is incomplete or malformed",
+        ))
+        .stderr(predicate::str::contains("Restore the named part"))
+        .stderr(predicate::str::contains("Remove unsupported workbook features").not());
+    assert!(
+        !output.exists(),
+        "failed reverse must not leave partial JSX"
     );
 }

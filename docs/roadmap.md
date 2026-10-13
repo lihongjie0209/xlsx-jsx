@@ -29,6 +29,10 @@ reported as complete.
 
 ## Recently delivered
 
+- Reverse distinguishes unreadable ZIP input and missing/unreadable required
+  package parts from unsupported workbook features, with package-specific repair
+  guidance.
+
 - Reverse diagnostics now distinguish a non-readable XLSX ZIP package from an
   unsupported workbook feature and recommend saving/exporting to `.xlsx`.
   `scripts/openxml-test.sh` also honors `CARGO_TARGET_DIR` so local validation can
