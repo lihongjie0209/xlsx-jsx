@@ -5,6 +5,7 @@ edition = "2024"
 license = "MIT"
 description = "Compile executable JSX/TSX spreadsheets to XLSX and reverse supported XLSX files"
 readme = "README.md"
+repository = "https://github.com/lihongjie0209/xlsx-jsx"
 
 [lib]
 name = "xlsx_jsx"
